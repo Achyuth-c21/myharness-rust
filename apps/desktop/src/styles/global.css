@@ -39,8 +39,11 @@
   --mh-titlebar-h: 36px;
   --mh-sidebar-w: 321px;
 
-  /* Typography (docs/07 §1.1): interface 13–14px, meta 12px, variable weights */
+  /* Typography (docs/07 §1.1): interface 13–14px, meta 12px, variable weights.
+     Display faces (Anthropic sans/serif) are not vendored — documented system
+     fallbacks only; the serif is used for the greeting display type (§1.1). */
   --mh-font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mh-font-display: Georgia, "Iowan Old Style", "Times New Roman", serif;
   --mh-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   --mh-w4: 400;
   --mh-w5: 500;
@@ -68,6 +71,20 @@ body,
 #root {
   height: 100%;
   margin: 0;
+}
+
+/* docs/07 §3.1: focus is a ring shadow (never a browser outline) and must remain
+   visible on both themes — ring color uses the verified strong-border token. */
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--mh-border-strong);
+}
+
+/* border-box so measured dimensions (e.g. palette 726×470) include hairline borders */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
 }
 
 body {
@@ -166,12 +183,6 @@ body {
   color: var(--mh-text-3);
   cursor: default;
   background: transparent;
-}
-
-.nav-shortcut {
-  margin-left: auto;
-  font-size: 12px;
-  color: var(--mh-text-3);
 }
 
 .sidebar-list {
@@ -286,9 +297,14 @@ body {
   z-index: 50;
 }
 
+/* Search palette (docs/screens/search-palette.md): ~726×470, rounded, strong shadow;
+   48px search row with leading magnifier, "Search chats and projects", clear button;
+   rows = surface icon + title (+ relative time when data exists); selected row is a
+   full-width light-gray rounded highlight. */
 .palette {
-  width: 560px;
-  max-height: 60vh;
+  width: 726px;
+  height: 470px;
+  max-width: calc(100vw - 32px);
   display: flex;
   flex-direction: column;
   background: var(--mh-surface-2);
@@ -298,20 +314,36 @@ body {
   overflow: hidden;
 }
 
+.palette-search-row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--mh-unit) * 2);
+  height: 48px; /* search-palette.md: search row ~48px */
+  padding: 0 calc(var(--mh-unit) * 4);
+  border-bottom: 1px solid var(--mh-border-hair);
+  flex: none;
+}
+
+.palette-glyph {
+  display: inline-flex;
+  color: var(--mh-text-3);
+  flex: none;
+}
+
 .palette-input {
+  flex: 1;
   border: 0;
   outline: none;
   font: inherit;
   font-size: 14px;
   color: var(--mh-text-1);
   background: transparent;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--mh-border-hair);
+  min-width: 0;
 }
 
 .palette-results {
   overflow-y: auto;
-  padding: calc(var(--mh-unit) * 1.5);
+  padding: calc(var(--mh-unit) * 2);
   display: flex;
   flex-direction: column;
   gap: calc(var(--mh-unit) * 0.5);
@@ -320,19 +352,21 @@ body {
 .palette-row {
   display: flex;
   align-items: center;
+  gap: calc(var(--mh-unit) * 2);
   border: 0;
   border-radius: var(--mh-radius-input);
   background: transparent;
   font: inherit;
   color: var(--mh-text-1);
-  height: 32px;
-  padding: 0 10px;
+  height: 36px;
+  padding: 0 calc(var(--mh-unit) * 2);
   text-align: left;
   cursor: pointer;
+  width: 100%;
 }
 
 .palette-row.highlighted {
-  background: var(--mh-active-fill);
+  background: var(--mh-hover-fill); /* light-gray rounded highlight across the row */
 }
 
 .palette-title {
@@ -342,7 +376,7 @@ body {
 }
 
 .palette-empty {
-  padding: 12px 10px;
+  padding: calc(var(--mh-unit) * 3) calc(var(--mh-unit) * 2);
   color: var(--mh-text-2);
 }
 
@@ -357,16 +391,52 @@ body {
   overflow: hidden;
 }
 
-/* left nav ~208px (docs/07 §1.4) */
+/* left nav ~208px, light-gray panel, ~175px search at top
+   (docs/screens/settings.md §Modal geometry) */
 .settings-nav {
   width: 208px;
   min-width: 208px;
+  background: var(--mh-surface-1);
   border-right: 1px solid var(--mh-border-hair);
   padding: calc(var(--mh-unit) * 3);
   display: flex;
   flex-direction: column;
   gap: calc(var(--mh-unit) * 1);
   overflow-y: auto;
+}
+
+.settings-search {
+  width: 175px;
+  height: 28px;
+  border: 0;
+  outline: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--mh-text-1);
+  background: var(--mh-surface-2);
+  border-radius: var(--mh-radius-input);
+  padding: 0 calc(var(--mh-unit) * 2);
+  border: 1px solid var(--mh-border-hair);
+  margin-bottom: calc(var(--mh-unit) * 1);
+}
+
+.settings-no-match {
+  color: var(--mh-text-2);
+  font-size: 12px;
+  padding: calc(var(--mh-unit) * 1) calc(var(--mh-unit) * 2);
+}
+
+.settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--mh-unit) * 0.5);
+}
+
+.settings-group-label {
+  color: var(--mh-text-3);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  padding: calc(var(--mh-unit) * 1) calc(var(--mh-unit) * 2) 0;
 }
 
 .settings-link {
@@ -391,7 +461,23 @@ body {
   font-weight: var(--mh-w5);
 }
 
-/* content column ~800px (docs/07 §1.4) */
+/* content column ~800px (docs/07 §1.4); close X at top-right of the content
+   (docs/screens/settings.md §Modal geometry) */
+.settings-content-wrap {
+  position: relative;
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.settings-x {
+  position: absolute;
+  top: calc(var(--mh-unit) * 3);
+  right: calc(var(--mh-unit) * 3);
+  z-index: 2;
+}
+
 .settings-content {
   flex: 1;
   max-width: 800px;
@@ -404,6 +490,37 @@ body {
   font-size: 16px;
   font-weight: var(--mh-w6);
   margin: 0 0 12px;
+}
+
+.settings-content h3 {
+  font-size: 13px;
+  font-weight: var(--mh-w5);
+  margin: 16px 0 8px;
+}
+
+.settings-content .settings-note {
+  color: var(--mh-text-2);
+  max-width: 560px;
+  line-height: 18px;
+  margin: 12px 0 0;
+}
+
+.theme-seg {
+  background: var(--mh-hover-fill);
+}
+
+.theme-seg-option {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--mh-unit) * 1);
+}
+
+.theme-seg-option svg {
+  color: var(--mh-text-2);
+}
+
+.theme-seg-option.seg-active svg {
+  color: var(--mh-text-1);
 }
 
 /* ---------- Shells ---------- */
@@ -447,4 +564,346 @@ body {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* ---------- Sidebar: tasks header + scroll region ---------- */
+.sidebar-top {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--mh-unit) * 2);
+  width: 100%;
+  min-height: 0;
+}
+
+.sidebar {
+  gap: calc(var(--mh-unit) * 2);
+}
+
+.sidebar-scroll {
+  flex: 1;
+  min-height: 0;
+  margin: 0 calc(var(--mh-unit) * -2);
+  padding: 0 calc(var(--mh-unit) * 2);
+  overflow-y: auto;
+}
+
+.tasks-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: calc(var(--mh-unit) * 2) calc(var(--mh-unit) * 1) calc(var(--mh-unit) * 1);
+}
+
+.tasks-title {
+  font-size: 12px;
+  color: var(--mh-text-3);
+}
+
+.tasks-tools {
+  display: flex;
+  gap: calc(var(--mh-unit) * 0.5);
+}
+
+.icon-btn-sm {
+  width: 24px;
+  height: 24px;
+  font-size: 12px;
+}
+
+/* ---------- New task screen (docs/screens/new-task.md) ---------- */
+.new-task {
+  max-width: 734px; /* composer + active list share ~734px (new-task.md §Layout) */
+  margin: 0 auto;
+  padding: 12vh calc(var(--mh-unit) * 4) calc(var(--mh-unit) * 8);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.greeting {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--mh-unit) * 3);
+  font-family: var(--mh-font-display);
+  font-size: 36px; /* greeting serif (new-task.md §Layout: ~36px) */
+  font-weight: var(--mh-w4);
+  color: var(--mh-text-1);
+  margin: 0 0 calc(var(--mh-unit) * 6);
+}
+
+.starburst {
+  color: var(--mh-accent-mark); /* starburst mark uses the orange accent (docs/07 §1.5) */
+  flex: none;
+}
+
+.code-note {
+  color: var(--mh-text-2);
+  margin: 0;
+}
+
+.composer {
+  background: var(--mh-surface-2);
+  border: 1px solid var(--mh-border-hair);
+  border-radius: var(--mh-radius-pill); /* composer card radius is large, ~20px (docs/07 §1.4) */
+  box-shadow: 0 2px 12px rgba(11, 11, 11, 0.06);
+  width: 100%; /* 720px content within the 734px column */
+  max-width: 720px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.composer-input {
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent; /* transparent textarea (docs/07 §1.4) */
+  font: inherit;
+  font-size: 14px;
+  color: var(--mh-text-1);
+  padding: calc(var(--mh-unit) * 4) calc(var(--mh-unit) * 4) calc(var(--mh-unit) * 2);
+  min-height: 56px;
+  max-height: 200px; /* grows to a maximum, then scrolls (UI-INT-040) */
+}
+
+.composer-toolbar,
+.composer-row2 {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--mh-unit) * 1);
+  padding: 0 calc(var(--mh-unit) * 3) calc(var(--mh-unit) * 3);
+}
+
+.composer-toolbar {
+  padding-top: 0;
+}
+
+.composer-row2 {
+  padding-top: calc(var(--mh-unit) * 1);
+}
+
+.composer-spacer {
+  flex: 1;
+}
+
+.composer-model {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--mh-unit) * 1);
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  color: var(--mh-text-2);
+  cursor: pointer;
+  padding: calc(var(--mh-unit) * 1) calc(var(--mh-unit) * 2);
+  border-radius: var(--mh-radius-pill);
+  max-width: 260px;
+  overflow: hidden;
+}
+
+.composer-model:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+.send-btn {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 50%; /* circular icon button (docs/07 §1.4) */
+  background: var(--mh-hover-fill); /* at rest low-contrast */
+  color: var(--mh-text-3);
+  cursor: pointer;
+}
+
+.send-btn.primary {
+  background: var(--mh-text-1); /* filled dark (light theme) + inverse text (docs/07 §3.1) */
+  color: var(--mh-bg-page);
+}
+
+[data-mode="dark"] .send-btn.primary {
+  background: var(--mh-text-1);
+  color: var(--mh-bg-page);
+}
+
+.send-btn:disabled {
+  cursor: default;
+  opacity: 0.9;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--mh-unit) * 1.5);
+  border: 1px solid var(--mh-border-hair);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  color: var(--mh-text-2);
+  border-radius: var(--mh-radius-pill); /* fully rounded pill (docs/07 §3.6) */
+  padding: calc(var(--mh-unit) * 1) calc(var(--mh-unit) * 3);
+  cursor: pointer;
+}
+
+.chip:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.active-list {
+  margin-top: calc(var(--mh-unit) * 8);
+}
+
+.active-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--mh-text-2);
+  font-size: 13px;
+  padding: 0 calc(var(--mh-unit) * 1);
+}
+
+.link-btn {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  color: var(--mh-text-2);
+  cursor: pointer;
+  border-radius: var(--mh-radius-control);
+  padding: calc(var(--mh-unit) * 1) calc(var(--mh-unit) * 2);
+}
+
+.link-btn:hover:not(:disabled) {
+  background: var(--mh-hover-fill);
+}
+
+.link-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ---------- Screen heads + documented empty states (docs/05 §4.4–4.7) ---------- */
+.screen-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: calc(var(--mh-unit) * 5) calc(var(--mh-unit) * 8);
+  border-bottom: 1px solid var(--mh-border-hair);
+}
+
+.screen-head h1 {
+  font-size: 15px;
+  font-weight: var(--mh-w6);
+  margin: 0;
+}
+
+.screen-empty {
+  min-height: 50vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--mh-unit) * 3);
+  color: var(--mh-text-2);
+  text-align: center;
+  padding: calc(var(--mh-unit) * 8);
+}
+
+.screen-empty h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: var(--mh-w6);
+  color: var(--mh-text-1);
+}
+
+.screen-empty p {
+  margin: 0;
+  max-width: 420px;
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--mh-unit) * 1);
+  border: 1px solid var(--mh-border-strong);
+  background: var(--mh-surface-2); /* white surface, hairline border (docs/07 §3.1) */
+  font: inherit;
+  font-size: 13px;
+  color: var(--mh-text-1);
+  border-radius: var(--mh-radius-control);
+  padding: calc(var(--mh-unit) * 2) calc(var(--mh-unit) * 4);
+  cursor: pointer;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--mh-hover-fill);
+}
+
+.btn-secondary:disabled {
+  opacity: 0.55;
+  cursor: default; /* reduced opacity; no hover (docs/07 §3.1) */
+}
+
+/* Information banner (scheduled tasks; docs/05 §4.6) */
+.info-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--mh-unit) * 3);
+  background: var(--mh-info-bg);
+  color: var(--mh-info-text);
+  border-radius: var(--mh-radius-card);
+  padding: calc(var(--mh-unit) * 3) calc(var(--mh-unit) * 4);
+  margin: calc(var(--mh-unit) * 4) calc(var(--mh-unit) * 8);
+  font-size: 13px;
+}
+
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--mh-unit) * 1);
+  cursor: pointer;
+  color: var(--mh-info-text);
+}
+
+.switch input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.switch-track {
+  width: 30px;
+  height: 17px;
+  border-radius: 9px;
+  background: var(--mh-surface-3);
+  border: 1px solid var(--mh-border-strong);
+  position: relative;
+  display: inline-block;
+}
+
+.switch-track::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--mh-surface-2);
+  box-shadow: 0 1px 2px rgba(11, 11, 11, 0.25);
+  transition: transform 0.15s ease;
+}
+
+.switch input:checked + .switch-track::after {
+  transform: translateX(13px);
+}
+
+.switch-label {
+  font-size: 12px;
 }

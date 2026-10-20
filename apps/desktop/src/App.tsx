@@ -1,8 +1,8 @@
 /**
- * App shell — Phase 1 (docs/13 §4): title bar, sidebar, mode switch (via TitleBar),
- * routes, loading/empty/error shells, theme, keyboard:
+ * App shell — Phase 1 (docs/13 §4): title bar, sidebar (mode switch lives in the
+ * sidebar per docs/06 §4), routes, documented empty states, theme, keyboard:
  * - Ctrl+B sidebar toggle (UI-INT-001)
- * - Ctrl+N → /new, clears composer context (UI-INT-005)
+ * - Ctrl+N → /new, clears composer context and focuses the composer (UI-INT-005)
  * - Ctrl+K → search palette (UI-INT-020)
  * - Ctrl+, → settings modal at the default section (docs/06 §2)
  *
@@ -16,7 +16,9 @@ import { TitleBar } from "./components/TitleBar";
 import { Sidebar } from "./components/Sidebar";
 import { SearchPalette } from "./components/SearchPalette";
 import { SettingsModal } from "./components/SettingsModal";
-import { PlaceholderScreen } from "./screens/PlaceholderScreen";
+import { NewTaskScreen } from "./screens/NewTaskScreen";
+import { ArtifactsScreen, CodeScreen, ProjectsScreen, ScreenHead, ScheduledScreen } from "./screens/EmptyStates";
+import { LoadingShell } from "./components/shells";
 import { SCREENS } from "./routes";
 
 export default function App() {
@@ -24,6 +26,7 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<string | null>(null);
+  const [newKey, setNewKey] = useState(0);
 
   // Sidebar collapse persists (docs/20 §4: renderer state, descriptive key).
   useEffect(() => {
@@ -69,6 +72,9 @@ export default function App() {
         setSidebarOpen((open) => !open);
       } else if (key === "n") {
         event.preventDefault();
+        // UI-INT-005: New clears the composer context and focuses it — the remount
+        // resets the draft (useState("")) and the mount effect re-focuses.
+        setNewKey((k) => k + 1);
         navigate("/new");
       } else if (key === "k") {
         event.preventDefault();
@@ -82,7 +88,7 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [navigate, openSettings]);
 
-  const cowork = SCREENS.find((screen) => screen.path === "/cowork");
+  const screens = new Map(SCREENS.map((screen) => [screen.path, screen]));
 
   return (
     <div className="app-shell">
@@ -91,15 +97,44 @@ export default function App() {
         onToggleSidebar={() => setSidebarOpen((open) => !open)}
       />
       <div className="app-body">
-        {sidebarOpen ? <Sidebar onOpenSettings={() => openSettings("general")} /> : null}
+        {sidebarOpen ? (
+          <Sidebar onOpenSettings={() => openSettings("general")} onOpenSearch={() => setPaletteOpen(true)} />
+        ) : null}
         <main className="main-pane">
           <Routes>
-            <Route path="/" element={<Navigate replace to="/new" />} />
-            {SCREENS.map((screen) => (
-              <Route key={screen.path} path={screen.path} element={<PlaceholderScreen screen={screen} />} />
-            ))}
-            {cowork ? <Route path="/cowork/:sessionId" element={<PlaceholderScreen screen={cowork} detail />} /> : null}
-            <Route path="*" element={<Navigate replace to="/new" />} />
+            {/* Redirects must carry any settings hash with them — the hash overlays the
+                route it was applied to (docs/06 §1), so `/#settings/usage` lands in the
+                settings modal over /new, not nowhere. */}
+            <Route
+              path="/"
+              element={<Navigate replace to={{ pathname: "/new", hash: window.location.hash }} />}
+            />
+            {/* newKey remounts the screen on Ctrl+N so the draft resets and the
+                composer refocuses (UI-INT-005). The key sits on the ELEMENT, not the
+                Route, so the remount also happens when already on /new. */}
+            <Route path="/new" element={<NewTaskScreen key={newKey} />} />
+            <Route path="/projects" element={<ProjectsScreen />} />
+            <Route path="/cowork-artifact" element={<ArtifactsScreen />} />
+            <Route path="/scheduled-task" element={<ScheduledScreen />} />
+            <Route
+              path="/epitaxy"
+              element={<CodeScreen screen={screens.get("/epitaxy") ?? { path: "/epitaxy", label: "Code", paletteSurface: "code" }} />}
+            />
+            {/* Task detail arrives with the sessions module (docs/13 §Phase 4);
+                the loading shell announces the route contract for now. */}
+            <Route path="/cowork/:sessionId" element={<LoadingShell label="Opening task…" />} />
+            <Route
+              path="/cowork"
+              element={
+                <>
+                  <ScreenHead label="Cowork" />
+                </>
+              }
+            />
+            <Route
+              path="*"
+              element={<Navigate replace to={{ pathname: "/new", hash: window.location.hash }} />}
+            />
           </Routes>
         </main>
       </div>

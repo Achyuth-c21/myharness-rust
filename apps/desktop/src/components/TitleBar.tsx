@@ -1,12 +1,12 @@
 /**
- * Title bar — 36px high (docs/07 §1.4).
- * - sidebar toggle + Ctrl+B (UI-INT-001);
- * - back/forward arrows greyed at history ends (UI-INT-003);
- * - segmented Cowork|Code switch changing mode AND route (UI-INT-004);
- * - window controls are present but inert until the bridge wires desktop/window APIs.
+ * Title bar — 36px high (docs/07 §1.4). Control set per docs/05 §2 and
+ * docs/screens/new-task.md §Title bar, in observed order:
+ * sidebar toggle (UI-INT-001), panel toggle (UI-INT-002), back/forward (UI-INT-003).
+ * The center is a drag region; window controls stay inert until the bridge wires
+ * the desktop/window APIs (crates/bridge, later phase — docs/08 §1 UI-INT-013).
  */
 import { useEffect, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 
 interface Props {
   sidebarOpen: boolean;
@@ -30,11 +30,39 @@ function useHistoryDepth(): { canBack: boolean; canForward: boolean } {
   return { canBack: depth >= 2, canForward: depth < max };
 }
 
+/* Icon-only SVG glyphs: aria-labels live on the buttons; glyphs are decorative. */
+
+function SidebarIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <rect x="1.5" y="2.5" width="13" height="11" rx="2" stroke="currentColor" strokeWidth="1.2" />
+      <line x1="6" y1="2.5" x2="6" y2="13.5" stroke="currentColor" strokeWidth="1.2" />
+    </svg>
+  );
+}
+
+function PanelIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <rect x="1.5" y="2.5" width="13" height="11" rx="2" stroke="currentColor" strokeWidth="1.2" />
+      <line x1="10" y1="2.5" x2="10" y2="13.5" stroke="currentColor" strokeWidth="1.2" />
+    </svg>
+  );
+}
+
+function ArrowIcon({ dir }: { dir: "back" | "forward" }) {
+  const d = dir === "back" ? "M10.5 3 5.5 8l5 5" : "M5.5 3l5 5-5 5";
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d={d} stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
-  const navigate = useNavigate();
-  const location = useLocation();
+  const navigateBack = 0; // replaced by history below
+  void navigateBack;
   const { canBack, canForward } = useHistoryDepth();
-  const mode = location.pathname.startsWith("/epitaxy") ? "code" : "cowork";
 
   return (
     <header className="titlebar" data-tauri-drag-region>
@@ -47,7 +75,18 @@ export function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
           title="Toggle sidebar (Ctrl+B)"
           onClick={onToggleSidebar}
         >
-          ☰
+          <SidebarIcon />
+        </button>
+        {/* UI-INT-002: panel toggle is present on the bar but no surface hosts an
+            auxiliary pane yet (state = unavailable with runtime reason). */}
+        <button
+          type="button"
+          className="icon-btn"
+          aria-label="Toggle panel"
+          disabled
+          title="No auxiliary pane on this surface"
+        >
+          <PanelIcon />
         </button>
         <button
           type="button"
@@ -57,7 +96,7 @@ export function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
           disabled={!canBack}
           onClick={() => window.history.back()}
         >
-          ←
+          <ArrowIcon dir="back" />
         </button>
         <button
           type="button"
@@ -67,43 +106,23 @@ export function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
           disabled={!canForward}
           onClick={() => window.history.forward()}
         >
-          →
+          <ArrowIcon dir="forward" />
         </button>
       </div>
 
-      <div className="titlebar-center" data-tauri-drag-region>
-        {/* UI-INT-004: segmented control; selected mode is raised, text darkened. */}
-        <div className="segmented" role="tablist" aria-label="Mode">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === "cowork"}
-            className={`seg${mode === "cowork" ? " seg-active" : ""}`}
-            onClick={() => navigate("/new")}
-          >
-            Cowork
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === "code"}
-            className={`seg${mode === "code" ? " seg-active" : ""}`}
-            onClick={() => navigate("/epitaxy")}
-          >
-            Code
-          </button>
-        </div>
-      </div>
+      {/* Center is intentionally empty (drag region only). The Cowork|Code switch
+          lives in the sidebar per docs/06 §4 / docs/screens/new-task.md. */}
+      <div className="titlebar-center" data-tauri-drag-region />
 
       <div className="titlebar-right">
         {/* Wired via crates/bridge (core invoke) in a later phase; inert for now. */}
-        <button type="button" className="icon-btn" disabled title="Minimize — via bridge later">
+        <button type="button" className="icon-btn" aria-label="Minimize" disabled title="Minimize — via bridge later">
           –
         </button>
-        <button type="button" className="icon-btn" disabled title="Maximize — via bridge later">
+        <button type="button" className="icon-btn" aria-label="Maximize" disabled title="Maximize — via bridge later">
           ▢
         </button>
-        <button type="button" className="icon-btn" disabled title="Close — via bridge later">
+        <button type="button" className="icon-btn" aria-label="Close" disabled title="Close — via bridge later">
           ✕
         </button>
       </div>

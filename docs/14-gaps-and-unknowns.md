@@ -156,6 +156,10 @@ unavailable API paths return a typed 503. Therefore:
 10. **Catalog model names are not entitlements.** Credentials and provider policy still apply.
 11. **The advisory update is not applied.** `2.42304.2` behavior may differ.
 12. **No source maps.** Symbol names are not stable API.
+13. **Dev-server-port squatters.** A stale process bound to the dev port answers E2E suites with
+    a different app (observed: unrelated SPA with title `Claude` on `:5173`). A whole-grid red
+    under port conflict is a harness failure, not a product regression; verify the served
+    document title before interpreting results (`tests/report-phase1.md`, Run 3).
 
 ## 8. Research questions for a follow-up pass
 
