@@ -1,0 +1,10 @@
+# Heavy vendored evidence artifacts - kept on disk, excluded from the repo
+evidence/app-asar-orig/
+
+# Obsidian per-machine workspace state
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+
+# OS cruft
+.DS_Store
+Thumbs.db

@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "appVersion": "2.42304.0",
+  "platform": "Fedora Linux 44 / X11 / 1920x1080",
+  "created": "2026-10-20",
+  "redaction": "Structured evidence only. No screenshots, transcripts, memory, task titles, usage totals, account/org identifiers, credentials, private hosts, or local absolute paths.",
+  "screenshotsApproved": false,
+  "files": [
+    {
+      "file": "runtime-api-surface.json",
+      "bytes": 45596,
+      "sha256": "a432b53fff30eb578f6d6f7dc23af86d768be14b4747611aeb15960119e76147",
+      "source": "evidence/runtime-api-surface.json",
+      "contains": "namespace/method/feature-flag names only"
+    },
+    {
+      "file": "localstorage-key-types.json",
+      "bytes": 4102,
+      "sha256": "a118999001c8729034e82fdb9b147253e7afa2164b9556eaa4f6416472e38411",
+      "source": "evidence/localstorage-key-types.json",
+      "contains": "normalized key names and value types only"
+    },
+    {
+      "file": "indexeddb-schema.json",
+      "bytes": 189,
+      "sha256": "3727c2562abb30caafd4b32be1d31f49863018aa5b9425c04833c4ee5dc97421",
+      "source": "evidence/indexeddb-schema.json",
+      "contains": "database/store names only"
+    },
+    {
+      "file": "ui-tokens.json",
+      "bytes": 11922,
+      "sha256": "d16db2a8c8dc2493ddad369d344772d4a32c22d232ddd76d1f5d714801edaf16",
+      "source": "evidence/ui-tokens.json",
+      "contains": "CSS token names/values"
+    },
+    {
+      "file": "component-styles.json",
+      "bytes": 3426,
+      "sha256": "5c17947c510ffd196e6353e963de49a2eedebb9a88b5081f6cb155f098dfa329",
+      "source": "evidence/component-styles.json",
+      "contains": "component measurements/styles"
+    },
+    {
+      "file": "theme-rules.json",
+      "bytes": 1932,
+      "sha256": "5d2772e4caba7451ab7af253f3ce0e51eb78f22a305de1eff2e1b28358df5af1",
+      "source": "evidence/theme-rules.json",
+      "contains": "theme selector rules"
+    },
+    {
+      "file": "style-aggregate.json",
+      "bytes": 5776,
+      "sha256": "ed02262dcac90376147f91b96bbcfeff34cca675bd75ef95bd3231f5eb053ad3",
+      "source": "evidence/style-aggregate.json",
+      "contains": "aggregated measurements"
+    },
+    {
+      "file": "i18n-en-US-values.txt",
+      "bytes": 54000,
+      "sha256": "db495ac5699f466e759d86be4d3a4bc9bc0f925bb9d17adb4c78185dbcb8c093",
+      "source": "evidence/i18n-en-US-values.txt",
+      "contains": "shipped UI strings"
+    },
+    {
+      "file": "live-patch-summary.md",
+      "bytes": 1930,
+      "sha256": "6173108a4d992ea1a0665bc3e43f0ea120a6b3742ef0fa7e3676e0cbf4d4652a",
+      "source": "pristine/current asar comparison + external bridge inspection",
+      "contains": "sanitized patch summary, file hashes, no source bodies or local paths"
+    }
+  ]
+}

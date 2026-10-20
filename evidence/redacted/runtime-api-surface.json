@@ -1,0 +1,1776 @@
+{
+  "settings": {
+    "AppConfig": [
+      "getAppConfig",
+      "setAppFeature",
+      "setIsDxtAutoUpdatesEnabled",
+      "setIsUsingBuiltInNodeForMcp"
+    ],
+    "Startup": [
+      "isMenuBarEnabled",
+      "isStartupOnLoginEnabled",
+      "setMenuBarEnabled",
+      "setStartupOnLoginEnabled"
+    ],
+    "CcdCli": [
+      "getCcdCliStatus",
+      "installCcdCli",
+      "uninstallCcdCli"
+    ],
+    "GlobalShortcut": [
+      "getGlobalShortcut",
+      "setGlobalShortcut"
+    ],
+    "MCP": [
+      "getMcpServersConfig",
+      "getMcpServersConfigWithStatus",
+      "isLocalDevMcpEnabled",
+      "onMcpConfigChange",
+      "onMcpStatusChanged",
+      "revealConfig",
+      "revealLogs",
+      "revealServerLog",
+      "setMcpServerConfigs"
+    ],
+    "Extensions": [
+      "deleteExtension",
+      "getAvailableExtensionRuntimes",
+      "getDirectoryUrl",
+      "getExtension",
+      "getExtensionSettings",
+      "getExtensionVersions",
+      "getInstalledExtensionsWithState",
+      "getIsUpdateAvailable",
+      "getManifestCompatibilityResult",
+      "handleDxtFile",
+      "installDxt",
+      "installDxtFromDirectory",
+      "installDxtUnpacked",
+      "installExtensionFromPreview",
+      "isDesktopExtensionDirectoryEnabled",
+      "isDesktopExtensionSignatureRequired",
+      "isDirectoryEnabled",
+      "isExtensionsEnabled",
+      "isLocalExtensionInstallAllowed",
+      "onExtensionDownloadProgress",
+      "onExtensionSettingsChanged",
+      "onExtensionsChanged",
+      "onPreviewExtensionInstallation",
+      "openExtensionSettingsFolder",
+      "openExtensionsFolder",
+      "refreshAllowlistCheck",
+      "setExtensionSettings",
+      "showInstallDxtDialog"
+    ],
+    "FilePickers": [
+      "getDirectoryPath",
+      "getFilePath"
+    ],
+    "AppPreferences": [
+      "getPreferences",
+      "onPreferencesChanged",
+      "setPreference"
+    ],
+    "AppFeatures": [
+      "getSupportedFeatures",
+      "onSupportedFeaturesChanged"
+    ],
+    "DesktopInfo": [
+      "getDefaultBrowserName",
+      "getSystemInfo",
+      "showLogsInFileManager"
+    ],
+    "Custom3pSetup": [
+      "applyAnthropicApiShortcut",
+      "authorizeAndProbeMcpServer",
+      "bootstrapStateStore",
+      "cancelHybridTransition",
+      "commitHybridTransition",
+      "createConfig",
+      "deleteConfig",
+      "duplicateConfig",
+      "exportConfig",
+      "forgetMcpOAuth",
+      "getConfigHealth",
+      "getLoginDesktop3pStatus",
+      "getMergedConfig",
+      "hybridTransitionStore",
+      "listConfigs",
+      "listSwitchableProfiles",
+      "openDeviceCodeWindowForE2e",
+      "openSetupWindow",
+      "probeEgressHosts",
+      "probeMcpServer",
+      "readConfig",
+      "recheckConfigHealth",
+      "relaunchApp",
+      "relaunchAppWithSessionGuard",
+      "renameConfig",
+      "resolverLandedTainted",
+      "retryModelDiscovery",
+      "revealConfig",
+      "scanOrgPlugins",
+      "setAppliedConfig",
+      "setDeploymentMode",
+      "setHybridOrgList",
+      "signInWithAnthropicApi",
+      "switchOrgAndRelaunch",
+      "switchProfile",
+      "triggerBootstrapAuth",
+      "writeConfig"
+    ],
+    "Custom3pHelperRun": [
+      "discoverModels",
+      "onProbeDeviceCode",
+      "probeInference",
+      "runCredentialHelper"
+    ],
+    "ClaudeAiImport": [
+      "cancelRemoteFetch",
+      "cancelSessionExport",
+      "clearAuth",
+      "confirmImportedSessionResume",
+      "discardRemoteExport",
+      "fetchRemoteExport",
+      "getAuthState",
+      "listImportSpaceTwins",
+      "mergeImportedSpace",
+      "onOnAuthStateChange",
+      "onOnAuthUserCode",
+      "onOnRemoteExportProgress",
+      "onOnRemoteExportStatus",
+      "onOnSessionExportProgress",
+      "peekLocalZips",
+      "pickLocalZips",
+      "pickSessionSourceFolder",
+      "previewSessionExport",
+      "registerDesktop3pBundle",
+      "reopenAuthTab",
+      "runImportFromLocalZips",
+      "runSessionExport",
+      "showExportInFolder",
+      "startAuth"
+    ],
+    "HistoryImport": [
+      "enumerateSessionSources",
+      "getAutoImportStatus",
+      "getImportCapabilities",
+      "getImportHistory",
+      "getRemovePreview",
+      "importSessionSources",
+      "importSourceExtras",
+      "instructionTextAdded",
+      "listInstructionTexts",
+      "listSourceExtras",
+      "onOnAutoImportStatus",
+      "onOnImportProgress",
+      "removeAllImportRuns",
+      "removeImportRun",
+      "scanSessionSource"
+    ],
+    "SupportBundle": [
+      "submitAction",
+      "supportBundleStateStore"
+    ],
+    "WakeScheduler": [
+      "getStatus",
+      "openSettings"
+    ],
+    "Custom3pUsage": [
+      "getSummary"
+    ]
+  },
+  "web": {
+    "WindowControl": [
+      "captureScreenshot",
+      "close",
+      "focus",
+      "reportCloseMenuTarget",
+      "reportFrameLayout",
+      "reportGoMenuAreas",
+      "reportModalScrim",
+      "reportReopenClosedSessionMenuState",
+      "reportSidebarMenuState",
+      "reportSidebarPlaceholder",
+      "reportSplitViewMenuState",
+      "resize",
+      "setIncognitoMode",
+      "setModalScrimActive",
+      "setThemeMode",
+      "show"
+    ],
+    "QuickEntry": [
+      "onOnQuickEntrySubmit",
+      "setRecentChats"
+    ],
+    "Account": [
+      "activeAccountChanged",
+      "setAccountDetails"
+    ],
+    "PlanUsage": [
+      "nudgeRefresh"
+    ],
+    "WebBuild": [
+      "reportCommitHash"
+    ],
+    "Navigation": [
+      "onNavigate"
+    ],
+    "OsOpenHandlers": [
+      "ready"
+    ],
+    "OsEntryPlaces": [
+      "report"
+    ],
+    "DeepLink": [
+      "onHandleDeepLink"
+    ],
+    "MenuEvents": [
+      "claimEditCommands",
+      "editCommandUnclaimed",
+      "onBackgroundTasksShortcut",
+      "onCloseSessionPane",
+      "onCloseWindow",
+      "onCycleSession",
+      "onEditCommand",
+      "onFindInFiles",
+      "onNewWindow",
+      "onOpenCommandPalette",
+      "onOpenFile",
+      "onOpenFolder",
+      "onOpenKeyboardShortcuts",
+      "onReopenClosedSession",
+      "onSelectArea",
+      "onSplitViewCommand",
+      "onSwitchSurface",
+      "onToggleSessionPane",
+      "onToggleSidebar",
+      "releaseEditCommands",
+      "reportContextMenuEditor"
+    ],
+    "ContentStampReporter": [
+      "report"
+    ],
+    "WindowState": [
+      "compositingStore",
+      "deviceLinkStore",
+      "getAppFocused",
+      "getFullscreen",
+      "getKeptHidden",
+      "getOnScreen",
+      "getVisibility",
+      "getZoomFactor",
+      "hostPowerStore",
+      "onAppFocusChanged",
+      "onCuDockStateChanged",
+      "onFullscreenChanged",
+      "onKeptHiddenChanged",
+      "onVisibilityChanged",
+      "onZoomFactorChanged"
+    ],
+    "DeviceStorage": [
+      "cancelCodeCleanup",
+      "clearCacheAndRestart",
+      "getFreeDiskSpace",
+      "getUsage",
+      "onCodeCleanupProgress",
+      "previewCodeCleanup",
+      "reveal",
+      "runCodeCleanup"
+    ],
+    "Toast": [
+      "onShowToast"
+    ],
+    "Auth": [
+      "doAuthInBrowser",
+      "prepareForSignedIn"
+    ],
+    "DesktopNotifications": [
+      "getAuthorizationStatus",
+      "onNotificationAction",
+      "openNotificationSettings",
+      "requestAuthorization",
+      "setProjectPromptsWaiting",
+      "showNotification",
+      "showNotificationWithActions",
+      "supportsNotificationActions"
+    ],
+    "AutoUpdater": [
+      "ancientJournalState",
+      "cancelPendingRestart",
+      "checkForUpdates",
+      "getRunningLocalSessionCount",
+      "getRunningLocalSessions",
+      "requestAncientJournal",
+      "restartToUpdate",
+      "restartToUpdateWhenIdle",
+      "updaterStateStore"
+    ],
+    "BrowserNavigation": [
+      "goBack",
+      "goForward",
+      "navigationStateStore",
+      "requestMainMenuPopup"
+    ],
+    "FindInPageProvider": [
+      "onFindClear",
+      "onFindRequest",
+      "reportFindResult",
+      "setProviderActive",
+      "setProviderActiveInPopout"
+    ],
+    "ManagedConfig": [
+      "managedRendererConfigStore"
+    ],
+    "CoworkArtifacts": [
+      "deleteArtifact",
+      "getAllArtifacts",
+      "getArtifactHtml",
+      "getArtifactMetadata",
+      "getArtifactRepublishContent",
+      "getArtifactThumbnail",
+      "hideArtifact",
+      "importArtifact",
+      "isAutoPublishEnabled",
+      "isSharedContentCurrent",
+      "isSharingEnabled",
+      "onOnArtifactsChanged",
+      "parkAndCaptureArtifact",
+      "printArtifactToPdf",
+      "refreshImportedArtifact",
+      "reloadArtifactView",
+      "restoreArtifactVersion",
+      "setArtifactAutoPublish",
+      "setArtifactLastModifiedSession",
+      "setArtifactMcpTools",
+      "setArtifactName",
+      "setArtifactStarred",
+      "shareArtifact",
+      "showArtifact",
+      "unshareArtifact"
+    ],
+    "CoworkFilePreview": [
+      "hide",
+      "isEnabled",
+      "isEpitaxyPreviewEnabled",
+      "isOpenInDefaultAppEnabled",
+      "isVmReady",
+      "parkAndCapture",
+      "show",
+      "vmReadiness",
+      "whenContentReady"
+    ],
+    "ClaudeCode": [
+      "checkGitAvailable",
+      "getLocalSandboxStatus",
+      "getPeriodUsage",
+      "getStatus",
+      "patchUserSettings",
+      "prepare",
+      "resolveLocalSettings",
+      "setEnableWorkflows",
+      "setLocalSandboxEnabled",
+      "setStrictSandboxMode"
+    ],
+    "CliSessionImport": [
+      "claimMenuStart",
+      "cliImportStore",
+      "onStartFromMenu",
+      "submitAction"
+    ],
+    "CloudMove": [
+      "onCloudMoveCommand",
+      "reportCloudMoveResult",
+      "setCloudMoveListening"
+    ],
+    "ChromeExtension": [
+      "getBrowserActivity",
+      "getConnectedExtensions",
+      "installExtension",
+      "isInstalled",
+      "launchBrowser",
+      "onConnectedExtensionsChanged",
+      "restartChrome"
+    ],
+    "ComputerUseTcc": [
+      "getState",
+      "listInstalledApps",
+      "openSystemSettings",
+      "requestAccessibility",
+      "requestMicrophone",
+      "requestScreenRecording",
+      "revokeGrant"
+    ],
+    "ComputerUseLivePreview": [
+      "browserPreviewStore",
+      "computerUsePreviewStore",
+      "setFps",
+      "setSubscribed"
+    ],
+    "BuddyRemoteFeed": [
+      "onPermissionDecision",
+      "sync"
+    ],
+    "FramebufferPreview": [
+      "attach",
+      "detach",
+      "listSources",
+      "onOpenSourceRequested",
+      "onSessionFatal",
+      "onSessionResized",
+      "requestFramePort",
+      "sendKey",
+      "sendPointer",
+      "sendScroll",
+      "setStreamHints"
+    ],
+    "LocalAgentModeSessions": [
+      "abandonBridgeEnvironment",
+      "ackChatFolderAccessReport",
+      "addFolderToSession",
+      "addTrustedFolder",
+      "allowRoutineFolders",
+      "archive",
+      "authorizeDirectMcpServer",
+      "authorizeDirectMcpServerWithAccountPicker",
+      "autoSaveDeliveredFiles",
+      "browseAndAddTrustedFolder",
+      "browseAndGrantRemoteSessionFolder",
+      "callChromeToolForRemoteSession",
+      "cancelInteractiveAuth",
+      "clearRemoteSessionFolderGrants",
+      "closeRemoteSessionTabGroup",
+      "delete",
+      "deleteBridgeAgentMemory",
+      "deleteBridgeSession",
+      "deleteLocalSkill",
+      "directMcpCallTool",
+      "directMcpListResources",
+      "directMcpReadResource",
+      "discardCopperHeron",
+      "disconnectDirectMcpServer",
+      "disconnectDirectMcpServerV2",
+      "dismissWatchRecordPill",
+      "finalizeCopperHeron",
+      "getAll",
+      "getAppIconForBundleId",
+      "getBridgeConsent",
+      "getDefaultWorkspaceFolders",
+      "getDirectMcpServerStatuses",
+      "getLocalMcpServers",
+      "getLocalSkillFiles",
+      "getManagedAskToolNames",
+      "getRoutineFolderGrant",
+      "getSession",
+      "getSessionMissReason",
+      "getSessionsBridgeEnabled",
+      "getSessionsForScheduledTask",
+      "getSupportedCommands",
+      "getTranscript",
+      "getTranscriptRead",
+      "grantProjectUploadFolder",
+      "grantRemoteSessionFolder",
+      "grantRemoteSessionFolders",
+      "grantRoutineFolders",
+      "interactiveAuthStore",
+      "isFolderTrusted",
+      "kickBridgePoll",
+      "listLocalSkills",
+      "listProjectUploadFolder",
+      "mcpAuthenticate",
+      "mcpCallTool",
+      "mcpListResources",
+      "mcpReadResource",
+      "mcpReconnect",
+      "mcpSubmitOAuthCallbackUrl",
+      "onAutoModeOverrideAlwaysAllow",
+      "onCopperHeronHoldDropped",
+      "onOnBridgePermissionPreflight",
+      "onOnChatFolderAccessChanged",
+      "onOnCoworkFromMain",
+      "onOnCuEmergencyStop",
+      "onOnDirectMcpServerStatusesChanged",
+      "onOnEvent",
+      "onOnFolderSkillsCapped",
+      "onOnManagedAskToolNamesChanged",
+      "onOnRemoteFolderConsentDialogShown",
+      "onOnRemoteSessionStart",
+      "onOnToolPermissionRequest",
+      "onWatchRecordingComplete",
+      "openOutputsDir",
+      "readOpenedFiles",
+      "readProjectUploadFile",
+      "refetchMyAccess",
+      "releaseProjectUploadFolder",
+      "releaseRemoteAttachmentUploads",
+      "releaseRemoteCuLock",
+      "removeTrustedFolder",
+      "renameLocalSkill",
+      "replaceEnabledMcpTools",
+      "replaceRemoteMcpServers",
+      "replayChatFolderAccessReports",
+      "requestFolderTccAccess",
+      "resetBridge",
+      "resetBridgeSession",
+      "respondBridgePermissionPreflight",
+      "respondDirectoryServers",
+      "respondPluginSearch",
+      "respondSlashMenuSkills",
+      "respondToToolPermission",
+      "revealLocalSkill",
+      "revokeInteractiveAuth",
+      "revokeRoutineFolderGrant",
+      "rewind",
+      "rewindV2",
+      "saveLocalSkill",
+      "saveLocalSkillArchive",
+      "searchSessions",
+      "sendMessage",
+      "sessionsBridgeStatusStore",
+      "setChromePermissionMode",
+      "setDraftSessionFolders",
+      "setEffort",
+      "setExtendedThinking",
+      "setFocusedSession",
+      "setLocalSkillEnabled",
+      "setMcpServers",
+      "setModel",
+      "setPermissionMode",
+      "setSessionsBridgeEnabled",
+      "setSpSectionPrompts",
+      "shareSession",
+      "signalSessionIntent",
+      "stageRemoteSessionAttachmentsViaFilesApi",
+      "start",
+      "startWatchRecording",
+      "stop",
+      "stopTask",
+      "submitTranscriptFeedback",
+      "syncSkills",
+      "takeCopperHeronFrame",
+      "takeCopperHeronSummary",
+      "takeCopperHeronThumbnails",
+      "takeHeldWatchRecording",
+      "touchCopperHeron",
+      "triggerInteractiveAuth",
+      "updateSession",
+      "uploadRemoteAttachmentsToFilesApi"
+    ],
+    "CoworkStorage": [
+      "cancelCleanup",
+      "exportAll",
+      "exportProject",
+      "exportTask",
+      "getCounts",
+      "getUsage",
+      "onCleanupProgress",
+      "previewCleanup",
+      "reveal",
+      "runCleanup"
+    ],
+    "CoworkUserFiles": [
+      "getInfo",
+      "migrate",
+      "pickTarget",
+      "reveal"
+    ],
+    "CoworkMemory": [
+      "deleteAccountMemory",
+      "listAccountMemories",
+      "readAccountMemory",
+      "readGlobalMemory",
+      "resetMemories",
+      "writeAccountMemory",
+      "writeGlobalMemory"
+    ],
+    "Gorse": [
+      "decline",
+      "exportToFiles",
+      "migrateToProject",
+      "openExportFallbackFolder",
+      "preview",
+      "progress",
+      "status"
+    ],
+    "CoworkSpaces": [
+      "addFolderToSpace",
+      "addLinkToSpace",
+      "addProjectToSpace",
+      "appendRemoteSessionSpaceFolders",
+      "classifySessions",
+      "copyFilesToSpaceFolder",
+      "createSpace",
+      "createSpaceFolder",
+      "deleteSpace",
+      "getAllSpaces",
+      "getAutoMemoryDir",
+      "getRemoteSessionSpaces",
+      "getSpace",
+      "getSpaceMemoryCapabilities",
+      "getSpaceMemoryCopyStatus",
+      "getSpaceMemorySummary",
+      "getSpacesStoreState",
+      "listFolderContents",
+      "onOnSpaceEvent",
+      "openFile",
+      "readFileContents",
+      "readSpaceMemoryIndex",
+      "recordSpaceMigrationOutcome",
+      "removeFolderFromSpace",
+      "removeLinkFromSpace",
+      "removeProjectFromSpace",
+      "removeRemoteSessionSpace",
+      "requestSpacesInventoryReport",
+      "setAutoDescription",
+      "setRemoteSessionSpace",
+      "setSpaceMigration",
+      "startSpaceMemoryCopy",
+      "summarizeSpace",
+      "updateSpace"
+    ],
+    "AgentModeFeedback": [
+      "openFeedbackAndConfirmReinstall",
+      "reportErrorToSlack"
+    ],
+    "CoworkFeedback": [
+      "captureScreenshot",
+      "discardScreenshot",
+      "getScreenshotDataUrl",
+      "getSystemInfo",
+      "submitFeedback"
+    ],
+    "DeviceRegistry": [
+      "getAvailability",
+      "getLocalDeviceInfo",
+      "getOwnRowPk",
+      "getPublicKey",
+      "notifyBridgeAbsent",
+      "notifyRegistered",
+      "rotateKey",
+      "setKeylessBridgeRowPk",
+      "signAttestationPreimage",
+      "signConversationBind",
+      "signCreateSessionBind",
+      "signForSessionHeader",
+      "signProjectThreadLink",
+      "signSessionBind",
+      "signSessionFileCopy",
+      "signSessionRequest",
+      "signTriggerDigest",
+      "signTriggerOp"
+    ],
+    "Dictation": [
+      "getStreamCredential"
+    ],
+    "DocumentFunnel": [
+      "ensureScratchRoot",
+      "ingestSessionDocument",
+      "injectDocumentContext",
+      "listScratchWorkingFiles",
+      "onWorkingDocumentsChanged",
+      "openDownloadExport",
+      "revealDownloadExport",
+      "runClarkdownConvert",
+      "runClarkdownDownloadExport",
+      "writeScratchFile"
+    ],
+    "FileSystem": [
+      "appInfoForExtension",
+      "browseFile",
+      "browseFiles",
+      "browseFolder",
+      "browseFolders",
+      "exportLocalFileToGoogleDrive",
+      "getLocalFileThumbnail",
+      "getSystemPath",
+      "listDirectory",
+      "listFilesInFolder",
+      "openLocalFile",
+      "promoteScratchpadFile",
+      "readLocalFile",
+      "savePastedFile",
+      "showInFolder",
+      "whichApplication",
+      "writeFileDownload",
+      "writeFileDownloadAndOpen",
+      "writeLocalFile"
+    ],
+    "Resources": [
+      "fetchMentionOptions",
+      "getProjectFileList",
+      "getProjectFileListIfChanged",
+      "handleMentionSelect",
+      "hideFindInPageOverlay",
+      "offerFindInPageInPopout",
+      "onFindRequested",
+      "onFindStepRequested",
+      "releaseFindInPageInPopout",
+      "searchFileContents",
+      "searchFileContentsWithOptions",
+      "setFindInPageClaimed",
+      "setFindInPageOverlayObstructed",
+      "setFindInPageOverlayObstructedInPopout",
+      "setFocusedCwd",
+      "setFocusedRemoteTarget",
+      "setFocusedSshTarget"
+    ],
+    "ForgeState": [
+      "getForgeStateSnapshot",
+      "onForgeStateChanged",
+      "refreshForgeStateRow",
+      "setForgeStateVisibleKeys"
+    ],
+    "GitState": [
+      "getGitStateSnapshot",
+      "onGitStateChanged"
+    ],
+    "GrandPrix": [
+      "disconnect",
+      "dismissVerificationCode",
+      "grandPrixStatusStore",
+      "pair",
+      "request",
+      "submitVerificationCode"
+    ],
+    "Launch": [
+      "acceptChromeImportSharedOffer",
+      "activeServersStore",
+      "addPreviewAllowedOrigin",
+      "addServerFromCandidate",
+      "admitRemotePaneOriginOnce",
+      "armPreviewLiveStream",
+      "callRemoteBrowserTool",
+      "capturePreviewScreenshot",
+      "capturePreviewScreenshotIfChanged",
+      "clearCoworkBrowserData",
+      "clearPreviewAllowedOrigins",
+      "clearPreviewBrowsingData",
+      "clearPreviewViewport",
+      "closeAllPreviewTabs",
+      "closePreviewTab",
+      "destroyPreview",
+      "detectServerCandidates",
+      "detectServerCandidatesWithAgent",
+      "discardPreviewLastFrame",
+      "ensureChatBlankPreview",
+      "ensureRemoteBlankPreview",
+      "exportPreview",
+      "focusOrOpenPreviewTab",
+      "focusPreview",
+      "getAllSessionPreviewTabs",
+      "getAutoVerify",
+      "getChromeImportAvailability",
+      "getChromeImportSharedOffer",
+      "getConfiguredServices",
+      "getCoworkChromeImportAvailability",
+      "getLogs",
+      "getPreviewAllowedOrigins",
+      "getPreviewLastFrame",
+      "getPreviewNavState",
+      "getPreviewTabs",
+      "getPreviewUrl",
+      "goBack",
+      "goForward",
+      "hidePreview",
+      "importChromeLogins",
+      "isAvailable",
+      "isJitlessForced",
+      "listChromeImportProfiles",
+      "listChromeImportSites",
+      "listImportedChromeLogins",
+      "listRemoteBrowserTools",
+      "loadClaudePagePreview",
+      "loadHtmlPreview",
+      "loadHtmlPreviewContent",
+      "navigatePreview",
+      "navigatePreviewFromModel",
+      "onClaudePageLoadSettled",
+      "onElementSelected",
+      "onPreviewAddressBarShortcut",
+      "onPreviewBoundsProbe",
+      "onPreviewCloseShortcut",
+      "onPreviewExternalLinkRequested",
+      "onPreviewFocusEnter",
+      "onPreviewFocusExit",
+      "onPreviewNewTabShortcut",
+      "onPreviewPaneShortcut",
+      "onPreviewReopenTabShortcut",
+      "onPreviewRevealRequested",
+      "onPreviewSelectionShortcut",
+      "onPreviewSketchShortcut",
+      "onPreviewSupersededByArtifact",
+      "onPreviewTabsChanged",
+      "onPreviewUrlChanged",
+      "onRoutedLinkConfirmRequested",
+      "onSelectionModeEnded",
+      "onSessionPaneVisibilityRequested",
+      "openClickedLinkInPreview",
+      "openExternalLinkInPreview",
+      "openGdriveDocument",
+      "openPreviewInBrowser",
+      "openPreviewTab",
+      "openRoutedLinkExternally",
+      "pickHtmlFile",
+      "previewConsoleLogs",
+      "previewInspect",
+      "previewModelScreenshot",
+      "previewSnapshot",
+      "recordRemotePaneOriginDecision",
+      "refreshPreview",
+      "removeImportedChromeLogins",
+      "removePreviewAllowedOrigin",
+      "reopenClosedPreviewTab",
+      "reorderPreviewTab",
+      "resolveRemotePaneConsent",
+      "resolveRoutedLinkConfirm",
+      "setActivePreviewTab",
+      "setArtifactPaneHost",
+      "setAutoVerify",
+      "setPreviewChromeFocus",
+      "setPreviewColorScheme",
+      "setPreviewLinkRouting",
+      "setPreviewMuted",
+      "setPreviewPaneMounted",
+      "setPreviewPaneShortcutArmed",
+      "setPreviewViewport",
+      "setRemoteSessionViewed",
+      "setRoutedLinkConfirmReady",
+      "showPreview",
+      "startBrowserPreview",
+      "startFromConfig",
+      "startRemoteBrowserPreview",
+      "stopServer",
+      "teardownRemoteSessionPreview",
+      "toggleSelectionMode"
+    ],
+    "LocalSessions": [
+      "acceptSideSessionOffer",
+      "ackSSHPasswordRequestShown",
+      "addDirectories",
+      "addSuggestedFolderForSessionFile",
+      "answerPendingCwdTrust",
+      "applyFlagSettings",
+      "applyModelByRestart",
+      "archive",
+      "armAutoFixOnNextPr",
+      "backgroundTasks",
+      "beginTearOffHalo",
+      "canAutoResume",
+      "canStartWslSession",
+      "cancelCreateOutputStyle",
+      "cancelQueuedMessage",
+      "changeCwd",
+      "checkBranchSwitchConflict",
+      "checkGhAvailable",
+      "checkRemoteTargetTrust",
+      "checkRemoteTrust",
+      "checkStoredTrust",
+      "checkTrust",
+      "classifyTccFolderKind",
+      "cleanupAutoModeProposalFile",
+      "clearSSHHostToolGrants",
+      "clearSession",
+      "closeBtwChild",
+      "closeCliTail",
+      "commitWipForBranchSwitch",
+      "completeCodeSettingRequest",
+      "completeSessionViewRequest",
+      "completeStartTargetsRequest",
+      "confirmImportedSessionResume",
+      "createAgent",
+      "createLogsHandoffBundle",
+      "createOutputStyle",
+      "createPrReviewComment",
+      "createScratchWorkspace",
+      "createSessionFile",
+      "declareSSHPromptKinds",
+      "delete",
+      "dequeuePr",
+      "detachFromParent",
+      "disableAutoMerge",
+      "discardKeptWorktree",
+      "discardPendingTurn",
+      "discardPrewarm",
+      "discardWorkingTree",
+      "dismissBoundPr",
+      "dismissTaskBacklogItem",
+      "dropsHostReplyStamp",
+      "enableAutoMerge",
+      "enableCliRemoteControl",
+      "endTearOffHalo",
+      "fetchGithubImage",
+      "findLocalSessionIdForBridgeId",
+      "forceReconnectSSH",
+      "forgetSSHSavedPassword",
+      "forkSession",
+      "getAdvisorSetting",
+      "getAgents",
+      "getAll",
+      "getBusyShellPtyKeys",
+      "getCheckRunAnnotations",
+      "getChipLevelPreference",
+      "getClaudeCodeRestartVersions",
+      "getCodeStats",
+      "getCommitDiff",
+      "getContextUsage",
+      "getContextUsageSummary",
+      "getCrCliStatus",
+      "getCrRefSummary",
+      "getDefaultEffort",
+      "getDefaultPermissionMode",
+      "getDetectedProjects",
+      "getDiffFileContent",
+      "getDiffFileImage",
+      "getGhIssue",
+      "getGhRefSummary",
+      "getGhRefSummaryWithStatus",
+      "getGhUserSummary",
+      "getGitCommits",
+      "getGitDiff",
+      "getGitDiffFilePatch",
+      "getGitDiffStats",
+      "getGitInfo",
+      "getInstalledEditors",
+      "getLocalBranches",
+      "getLocalMcpServers",
+      "getPendingSSHPasswordRequests",
+      "getPrChecks",
+      "getPrCommits",
+      "getPrFileContent",
+      "getPrFiles",
+      "getPrOverview",
+      "getPrReviewComments",
+      "getPrStateForBranch",
+      "getPrTimeline",
+      "getProxiedConnectorCall",
+      "getRemoteCommitDiff",
+      "getRemoteControlStartState",
+      "getRemoteDiffFileContent",
+      "getRemoteGitCommits",
+      "getRemoteGitDiff",
+      "getRemoteGitDiffStats",
+      "getRemoteGitInfo",
+      "getRemoteLocalBranches",
+      "getRemoteSSHRemedies",
+      "getSSHAuthSummary",
+      "getSSHCommitDiff",
+      "getSSHConfigs",
+      "getSSHDiffFileContent",
+      "getSSHDraftCommandNames",
+      "getSSHGitCommits",
+      "getSSHGitDiff",
+      "getSSHGitDiffStats",
+      "getSSHGitInfo",
+      "getSSHHostToolGrants",
+      "getSSHLocalBranches",
+      "getSSHLocalClientCapture",
+      "getSSHProxyOutput",
+      "getSSHSavedPassword",
+      "getSSHWorktreeDefaults",
+      "getSSHWorktreeLocation",
+      "getSession",
+      "getSessionCliMcpServers",
+      "getSessionFilePlacement",
+      "getSessionImageStreamUrl",
+      "getSessionList",
+      "getSessionMediaStreamUrl",
+      "getSessionPanelMediaStreamUrl",
+      "getSessionSSHRemedies",
+      "getSessionsForScheduledTask",
+      "getSupportedCommands",
+      "getTaskBacklog",
+      "getTaskOutput",
+      "getTeleportPlan",
+      "getTeleportReadiness",
+      "getTerminalShells",
+      "getTranscript",
+      "getTranscriptPage",
+      "getTranscriptTail",
+      "getTrustedSSHHosts",
+      "getUncommittedChanges",
+      "getUncommittedChangesByFolder",
+      "getWorkingTreeDirtyState",
+      "getWorkingTreeStatus",
+      "importAllCliSessions",
+      "installGh",
+      "interrupt",
+      "interruptBashCommand",
+      "interruptSideChat",
+      "invalidateGitDiffCache",
+      "invalidatePrCaches",
+      "isBranchOnOrigin",
+      "isSessionPathGone",
+      "isWorkingTreeDirty",
+      "launchUltrareview",
+      "listCliSessions",
+      "listDirectoryAtCwd",
+      "listGhIssues",
+      "listGlobalOutputStyles",
+      "listRemoteDirectory",
+      "listResumableCliSessions",
+      "listSSHDirectory",
+      "listSessionDirectory",
+      "listWslDistros",
+      "loadArchivedSessions",
+      "logCliEvent",
+      "markPeerMessagesRead",
+      "markPrDraft",
+      "markPrReady",
+      "mcpAuthenticate",
+      "mcpAuthenticateConfigServer",
+      "mcpCallTool",
+      "mcpClearAuth",
+      "mcpEnableServer",
+      "mcpListResources",
+      "mcpReadResource",
+      "mcpReconnect",
+      "mcpRetryConnection",
+      "mcpSubmitOAuthCallbackUrl",
+      "mergePr",
+      "muteSideSessionOffers",
+      "notifySpawnedTaskStarted",
+      "notifySpawnedTaskUnstarted",
+      "onCodeSettingRequest",
+      "onOnEvent",
+      "onOnSSHPasswordQueueChanged",
+      "onOnSSHPasswordRequestWithdrawn",
+      "onOnSSHPasswordRequired",
+      "onOnToolPermissionRequest",
+      "onSessionDirectoryChanged",
+      "onSessionViewRequest",
+      "onSidebarCommand",
+      "onStartTargetsRequest",
+      "openCliTail",
+      "openInEditor",
+      "openMacFilesAndFoldersSettings",
+      "openSessionFileInDefaultApp",
+      "personOpenedSession",
+      "pickFileAtCwd",
+      "pickSessionFile",
+      "popBackgroundTaskSuggestion",
+      "popBackgroundTaskSuggestionById",
+      "previewCliResume",
+      "prewarmAuth",
+      "prewarmFolderless",
+      "prewarmLocal",
+      "probeImportableCliSessions",
+      "probeSSHConnection",
+      "promoteQueuedMessage",
+      "readCliTranscript",
+      "readFileAtCwd",
+      "readSessionFile",
+      "readSessionFileWithStatus",
+      "readSessionImageAsDataUrl",
+      "readSessionMediaAsDataUrl",
+      "readSessionPanelDocumentAsDataUrl",
+      "readSessionPanelMediaAsDataUrl",
+      "readTranscript",
+      "reconnectSessionHost",
+      "refreshGitState",
+      "refreshOutputStyles",
+      "reinstallRemoteClaudeCode",
+      "remoteStartMcpConfigStarted",
+      "removeSSHHostToolGrant",
+      "reorderQueuedMessage",
+      "replaceEnabledMcpTools",
+      "replaceRemoteMcpServers",
+      "replyToPrReviewComment",
+      "reportArtifactsReset",
+      "reportComposerInp",
+      "reportRunFollowUp",
+      "reportSSHPasswordPromptHidden",
+      "reportSessionDeadEnd",
+      "reportSessionListHint",
+      "reportSessionListLoad",
+      "reportStreamRender",
+      "reportSwitchAbandoned",
+      "reportSwitchInitiated",
+      "reportSwitchTiming",
+      "reportTranscriptLoadEarlier",
+      "reportTranscriptWindowBackfill",
+      "requestTranscriptPort",
+      "rerunPrCheck",
+      "resizeShellPty",
+      "resolveCloudBranch",
+      "resolveGithubRepoIds",
+      "resolvePrReviewThread",
+      "resolveSSHSettings",
+      "resolveSessionFile",
+      "respondRemoteStartMcpConfig",
+      "respondSessionConnectorToggle",
+      "respondSidebarCommand",
+      "respondToAutoModeServerFallbackPrompt",
+      "respondToLanyardConsent",
+      "respondToRefusalFallbackPrompt",
+      "respondToSSHPassword",
+      "respondToTitleOffer",
+      "respondToToolPermission",
+      "respondToViolinBowPrompt",
+      "restartRemoteHelper",
+      "restartRemoteSession",
+      "resumeCliSession",
+      "resumePreClearSession",
+      "retryStart",
+      "revealOutputStyle",
+      "revealRemotePath",
+      "reviewRepository",
+      "rewind",
+      "rewindFiles",
+      "rewindToRefusedPrompt",
+      "rewindV2",
+      "runBashCommand",
+      "runSSHRemedy",
+      "saveRemoteTargetTrust",
+      "saveTrust",
+      "searchSessions",
+      "sendMessage",
+      "sendSideChatMessage",
+      "sendSteeredNow",
+      "sessionConnectorToggleStarted",
+      "setAccountBranchPrefix",
+      "setAutoFixOwnPrsWanted",
+      "setAvailableCodeModels",
+      "setAvailableNextActions",
+      "setBackgroundTasksShortcutArmed",
+      "setBoundPrAutoFix",
+      "setChipLevel",
+      "setChipLevelPreference",
+      "setCodeSettingAvailability",
+      "setCustomGroups",
+      "setEffort",
+      "setFastMode",
+      "setFocusedSession",
+      "setManualKeepAwake",
+      "setMcpServers",
+      "setModel",
+      "setPermissionMode",
+      "setSSHConfigs",
+      "setSSHWorktreeLocation",
+      "setSessionAutoArchiveOnPrClose",
+      "setSessionPaneMenuState",
+      "setShellPtyTitle",
+      "setTearOffHalo",
+      "setThinkingSummariesWanted",
+      "setTrustedSSHHosts",
+      "setVisibility",
+      "shareSession",
+      "showSessionFileInFolder",
+      "showSessionFilePreview",
+      "start",
+      "startBtwChild",
+      "startShellPty",
+      "startSideChat",
+      "stashWorkingTree",
+      "stop",
+      "stopShellPty",
+      "stopSideChat",
+      "stopTask",
+      "submitFeedback",
+      "submitPrReview",
+      "suggestFolderForSessionFile",
+      "switchRewindMark",
+      "teleportToCloud",
+      "testSSHConnection",
+      "toggleRemoteControl",
+      "unarchive",
+      "undoRewind",
+      "updatePrBody",
+      "updatePrComment",
+      "updateSession",
+      "validateNewOutputStyleName",
+      "warmSession",
+      "watchSessionDirectories",
+      "writeAutoModeProposalFile",
+      "writeSessionFile",
+      "writeShellPty"
+    ],
+    "LocalSessionEnvironment": [
+      "get",
+      "getScoped",
+      "moveIntoScopes",
+      "removeScoped",
+      "save",
+      "saveScoped"
+    ],
+    "LocalSessionPresets": [
+      "load",
+      "replaceAll"
+    ],
+    "LocalPlugins": [
+      "deletePlugin",
+      "getDownloadedRemotePlugins",
+      "getPluginCliBatch",
+      "getPluginCliStatus",
+      "getPluginShimOps",
+      "getPlugins",
+      "listSkillFiles",
+      "materializeEnabledPlugins",
+      "onOnCliOpAlwaysAllowed",
+      "revokePluginOAuth",
+      "setPluginEnabled",
+      "setPluginEnvVars",
+      "setPluginOAuthClient",
+      "setPluginShimPermission",
+      "startPluginOAuthFlow",
+      "syncRemotePlugins",
+      "uploadPlugin"
+    ],
+    "PluginBridgeMcp": [
+      "listServers",
+      "onChanged"
+    ],
+    "CustomPlugins": [
+      "addMarketplace",
+      "checkPluginHasLocalChanges",
+      "getAndClearMigrationIssues",
+      "installLocalOrgPlugin",
+      "installPlugin",
+      "listAvailablePlugins",
+      "listLocalOrgPlugins",
+      "listMarketplaces",
+      "listRemotePluginsPage",
+      "onLocalOrgPluginsSynced",
+      "refreshMarketplace",
+      "removeMarketplace",
+      "syncLocalOrgPlugins",
+      "uninstallPlugin",
+      "updatePlugin"
+    ],
+    "RemoteControlServing": [
+      "disable",
+      "disconnectCloudSession",
+      "remoteControlServeStatusStore",
+      "removeFolder",
+      "requestAddFolder",
+      "requestEnable",
+      "requestServeGrantedFolder",
+      "requestServeSessionFolder",
+      "setFolderPinned",
+      "setFolderWorktree"
+    ],
+    "CoworkScheduledTasks": [
+      "ackEvent",
+      "answerBoundCreateSign",
+      "beginManualMigration",
+      "clearChromePermissions",
+      "createScheduledTask",
+      "endManualMigration",
+      "getAllScheduledTasks",
+      "getScheduledTaskFileContent",
+      "getWatcherHistory",
+      "markListenerReady",
+      "onBoundCreateSignRequested",
+      "onOnScheduledTaskEvent",
+      "releaseDispatchClaim",
+      "removeApprovedPermission",
+      "revertRemoteMigration",
+      "setEventAckSupported",
+      "updateScheduledTask",
+      "updateScheduledTaskStatus"
+    ],
+    "CCDScheduledTasks": [
+      "ackEvent",
+      "createScheduledTask",
+      "getAllScheduledTasks",
+      "getScheduledTaskFileContent",
+      "getWatcherHistory",
+      "markListenerReady",
+      "onOnScheduledTaskEvent",
+      "releaseDispatchClaim",
+      "removeApprovedPermission",
+      "setEventAckSupported",
+      "setHostRunsSupported",
+      "updateScheduledTask",
+      "updateScheduledTaskStatus"
+    ],
+    "SessionPopouts": [
+      "reportOpenLayout",
+      "reportOpenPopouts",
+      "takeRestorableLayout",
+      "takeRestorablePopouts"
+    ],
+    "ViolinFret": [
+      "setViolinFretChoice",
+      "violinFretStatusStore"
+    ],
+    "ClaudeVM": [
+      "apiReachabilityStore",
+      "checkVirtualMachinePlatform",
+      "download",
+      "enableVirtualMachinePlatform",
+      "getDownloadStatus",
+      "getRunningStatus",
+      "hostIPv6NoticeStore",
+      "isHostLoopDevOverrideActive",
+      "isHostLoopModeEnabled",
+      "onDownloadProgress",
+      "onDownloadStatusChanged",
+      "onRunningStatusChanged",
+      "onStartupError",
+      "restartAfterVMPInstall",
+      "restartVM",
+      "setForceDisableHostLoop",
+      "setYukonSilverConfig",
+      "startVM"
+    ],
+    "WindowLayout": [
+      "onLayoutCommand",
+      "reportLayoutCommandResult",
+      "setLayoutCommandListening"
+    ]
+  },
+  "top": {
+    "claude.buddy": [
+      "Buddy"
+    ],
+    "claude.engineSurface": [
+      "EngineSurface"
+    ],
+    "claude.hybrid": [
+      "DesktopIntl"
+    ],
+    "claude.officeAddin": [
+      "OfficeAddinFiles"
+    ],
+    "claude.simulator": [
+      "Simulator"
+    ],
+    "claude.skills": [
+      "Skills"
+    ]
+  },
+  "featureFlags": {
+    "launch": {
+      "status": "supported"
+    },
+    "coworkBrowser": {
+      "status": "unsupported",
+      "reason": "cowork_browser_disabled",
+      "unsupportedCode": "unknown"
+    },
+    "artifactsPane": {
+      "status": "unavailable"
+    },
+    "nativeQuickEntry": {
+      "status": "unavailable"
+    },
+    "quickEntryDictation": {
+      "status": "unavailable"
+    },
+    "quickEntryGlobalShortcut": {
+      "status": "supported"
+    },
+    "trayIcon": {
+      "status": "supported"
+    },
+    "customQuickEntryDictationShortcut": {
+      "status": "supported"
+    },
+    "ultrareviewErrorCategories": {
+      "status": "supported"
+    },
+    "spawnTaskPendingPop": {
+      "status": "supported"
+    },
+    "spawnTaskInFlightIds": {
+      "status": "supported"
+    },
+    "folderWorktrees": {
+      "status": "supported"
+    },
+    "folderWorktreesRemote": {
+      "status": "supported"
+    },
+    "folderWorktreesListedDiscard": {
+      "status": "supported"
+    },
+    "sableOtter": {
+      "status": "unavailable"
+    },
+    "telescopeBridge": {
+      "status": "unavailable"
+    },
+    "mcpFinishInApp": {
+      "status": "unavailable"
+    },
+    "copperLarkA": {
+      "status": "unavailable"
+    },
+    "copperLarkB": {
+      "status": "unavailable"
+    },
+    "copperLarkC": {
+      "status": "unavailable"
+    },
+    "copperLarkD": {
+      "status": "unavailable"
+    },
+    "quietPenguin": {
+      "status": "unavailable"
+    },
+    "rubberDuck": {
+      "status": "unavailable"
+    },
+    "chillingSlothFeat": {
+      "status": "supported"
+    },
+    "chillingSlothSshShell": {
+      "status": "supported"
+    },
+    "terminalShellReported": {
+      "status": "supported"
+    },
+    "chillingSlothSshWorktreeLocation": {
+      "status": "supported"
+    },
+    "chillingSlothSshPuttyKeyConversion": {
+      "status": "unavailable"
+    },
+    "chillingSlothRemoteFilePreview": {
+      "status": "supported"
+    },
+    "chillingSlothEnterprise": {
+      "status": "supported"
+    },
+    "chillingSlothLocal": {
+      "status": "supported"
+    },
+    "yukonSilver": {
+      "status": "unsupported",
+      "reason": "Checking virtualization support…",
+      "unsupportedCode": "unknown"
+    },
+    "yukonSilverGems": {
+      "status": "unsupported",
+      "reason": "Checking virtualization support…",
+      "unsupportedCode": "unknown"
+    },
+    "yukonSilverGemsCache": {
+      "status": "unsupported",
+      "reason": "Checking virtualization support…",
+      "unsupportedCode": "unknown"
+    },
+    "wakeScheduler": {
+      "status": "unavailable"
+    },
+    "keepAwake": {
+      "status": "supported"
+    },
+    "codeSessionKeepAwake": {
+      "status": "supported"
+    },
+    "ccdPromptSuggestionsSetting": {
+      "status": "unavailable"
+    },
+    "ccdLandingTools": {
+      "status": "supported"
+    },
+    "ccdMcpVerbsMidTurn": {
+      "status": "supported"
+    },
+    "ccdMcpTurnOnSshHost": {
+      "status": "supported"
+    },
+    "ccdRestartRemoteClaudeCode": {
+      "status": "supported"
+    },
+    "ccdSshStartsWithoutBlockedPlugins": {
+      "status": "supported"
+    },
+    "openWithConsentAnyLanding": {
+      "status": "supported"
+    },
+    "desktopTopBar": {
+      "status": "supported"
+    },
+    "ccdPlugins": {
+      "status": "supported"
+    },
+    "ccdPluginSourceRouting": {
+      "status": "supported"
+    },
+    "computerUse": {
+      "status": "unsupported",
+      "reason": "Computer use is not yet enabled for this account",
+      "unsupportedCode": "unknown"
+    },
+    "computerUseRollout": {
+      "status": "unsupported",
+      "reason": "Computer use is not yet enabled for this account",
+      "unsupportedCode": "not_enabled"
+    },
+    "computerUseComplianceGate": {
+      "status": "supported"
+    },
+    "computerUseAppScoped": {
+      "status": "unsupported",
+      "reason": "Background app-scoped mode is macOS-only",
+      "unsupportedCode": "unsupported_platform"
+    },
+    "computerUsePerAppAccess": {
+      "status": "unsupported",
+      "reason": "A Wayland session shares the whole screen",
+      "unsupportedCode": "unknown"
+    },
+    "coworkWatchRecord": {
+      "status": "unsupported",
+      "reason": "Watch-record is not available on this platform",
+      "unsupportedCode": "unsupported_platform"
+    },
+    "coworkCopperHeron": {
+      "status": "unsupported",
+      "reason": "Watch-record is not available on this platform",
+      "unsupportedCode": "unsupported_platform"
+    },
+    "coworkWatchers": {
+      "status": "unavailable"
+    },
+    "coworkKappa": {
+      "status": "unavailable"
+    },
+    "coworkArtifacts": {
+      "status": "unavailable"
+    },
+    "trustedFolderSettingsConsent": {
+      "status": "unavailable"
+    },
+    "coworkAutoModeAlwaysAllowOverride": {
+      "status": "unavailable"
+    },
+    "framebufferPreview": {
+      "status": "unavailable"
+    },
+    "iosSimulator": {
+      "status": "unsupported",
+      "reason": "iOS Simulator panel requires macOS",
+      "unsupportedCode": "unsupported_platform"
+    },
+    "androidEmulator": {
+      "status": "unsupported",
+      "reason": "Android emulator is disabled by its rollout flag",
+      "unsupportedCode": "unknown"
+    },
+    "iosSimulatorH264": {
+      "status": "unsupported",
+      "reason": "iOS Simulator panel requires macOS",
+      "unsupportedCode": "unsupported_platform"
+    },
+    "iosSimulatorAccessibilityReader": {
+      "status": "unsupported",
+      "reason": "iOS Simulator panel requires macOS",
+      "unsupportedCode": "unsupported_platform"
+    },
+    "iosSimulatorDuo": {
+      "status": "unavailable"
+    },
+    "simulatorScreenshotEditor": {
+      "status": "unavailable"
+    },
+    "simulatorMiniView": {
+      "status": "unavailable"
+    },
+    "grandPrix": {
+      "status": "unavailable"
+    },
+    "chromeExtensionInstall": {
+      "status": "unsupported",
+      "reason": "No per-user Chrome extension install mechanism",
+      "unsupportedCode": "unsupported_platform"
+    },
+    "ccdGitEngine": {
+      "status": "unavailable"
+    },
+    "sessionPrOwnership": {
+      "status": "unavailable"
+    },
+    "sessionFolderFileAccess": {
+      "status": "supported"
+    },
+    "conversationFolderGrants": {
+      "status": "supported"
+    },
+    "localSessionsWithoutGit": {
+      "status": "supported"
+    },
+    "tearOffHalo": {
+      "status": "unsupported",
+      "reason": "Tear-off halo overlay requires macOS",
+      "unsupportedCode": "unsupported_platform"
+    },
+    "coworkArtifactPopout": {
+      "status": "supported"
+    },
+    "sidePanePopoutNativeViews": {
+      "status": "supported"
+    },
+    "simulatorNativeViewPopout": {
+      "status": "supported"
+    },
+    "simulatorPopoutShortcuts": {
+      "status": "supported"
+    },
+    "simulatorNativeViewPerPane": {
+      "status": "supported"
+    },
+    "popoutZoom": {
+      "status": "supported"
+    },
+    "popoutTitleBarOverlay": {
+      "status": "supported"
+    },
+    "filePreviewNativeViewRouting": {
+      "status": "supported"
+    },
+    "claudeDesignWindow": {
+      "status": "supported"
+    },
+    "coworkRemoteSessionSpaces": {
+      "status": "supported"
+    },
+    "spaceMemoryBridge": {
+      "status": "unavailable"
+    },
+    "multiAccount": {
+      "status": "unavailable"
+    },
+    "grandPrixRequest": {
+      "status": "unavailable"
+    },
+    "bootPlaceholder": {
+      "status": "supported"
+    },
+    "coworkBranchSession": {
+      "status": "supported"
+    },
+    "coworkScheduledTaskProjects": {
+      "status": "supported"
+    },
+    "coworkLocalSessionProjects": {
+      "status": "supported"
+    },
+    "coworkScheduledTaskRepoint": {
+      "status": "supported"
+    },
+    "sshAttachmentTransport": {
+      "status": "supported"
+    },
+    "coworkSeededSummon": {
+      "status": "supported"
+    },
+    "seededKind": {
+      "status": "supported"
+    },
+    "sendNowEscalation": {
+      "status": "supported"
+    },
+    "steerDetachField": {
+      "status": "supported"
+    },
+    "sessionMentions": {
+      "status": "supported"
+    },
+    "inlinePastes": {
+      "status": "supported"
+    },
+    "turnDiscardedEvent": {
+      "status": "supported"
+    },
+    "wslForkSession": {
+      "status": "unavailable"
+    },
+    "wslTerminal": {
+      "status": "unavailable"
+    },
+    "wslMcp": {
+      "status": "unavailable"
+    },
+    "wslPreview": {
+      "status": "unavailable"
+    },
+    "wslLocalFiles": {
+      "status": "unavailable"
+    },
+    "wslRoutines": {
+      "status": "unavailable"
+    },
+    "humbleSky": {
+      "status": "unavailable"
+    },
+    "violinBow": {
+      "status": "unavailable"
+    },
+    "violinBowHomeSettings": {
+      "status": "unavailable"
+    },
+    "coworkThinkingInSend": {
+      "status": "supported"
+    },
+    "bootstrapConfig": {
+      "status": "supported"
+    },
+    "chatIn3p": {
+      "status": "supported"
+    },
+    "chatTab": {
+      "status": "unavailable"
+    },
+    "selfHostedSessions": {
+      "status": "unavailable"
+    },
+    "selfHostedCowork": {
+      "status": "unavailable"
+    },
+    "desktopHome": {
+      "status": "unavailable"
+    },
+    "chatCodeExecution": {
+      "status": "unavailable"
+    },
+    "mcpPersistentAlwaysAllow": {
+      "status": "supported"
+    },
+    "mcpScheduledTaskAlwaysAllow": {
+      "status": "supported"
+    },
+    "mcpScheduledTaskApprovalLifetime": {
+      "status": "unavailable"
+    },
+    "epitaxyMcpApps": {
+      "status": "supported"
+    },
+    "sideSessionProposalPicks": {
+      "status": "supported"
+    },
+    "sideSessionProposalWorktreePick": {
+      "status": "supported"
+    },
+    "sideSessionOfferCloudStart": {
+      "status": "supported"
+    },
+    "sideSessions": {
+      "status": "unavailable"
+    },
+    "btwChildSessions": {
+      "status": "unavailable"
+    },
+    "nestedArchiveKeepsFamily": {
+      "status": "unavailable"
+    },
+    "epitaxyMcpAppPane": {
+      "status": "unavailable"
+    },
+    "ccdConnectorTools": {
+      "status": "unavailable"
+    },
+    "ccdTeleportSnapshot": {
+      "status": "unavailable"
+    }
+  },
+  "claudeAppBindings": [
+    "registerBinding",
+    "unregisterBinding",
+    "listMcpServers",
+    "connectToMcpServer",
+    "openMcpSettings"
+  ]
+}

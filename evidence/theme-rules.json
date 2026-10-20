@@ -1,0 +1,56 @@
+[
+  {
+    "sel": "[data-mode=\"light\"] .dframe-root[data-variant=\"web\"]:not([data-frame-mode=\"code\"]) :is(.dframe-content, .dframe-content .cds-root:not([data-mode=\"dark\"]))",
+    "decl": {
+      "--cds-segmented-control-track": "var(--cds-neutral-30)"
+    }
+  },
+  {
+    "sel": ":root[data-dyslexic-font][data-font=\"system\"], :root[data-dyslexic-font] .cds-root[data-font=\"system\"]",
+    "decl": {
+      "--cds-font-sans": "var(--font-ui-dyslexic)"
+    }
+  },
+  {
+    "sel": ".cds-root[data-font=\"system\"]",
+    "decl": {
+      "--cds-font-sans": "var(--cds-font-system)",
+      "--cds-font-sans-display": "var(--cds-font-sans)",
+      "--cds-leading-footnote": "calc(1rem * var(--cds-rem-scale,1))"
+    }
+  },
+  {
+    "sel": "[data-color-version=\"v2\"][data-theme=\"claude\"], [data-color-version=\"v2\"][data-theme=\"claude\"][data-mode=\"light\"]",
+    "decl": {
+      "--bg-000": "var(--_gray-0)",
+      "--bg-100": "var(--_gray-20)",
+      "--bg-200": "var(--_gray-40)",
+      "--bg-300": "var(--_gray-50)",
+      "--bg-400": "var(--_gray-80)",
+      "--bg-500": "var(--_gray-80)",
+      "--text-000": "var(--_gray-860)",
+      "--text-100": "var(--_gray-860)",
+      "--text-200": "var(--_gray-700)",
+      "--text-300": "var(--_gray-700)",
+      "--text-400": "var(--_gray-450)",
+      "--text-500": "var(--_gray-450)"
+    }
+  },
+  {
+    "sel": "[data-color-version=\"v2\"][data-theme=\"claude\"][data-mode=\"dark\"]",
+    "decl": {
+      "--bg-000": "var(--_gray-800)",
+      "--bg-100": "var(--_gray-850)",
+      "--bg-200": "var(--_gray-870)",
+      "--bg-300": "var(--_gray-890)",
+      "--bg-400": "var(--_gray-900)",
+      "--bg-500": "var(--_gray-900)",
+      "--text-000": "var(--_gray-20)",
+      "--text-100": "var(--_gray-20)",
+      "--text-200": "var(--_gray-200)",
+      "--text-300": "var(--_gray-200)",
+      "--text-400": "var(--_gray-350)",
+      "--text-500": "var(--_gray-350)"
+    }
+  }
+]

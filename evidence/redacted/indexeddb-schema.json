@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "stores": {
+    "keyval": {
+      "count": 2,
+      "keys": [
+        "store:chat-draft:local_<uuid>",
+        "store:pin-state:dframe-starred-code"
+      ]
+    }
+  }
+}
