@@ -19,6 +19,7 @@
 Tauri uses the system webview (WebKitGTK on Linux), not Chromium. That reduces binary size and keeps
 the backend in Rust, but exact pixel/behavior parity with the Electron build must be tested.
 
-**Status:** documentation and evidence only. No application scaffold has been generated yet.
+**Status:** Rust workspace scaffold exists (`apps/desktop` + `crates/`, laid out in
+[docs/21-repo-layout.md](docs/21-repo-layout.md)). Structure only — no application code yet.
 
 The shared product behavior is defined in `README.md` and `docs/`.

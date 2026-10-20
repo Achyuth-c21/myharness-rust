@@ -8,3 +8,12 @@ evidence/app-asar-orig/
 # OS cruft
 .DS_Store
 Thumbs.db
+
+# Rust workspace artifacts
+/target/
+
+# Frontend build artifacts
+node_modules/
+dist/
+.vite/
+npm-debug.log*

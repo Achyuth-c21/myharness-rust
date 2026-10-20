@@ -1,0 +1,13 @@
+/* Design tokens land in Phase 1 per docs/07-ui-design-system.md. */
+:root {
+  color-scheme: light dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+}

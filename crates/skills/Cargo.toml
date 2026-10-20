@@ -1,0 +1,6 @@
+[package]
+name = "myharness-skills"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

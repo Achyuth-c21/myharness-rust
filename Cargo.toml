@@ -1,0 +1,57 @@
+[workspace]
+resolver = "2"
+members = [
+  "apps/desktop/src-tauri",
+  "crates/agent",
+  "crates/app-shell",
+  "crates/artifacts",
+  "crates/bridge",
+  "crates/config",
+  "crates/mcp",
+  "crates/plugins",
+  "crates/projects",
+  "crates/protocol-core",
+  "crates/provider-sdk",
+  "crates/scheduler",
+  "crates/search",
+  "crates/secrets",
+  "crates/sessions",
+  "crates/shared",
+  "crates/skills",
+  "crates/store",
+  "crates/telemetry",
+  "crates/updates",
+  "crates/providers/anthropic",
+  "crates/providers/bedrock",
+  "crates/providers/bedrock-mantle",
+  "crates/providers/foundry",
+  "crates/providers/gateway",
+  "crates/providers/vertex",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+repository = "https://github.com/Achyuth-c21/myharness-rust"
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+async-trait = "0.1"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+url = "2"
+keyring = "3"
+secrecy = { version = "0.10", features = ["serde"] }
+zeroize = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+portable-pty = "0.8"
+tauri = "2"
+tauri-build = "2"

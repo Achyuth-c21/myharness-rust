@@ -1,0 +1,6 @@
+[package]
+name = "myharness-projects"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

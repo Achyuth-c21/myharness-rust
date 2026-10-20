@@ -1,0 +1,6 @@
+[package]
+name = "myharness-mcp"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

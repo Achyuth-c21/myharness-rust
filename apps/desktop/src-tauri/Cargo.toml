@@ -1,0 +1,12 @@
+[package]
+name = "myharness-desktop"
+version.workspace = true
+edition.workspace = true
+build = "build.rs"
+
+[build-dependencies]
+tauri-build = { workspace = true }
+
+[dependencies]
+tauri = { workspace = true }
+myharness-app-shell = { path = "../../../crates/app-shell" }
