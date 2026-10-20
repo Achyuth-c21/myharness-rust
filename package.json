@@ -1,0 +1,11 @@
+{
+  "name": "myharness-rust-root-tooling",
+  "private": true,
+  "description": "Tooling workspace for tests/ E2E scripts (Rust workspace lives in Cargo.toml). Keeps node module resolution simple for tests/e2e scripts.",
+  "devDependencies": {
+    "playwright": "^1.50.0"
+  },
+  "scripts": {
+    "e2e": "node tests/e2e/shell.spec.mjs"
+  }
+}
