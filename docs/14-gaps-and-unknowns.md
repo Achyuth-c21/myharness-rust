@@ -71,6 +71,7 @@ unavailable API paths return a typed 503. Therefore:
 | Computer use/simulator | Platform-gated | Flags only |
 | Error overlay | Not triggered | Source strings only |
 | Windows/macOS variants | Not available | Linux only |
+| Title-bar glyph↔role pairing (panel toggle vs sidebar toggle) | The 2026-10-21 reference capture is not in the repo (`evidence/` holds no image files), so the pairing cannot be re-inspected | Roles and order come from the shipped app's own chrome: its top-left three-line control is a *Menu* button and the sidebar is toggled by `Cmd/Ctrl+B` (app menu "Show/Hide Sidebar"), so the three lines are not the sidebar collapse. The rebuild follows that pairing (panel toggle = three lines, sidebar toggle = framed pane, sidebar toggle second). Exact codepoints remain unpinned (`docs/07` §1.5) |
 
 ## 4. Architecture unknowns
 
@@ -190,3 +191,23 @@ These would require a different environment or explicit permission:
   placeholder.
 
 This preserves the product’s honesty: the UI must not claim a capability the runtime cannot deliver.
+
+### §9 supplement — bug-hunt residues (2026-10-21)
+
+From the phase-1 bug hunt (`tests/report-bug-hunt-phase1.md`), fixed in §F and closed with these
+recorded unknowns:
+
+1. **Real filesystem faults under `app://` answer the typed 503 envelope** (`custom_3p_not_available`,
+   docs/18). It is the only contractually defined protocol error body, so a host filesystem failure
+   (EACCES etc.) still reports as "not available in third-party mode" — mislabeled but contractual.
+   Directory reads (the main real-world trigger, `/.`) are fixed and take the SPA fallback instead.
+   Status: **Unknown** — a faithful error kind would need a documented envelope first.
+2. **The Tauri adapter's host gate (B1 fix) is compile-unverified on this host** (`webkit2gtk`, `gtk`,
+   `soup`, `dbus` system headers missing; no sudo — see §8 of [21-repo-layout.md](21-repo-layout.md)
+   siblings in `tests/report-bug-hunt-phase1.md` §Environment). The change is small and fail-closed;
+   it must be built (`cargo check` in `apps/desktop/src-tauri`) on an unblocked host before the fix is
+   claimed `Verified`. Status: **Unknown (build-gated)**.
+3. **One T30 reload-timeout flake recurred** during the fix verification (same signature as the
+   report's recorded one-off: `a.nav-item` absent after `page.reload()`, not reproducible in
+   isolation; two subsequent full runs green). Status: **Unknown** — flake of unknown cause; the
+   suite is otherwise deterministic over consecutive runs.

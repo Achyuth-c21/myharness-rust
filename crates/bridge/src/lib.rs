@@ -30,6 +30,10 @@ pub fn dispatch(command: Command) -> Response {
 }
 
 /// Path prefixes routed through the third-party endpoint table (docs/10 §5.2).
+/// Precondition (report-bug-hunt C5): `path` must ALREADY be percent-decoded and
+/// contain no backslashes — `app-shell::protocol` decodes exactly once
+/// (`percent_decode_path`) before calling this, so encoded prefixes like
+/// `/%61pi/x` are classified correctly and double-decoding is impossible.
 /// Everything else under `/` is either a UI asset or a client route with SPA fallback.
 pub fn is_api_path(path: &str) -> bool {
     const PREFIXES: [&str; 7] = [

@@ -23,11 +23,15 @@ export function EmptyShell({ title, hint }: { title: string; hint?: string }) {
   );
 }
 
-export function ErrorShell({ message }: { message: string }) {
+/** Error shell. Internal error text is NOT echoed into the UI
+ *  (report-bug-hunt C6: information exposure) — the copy is generic; details
+ *  stay in the console for diagnostics, with redacted telemetry in Phase 7
+ *  (docs/10 §8). */
+export function ErrorShell() {
   return (
     <div className="shell error" role="alert">
       <h2>Something went wrong</h2>
-      <p>{message}</p>
+      <p>The screen hit an unexpected error. Details are logged for diagnostics.</p>
     </div>
   );
 }
@@ -49,7 +53,7 @@ export class ErrorBoundary extends React.Component<BoundaryProps, BoundaryState>
   }
 
   render() {
-    if (this.state.error) return <ErrorShell message={this.state.error.message} />;
+    if (this.state.error) return <ErrorShell />;
     return this.props.children;
   }
 }

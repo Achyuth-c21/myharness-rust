@@ -139,9 +139,16 @@ export function NewTaskScreen({ focusOnMount = false }: Props) {
 
   const seedDraft = (label: string) => {
     // Reuse the existing composer draft: a suggestion prefills the input. No
-    // session starts until the send flow exists (docs/13 §Phase 4).
+    // session starts until the send flow exists (docs/13 §4). C7
+    // (report-bug-hunt): the programmatic prefill bypasses onChange, so the
+    // textarea must re-measure after the value lands or the card keeps its
+    // old height.
     setDraft(label);
-    requestAnimationFrame(() => taRef.current?.focus());
+    requestAnimationFrame(() => {
+      const el = taRef.current;
+      if (el) autoGrow(el);
+      el?.focus();
+    });
   };
 
   return (

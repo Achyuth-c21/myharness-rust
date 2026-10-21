@@ -43,8 +43,11 @@ the bottom.
 
 ### Title bar
 
-- Sidebar toggle, panel toggle, back, forward — the panel toggle sits second (2026-10-21 reference;
-  earlier round-4 notes moved it right, the capture restores the documented order).
+- Panel toggle, sidebar toggle, back, forward — the panel toggle sits first and the sidebar toggle
+  sits beside it (2026-10-21 reference; the sidebar toggle is the control that collapses/expands
+  the whole left column, and the three-line "menu" glyph belongs to the panel toggle — the shipped
+  app's top-left three-line control is a *Menu* button, with the sidebar toggled by Cmd/Ctrl+B).
+  Earlier round-4 notes moved the panel toggle right; the capture restores the documented order.
 - Drag region; window controls follow the platform (frameless custom title bar on Linux). Observed
   on the home surface: a single round close control at the top-right corner; no minimize/maximize
   at this size.

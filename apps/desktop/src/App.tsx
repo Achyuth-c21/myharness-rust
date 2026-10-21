@@ -53,13 +53,23 @@ export default function App() {
   }, []);
 
   // pushState does not fire hashchange — sync state explicitly on open/close.
+  // Both calls carry the existing history state along: React Router tracks its
+  // position index there, and a `null` state would blind the title-bar
+  // back/forward tracker (report-bug-hunt A1/A2 interplay).
   const openSettings = useCallback((section: string) => {
-    window.history.pushState(null, "", `#settings/${section}`);
+    window.history.pushState(window.history.state, "", `#settings/${section}`);
     setSettingsSection(section);
   }, []);
   const closeSettings = useCallback(() => {
     // Closing removes the hash and returns to the underlying route (docs/06 §1).
-    window.history.pushState(null, "", window.location.pathname);
+    // REPLACE the settings entry instead of pushing (report-bug-hunt A2: a push
+    // left a zombie entry — Back then re-opened the modal), and keep the
+    // pathname AND query string of the underlying route.
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${window.location.pathname}${window.location.search}`,
+    );
     setSettingsSection(null);
   }, []);
 
@@ -67,6 +77,19 @@ export default function App() {
     const onKey = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey)) return;
       const key = event.key.toLowerCase();
+      // C9 (report-bug-hunt): while the user is typing in an editable control
+      // with no overlay open, only New stays global (UI-INT-005 — "opens /new,
+      // clears, focuses"); the others would fire mid-sentence (e.g. Ctrl+B
+      // collapsing the sidebar). Overlays keep their full shortcut behavior
+      // (UI-INT-020/026 flows, tests T19/T21).
+      const target = event.target as HTMLElement | null;
+      const typing =
+        !!target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable);
+      const overlayOpen = paletteOpen || settingsSection !== null;
+      if (typing && !overlayOpen && key !== "n") return;
       if (key === "b") {
         event.preventDefault();
         setSidebarOpen((open) => !open);
@@ -86,7 +109,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [navigate, openSettings]);
+  }, [navigate, openSettings, paletteOpen, settingsSection]);
 
   const screens = new Map(SCREENS.map((screen) => [screen.path, screen]));
 

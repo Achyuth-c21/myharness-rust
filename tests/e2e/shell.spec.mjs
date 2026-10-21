@@ -401,6 +401,50 @@ try {
     });
     await expectTrue(styles.shadow !== "none", "ring shadow must be applied");
   });
+
+  await step("T31 back/forward grey at history ends; Forward navigates (UI-INT-003, report A1)", async () => {
+    await page.goto(BASE);
+    await page.waitForSelector("a.nav-item");
+    const backBtn = page.locator("button[aria-label=Back]");
+    const fwdBtn = page.locator("button[aria-label=Forward]");
+    await expectTrue(await backBtn.isDisabled(), "Back disabled at the first entry");
+    await page.locator("a.nav-item", { hasText: "Projects" }).click();
+    await page.waitForURL("**/projects");
+    await page.locator("a.nav-item", { hasText: "Scheduled" }).click();
+    await page.waitForURL("**/scheduled-task");
+    await expectTrue(!(await backBtn.isDisabled()), "Back enabled after pushes");
+    await expectTrue(await fwdBtn.isDisabled(), "Forward disabled at the forward end");
+    await backBtn.click();
+    await page.waitForURL("**/projects");
+    await expectTrue(!(await fwdBtn.isDisabled()), "Forward enabled after Back");
+    await fwdBtn.click();
+    await page.waitForURL("**/scheduled-task");
+    await backBtn.click();
+    await backBtn.click();
+    await page.waitForURL("**/new");
+    await expectTrue(await backBtn.isDisabled(), "Back re-greys at the first entry");
+    await expectTrue(!(await fwdBtn.isDisabled()), "Forward enabled again at the first entry");
+    await fwdBtn.click();
+    await page.waitForURL("**/projects");
+  });
+
+  await step("T32 closing settings leaves no zombie history entry (report A2)", async () => {
+    await page.locator("a.nav-item", { hasText: "New" }).click();
+    await page.waitForURL("**/new");
+    for (let i = 0; i < 2; i += 1) {
+      await page.keyboard.press("Control+,");
+      await page.waitForSelector("[role=dialog][aria-label=Settings]");
+      await page.keyboard.press("Escape");
+      await page.waitForTimeout(60);
+    }
+    await page.goBack();
+    await page.waitForTimeout(100);
+    await expectTrue(
+      (await page.locator("[role=dialog][aria-label=Settings]").count()) === 0,
+      "Back after close must not re-open settings",
+    );
+    await expectTrue(!page.url().includes("#settings"), `no settings hash after Back (was ${page.url()})`);
+  });
 } finally {
   await browser.close();
 }

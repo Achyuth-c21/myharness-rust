@@ -84,6 +84,12 @@ impl AssetRoot {
         if !target.starts_with(&root_canonical) {
             return Err(ResolveError::OutsideRoot);
         }
+        if target.is_dir() {
+            // A directory is not a document (report-bug-hunt C1: `/.` canonicalizes
+            // to the root and `fs::read` would fail EISDIR, surfacing as the typed
+            // 503 instead of the SPA fallback). Classify as missing.
+            return Err(ResolveError::NotFound);
+        }
         fs::read(&target).map_err(|e| io_kind_err(e.kind()))
     }
 }
@@ -229,7 +235,10 @@ pub fn serve(root: &AssetRoot, csp: &str, req: &HttpRequest) -> HttpResponse {
         Ok(body) => {
             let mut headers = Vec::new();
             headers.push(("content-type", mime_for(rel).to_string()));
-            if rel.ends_with(".html") || rel.ends_with(".htm") {
+            // C3 (report-bug-hunt): match documents case-insensitively — an
+            // `.HTML` document must still ship with the CSP.
+            let lower = rel.to_ascii_lowercase();
+            if lower.ends_with(".html") || lower.ends_with(".htm") {
                 headers.push(("content-security-policy", csp.to_string()));
             }
             HttpResponse {
@@ -240,12 +249,20 @@ pub fn serve(root: &AssetRoot, csp: &str, req: &HttpRequest) -> HttpResponse {
         }
         Err(ResolveError::OutsideRoot) => html_response(StatusCode::Forbidden, b"<html><body>403</body></html>"),
         Err(ResolveError::NotFound) => {
-            if has_file_extension(rel) {
-                html_response(StatusCode::NotFound, b"<html><body>404</body></html>")
-            } else {
+            // C4 (report-bug-hunt): the Navigation/Fetch distinction now has an
+            // effect — the SPA fallback answers only top-frame navigations (a
+            // fetch of an unknown extensionless path is a missing resource, not a
+            // document, and must not receive the app shell HTML with a 200).
+            if req.kind == RequestKind::Navigation && !has_file_extension(rel) {
                 serve_index(root, csp)
+            } else {
+                html_response(StatusCode::NotFound, b"<html><body>404</body></html>")
             }
         }
+        // C2 residual (report-bug-hunt): genuine filesystem faults land in the
+        // typed 503 envelope — the only contractually defined protocol error body
+        // (docs/18), so no alternative kind exists to faithfully label a host FS
+        // failure. Recorded as an unknown in docs/14 §9 rather than invented.
         Err(ResolveError::Io) => json_response(StatusCode::NotAvailable, NOT_AVAILABLE_BODY),
     }
 }
@@ -354,6 +371,45 @@ mod tests {
         let resp = serve(&root, CSP, &req("/"));
         assert_eq!(resp.status, StatusCode::Ok);
         assert!(resp.headers.iter().any(|(k, v)| (*k == "content-security-policy") && v == CSP));
+    }
+
+    /// report-bug-hunt C1: a path that resolves to a directory (e.g. `/.`) is
+    /// missing, not a filesystem fault — it takes the SPA fallback like any other
+    /// unknown route instead of the typed 503.
+    #[test]
+    fn directory_paths_take_the_spa_fallback() {
+        let root = temp_root(&[
+            ("index.html", "<html>SHELL</html>"),
+            ("assets/sub/file.txt", "x"),
+        ]);
+        assert_eq!(serve(&root, CSP, &req("/.")).status, StatusCode::Ok);
+        // the directory body IS the shell, with the CSP injected
+        let resp = serve(&root, CSP, &req("/."));
+        assert!(String::from_utf8(resp.body).unwrap().contains("SHELL"));
+        assert_eq!(serve(&root, CSP, &req("/assets/sub")).status, StatusCode::Ok);
+    }
+
+    /// report-bug-hunt C3: document CSP attachment is case-insensitive.
+    #[test]
+    fn csp_header_is_attached_case_insensitively() {
+        let root = temp_root(&[("page.HTML", "<html>")]);
+        let resp = serve(&root, CSP, &req("/page.HTML"));
+        assert_eq!(resp.status, StatusCode::Ok);
+        assert!(resp.headers.iter().any(|(k, _)| *k == "content-security-policy"));
+    }
+
+    /// report-bug-hunt C4: `kind` is consumed — only navigations get the SPA
+    /// fallback; fetches of unknown extensionless paths are simple 404s.
+    #[test]
+    fn fetch_unknown_route_is_404_not_the_shell() {
+        let root = temp_root(&[("index.html", "<html>SHELL</html>")]);
+        let mut fetch = req("/cowork");
+        fetch.kind = RequestKind::Fetch;
+        let resp = serve(&root, CSP, &fetch);
+        assert_eq!(resp.status, StatusCode::NotFound);
+        assert!(!String::from_utf8(resp.body).unwrap().contains("SHELL"));
+        // unchanged navigation behavior:
+        assert_eq!(serve(&root, CSP, &req("/cowork")).status, StatusCode::Ok);
     }
 
     #[test]

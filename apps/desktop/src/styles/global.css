@@ -257,7 +257,8 @@ body {
   background: var(--mh-hover-fill);
 }
 
-.icon-btn:disabled {
+.icon-btn:disabled,
+.icon-btn[aria-disabled="true"] {
   opacity: 0.35;
   cursor: default;
 }

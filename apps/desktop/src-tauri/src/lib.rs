@@ -38,12 +38,23 @@ fn asset_root() -> shell::AssetRoot {
 fn adapt(
     request: tauri::http::Request<Vec<u8>>,
 ) -> Result<tauri::http::Response<Vec<u8>>, Box<dyn std::error::Error>> {
+    // docs/02 §4 gate 1: hostname must be `localhost`; other hosts return 404.
+    // report-bug-hunt B1: a request with NO Host header must not default to the
+    // allowed value — consult the request URI's authority when present, and
+    // otherwise fail CLOSED with an empty host (the gate exists to reject
+    // exactly what cannot be verified; `protocol::serve` compares the value).
     let host = request
         .headers()
         .get("host")
         .and_then(|value| value.to_str().ok())
         .map(str::to_owned)
-        .unwrap_or_else(|| shell::protocol::HOST.to_string());
+        .or_else(|| {
+            request
+                .uri()
+                .host()
+                .map(|uri_host| uri_host.trim_start_matches('[').trim_end_matches(']').to_string())
+        })
+        .unwrap_or_default();
     let origin = request
         .headers()
         .get("origin")

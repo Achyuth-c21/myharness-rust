@@ -49,7 +49,11 @@ export function useFocusTrap(container: RefObject<HTMLElement | null>, active: b
         list[0].focus();
       }
     };
-    el.addEventListener("keydown", onKey, true); // capture: fires even when focus sits outside the layer
+    // Capture-phase handler scoped to this container (report-bug-hunt C8): it
+    // therefore sees Tab presses only while focus is already inside the layer —
+    // which is exactly the case the trap polices. The `inside === false`
+    // branches above cover the invoker-under-scrim edge, not outside-typos.
+    el.addEventListener("keydown", onKey, true);
     return () => {
       el.removeEventListener("keydown", onKey, true);
       previous?.focus();
