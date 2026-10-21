@@ -4,9 +4,22 @@ version.workspace = true
 edition.workspace = true
 build = "build.rs"
 
+[lib]
+name = "myharness_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
 [build-dependencies]
 tauri-build = { workspace = true }
 
 [dependencies]
 tauri = { workspace = true }
+tauri-plugin-single-instance = { workspace = true, optional = true }
 myharness-app-shell = { path = "../../../crates/app-shell" }
+myharness-bridge = { path = "../../../crates/bridge" }
+
+[features]
+default = ["single-instance"]
+# Linux single-instance support uses libdbus (system library). Build with
+# `cargo check --no-default-features -p myharness-desktop` where dbus headers are
+# unavailable; CI machines must keep the default (docs/02 §2, TEST-ARCH-002).
+single-instance = ["dep:tauri-plugin-single-instance"]

@@ -182,3 +182,20 @@ editor/history, and several platform-gated features were not accessible. They ar
 [14](docs/14-gaps-and-unknowns.md) and are not presented as implemented behavior.
 
 Last updated: 2026-10-20.
+
+## Agent instructions
+
+If you are an AI agent (or driving one) working in this repository, read these first, in this order:
+
+| File | Purpose |
+|---|---|
+| [AGENTS.md](AGENTS.md) | Operating manual: reading order, task workflow, branch loop, definition of done |
+| [RULES.md](RULES.md) | Hard constraints: what is forbidden, each rule citing its source doc |
+| [MEMORY.md](MEMORY.md) | Durable project facts, known traps, doc conflicts, where the answer lives |
+| [CHECKLIST.md](CHECKLIST.md) | Pre-commit gate to run before every commit |
+| [CLAUDE.md](CLAUDE.md) | Compact core card, auto-loaded by Claude Code |
+
+These files are navigational — they point at the authority in `docs/`. If an agent file and a doc
+disagree, the doc wins and the agent file should be corrected. They are maintained in append-only
+fashion: extend at the end, never insert mid-file or renumber existing entries.
+

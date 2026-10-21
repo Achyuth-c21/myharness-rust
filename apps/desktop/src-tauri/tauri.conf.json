@@ -12,19 +12,21 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "myharness",
         "width": 1200,
         "height": 800,
-        "resizable": true
+        "resizable": true,
+        "center": true
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self'; font-src 'self' data:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'"
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": []
+    "icon": ["icons/icon.png", "icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png"]
   }
 }

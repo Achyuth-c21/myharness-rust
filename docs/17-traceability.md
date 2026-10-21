@@ -298,3 +298,13 @@ close the previously referenced but undefined groups.
 - `TEST-UX-003` is search/filter; model-picker keyboard/layout tests use `TEST-UX-002/013`.
 - `TEST-SESSION-010` is Code worktree lifecycle; screen-level Code navigation uses `TEST-CODE-001..003`.
 - No test may be claimed as passing without a reproducible fixture in `tests/`.
+- Phase-1 shell evidence: the 32-case E2E battery `tests/e2e/shell.spec.mjs` (T01–T32) exercises
+  `FEAT-SHELL-01/02` routes/sidebar/theme, palette and settings overlays, focus traps, hash deep
+  links and history — including history-end greying of Back/Forward and the no-zombie settings
+  close (T31/T32, added with the bug-hunt fixes in `tests/report-bug-hunt-phase1.md` §F); its run
+  record and bug ledger live in
+  [tests/report-phase1.md](../tests/report-phase1.md). Runner: `node tests/e2e/shell.spec.mjs`
+  against a dev server verified to serve title `myharness` (see `docs/14` §7 trap 13), plus the
+  **17/17 native runtime fixture** `tests/native/shell-runtime.sh` (single-instance second-launch
+  routing, cold-start/second-launch deep links fail-closed, Setup3p Phase-2 deferral —
+  `docs/14` §9 supplement item 4).

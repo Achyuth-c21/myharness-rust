@@ -55,3 +55,4 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 portable-pty = "0.8"
 tauri = "2"
 tauri-build = "2"
+tauri-plugin-single-instance = "2"

@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"Base capability for the main window (Phase 1). Tauri v2 denies everything by default; only core permissions are granted. Narrow as bridge commands land.","local":true,"windows":["main"],"permissions":["core:default"]}}

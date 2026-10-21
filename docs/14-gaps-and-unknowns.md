@@ -71,6 +71,7 @@ unavailable API paths return a typed 503. Therefore:
 | Computer use/simulator | Platform-gated | Flags only |
 | Error overlay | Not triggered | Source strings only |
 | Windows/macOS variants | Not available | Linux only |
+| Title-bar glyph↔role pairing (panel toggle vs sidebar toggle) | The 2026-10-21 reference capture is not in the repo (`evidence/` holds no image files), so the pairing cannot be re-inspected | Roles and order come from the shipped app's own chrome: its top-left three-line control is a *Menu* button and the sidebar is toggled by `Cmd/Ctrl+B` (app menu "Show/Hide Sidebar"), so the three lines are not the sidebar collapse. The rebuild follows that pairing (panel toggle = three lines, sidebar toggle = framed pane, sidebar toggle second). Exact codepoints remain unpinned (`docs/07` §1.5) |
 
 ## 4. Architecture unknowns
 
@@ -156,6 +157,10 @@ unavailable API paths return a typed 503. Therefore:
 10. **Catalog model names are not entitlements.** Credentials and provider policy still apply.
 11. **The advisory update is not applied.** `2.42304.2` behavior may differ.
 12. **No source maps.** Symbol names are not stable API.
+13. **Dev-server-port squatters.** A stale process bound to the dev port answers E2E suites with
+    a different app (observed: unrelated SPA with title `Claude` on `:5173`). A whole-grid red
+    under port conflict is a harness failure, not a product regression; verify the served
+    document title before interpreting results (`tests/report-phase1.md`, Run 3).
 
 ## 8. Research questions for a follow-up pass
 
@@ -186,3 +191,41 @@ These would require a different environment or explicit permission:
   placeholder.
 
 This preserves the product’s honesty: the UI must not claim a capability the runtime cannot deliver.
+
+### §9 supplement — bug-hunt residues (2026-10-21)
+
+From the phase-1 bug hunt (`tests/report-bug-hunt-phase1.md`), fixed in §F and closed with these
+recorded unknowns:
+
+1. **Real filesystem faults under `app://` answer the typed 503 envelope** (`custom_3p_not_available`,
+   docs/18). It is the only contractually defined protocol error body, so a host filesystem failure
+   (EACCES etc.) still reports as "not available in third-party mode" — mislabeled but contractual.
+   Directory reads (the main real-world trigger, `/.`) are fixed and take the SPA fallback instead.
+   Status: **Unknown** — a faithful error kind would need a documented envelope first.
+2. **The Tauri adapter's host gate (B1 fix) is compile-verified (2026-10-21):** with the system
+   libraries installed (`webkit2gtk-4.1`, `gtk3`, `libsoup3`, `dbus`, `librsvg`, `pkgconf` — user
+   action), `cargo check` in `apps/desktop/src-tauri` finishes clean. First compilation also
+   surfaced two latent build blockers unrelated to B1, fixed in the same train: (a) the
+   `register_uri_scheme_protocol` sync callback must return `Response` directly (adapter now maps
+   `adapt()` construction failures to a uniform fallback), and (b) the four placeholder icons were
+   1×1 gray+alpha, rejected by `generate_context!` — replaced with RGBA PNGs drawing the documented
+   orange starburst (docs/07 §1.5). Remaining unknown: the **runtime** behavior of real webview
+   requests (whether a given webview sends a `Host` header) is only positively observable through a
+   running window; the fail-closed rejection path stays logic-verified. Status: **compile-verified
+   (cargo check); runtime pass-through exercised by the launched shell, rejection path logic-only**.
+3. **One T30 reload-timeout flake recurred** during the fix verification (same signature as the
+   report's recorded one-off: `a.nav-item` absent after `page.reload()`, not reproducible in
+   isolation; two subsequent full runs green). Status: **Unknown** — flake of unknown cause; the
+   suite is otherwise deterministic over consecutive runs.
+4. **Deep-link plumbing is runtime-exercised (2026-10-21)** — cold-start argv and second-launch
+   forwarding both navigate the primary (fail-closed classification, `Setup3p` deferred to the
+   Phase-2 setup window per ARCH-NAV-03). Fixture: `tests/native/shell-runtime.sh` (17/17).
+   Still unknown/deferred: OS-level scheme registration (the `myharness://` x-scheme-handler /
+   `.desktop` entry) belongs to packaging (docs/13 §4 Phase 9) — clicking such a link in a browser
+   does nothing on this machine today. Status: **runtime-verified via argv channel; OS registration
+   deferred, not implemented**.
+5. **Native menu accelerators: recorded deferral (IMP-30)** — the shipped app's accelerators
+   (docs/06 §7, `Verified`) are honored only insofar as Phase-1 features exist: shell accelerators
+   in-app, text-edit accelerators WebView-native, the rest deferred to the feature phases or the
+   menu surface (a GTK menubar would visibly break the frameless geometry captured in docs/07).
+   Status: **decided and documented (deferred)**, not lost.

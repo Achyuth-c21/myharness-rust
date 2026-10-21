@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/capability/2",
   "identifier": "default",
-  "description": "Base capability for the main window during the scaffold phase. Narrow this as bridge APIs land.",
+  "description": "Base capability for the main window (Phase 1). Tauri v2 denies everything by default; only core permissions are granted. Narrow as bridge commands land.",
   "windows": ["main"],
-  "permissions": []
+  "permissions": ["core:default"]
 }

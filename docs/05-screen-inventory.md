@@ -45,7 +45,7 @@ archive outside this repository; no raw screenshot is included here.
 | Region | Observation |
 |---|---|
 | Viewport | 1920×1080 |
-| Title bar | ~36 px tall; sidebar toggle, panel toggle, back/forward controls |
+| Title bar | ~36 px tall; panel toggle, sidebar toggle, back/forward controls |
 | Sidebar | ~321 px wide at default; scrolls independently |
 | Main content | remaining width; centered content column |
 | Composer | ~720 px wide on new task; rounded card with toolbar row |
