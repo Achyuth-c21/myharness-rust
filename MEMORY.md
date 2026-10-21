@@ -173,3 +173,13 @@ branch. `evidence/app-asar-orig/` is git-ignored by design.
 - `npm install` has since been run for the test toolchain; dev-server icons were never generated
   (`docs/21` state notes).
 - No screenshot is approved for publication; the private archive stays outside the repo.
+- **Push policy (owner decision, 2026-10-21): `docs/` and `evidence/` are never pushed again.**
+  What is already on origin (dev/phase-1/`main` initial commit) will be handled by the owner later;
+  do NOT rewrite remote history without an explicit fresh approval. Mechanism adopted:
+  - commit code paths only (explicit pathspecs; never `git add -A` while docs are modified);
+  - doc edits (docs/**, evidence/**) stay on disk uncommitted — they still must be *made* every
+    slice per AGENTS §4.3, they just do not enter commits;
+  - before every push: `git diff --name-only origin/dev..HEAD | grep -E '^(docs|evidence)/'`
+    must print nothing; abort the push otherwise.
+  - Slice-1 commit was re-cut to `d25005c` (code only) to honor this; the doc content lives in
+    the worktree.
