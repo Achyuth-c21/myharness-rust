@@ -5,6 +5,8 @@ edition.workspace = true
 
 [dependencies]
 myharness-config = { path = "../config" }
+myharness-secrets = { path = "../secrets" }
+secrecy = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }

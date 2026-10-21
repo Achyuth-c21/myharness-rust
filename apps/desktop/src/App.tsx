@@ -20,6 +20,42 @@ import { NewTaskScreen } from "./screens/NewTaskScreen";
 import { ArtifactsScreen, CodeScreen, ProjectsScreen, ScreenHead, ScheduledScreen } from "./screens/EmptyStates";
 import { LoadingShell } from "./components/shells";
 import { SCREENS } from "./routes";
+import SetupWindow from "./setup/SetupWindow";
+
+/**
+ * Render the setup window only inside the setup window.
+ *
+ * The setup surface is a separate window with its own origin-shared renderer
+ * (docs/09 §2.1; docs/screens/setup-desktop-3p.md). The main window must never
+ * show it, so the route checks the window label and redirects otherwise.
+ */
+function SetupRoute() {
+  const navigate = useNavigate();
+  const [allowed, setAllowed] = useState<boolean | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let isSetup = false;
+      try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        isSetup = (await getCurrentWindow().label) === "setup-desktop-3p";
+      } catch {
+        isSetup = false;
+      }
+      if (cancelled) return;
+      if (!isSetup) {
+        navigate("/", { replace: true });
+        return;
+      }
+      setAllowed(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [navigate]);
+  if (!allowed) return <LoadingShell label="Opening configuration…" />;
+  return <SetupWindow />;
+}
 
 export default function App() {
   const navigate = useNavigate();
@@ -137,6 +173,10 @@ export default function App() {
                 Route, so the remount also happens when already on /new. Focus goes
                 with the explicit invocation; boot does not autofocus (report Run 4). */}
             <Route path="/new" element={<NewTaskScreen key={newKey} focusOnMount={newKey > 0} />} />
+            {/* The setup window is a SEPARATE window (docs/09 §2.1). The route
+                exists so that window can render it; in the main window the route
+                redirects, so the setup surface is never a page of the main app. */}
+            <Route path="/setup-desktop-3p" element={<SetupRoute />} />
             <Route path="/projects" element={<ProjectsScreen />} />
             <Route path="/cowork-artifact" element={<ArtifactsScreen />} />
             <Route path="/scheduled-task" element={<ScheduledScreen />} />

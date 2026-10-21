@@ -2098,8 +2098,12 @@ version = "0.1.0"
 name = "myharness-bridge"
 version = "0.1.0"
 dependencies = [
+ "myharness-config",
+ "myharness-secrets",
+ "secrecy",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -2118,6 +2122,7 @@ version = "0.1.0"
 dependencies = [
  "myharness-app-shell",
  "myharness-bridge",
+ "myharness-secrets",
  "tauri",
  "tauri-build",
  "tauri-plugin-single-instance",

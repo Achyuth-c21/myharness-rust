@@ -41,8 +41,9 @@ pub const REDACTED: &str = "<redacted>";
 pub const REDACTED_HOST: &str = "<private-host>";
 
 /// Keys whose whole value is a credential (`docs/20` §2.1 marks them "secret
-/// string"). Their values never appear in an export.
-const SECRET_KEYS: [&str; 6] = [
+/// string"). Their values never appear in an export, and the setup window
+/// preserves them across a renderer write (`docs/18` §10).
+pub const SECRET_KEYS: [&str; 6] = [
     "inferenceGatewayApiKey",
     "inferenceAnthropicApiKey",
     "inferenceBedrockBearerToken",
@@ -108,7 +109,7 @@ pub fn export_profiles(
 
     for (id, profile) in profiles {
         let name = format!("profiles/{id}.json");
-        files.insert(name.clone(), redact_document(profile));
+        files.insert(name.clone(), redact_document_for_export(profile));
         contents.push(ExportEntry {
             name,
             description: "A third-party inference profile (redacted).".to_string(),
@@ -157,9 +158,33 @@ fn bundle(contents: Vec<ExportEntry>, files: BTreeMap<String, Value>) -> ExportB
     }
 }
 
+/// Where a redacted document is going.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RedactTarget {
+    /// The renderer: a keychain **handle** is safe to show (it names an account,
+    /// not a value) and must be visible so the setup window can show that a
+    /// credential is stored and offer to replace it (`docs/18` §10).
+    Renderer,
+    /// The export bundle: nothing that names a stored credential leaves.
+    Export,
+}
+
+/// Redact a profile document for the renderer: secret keys keep their handle,
+/// credential-shaped values and URL query strings are stripped, and private
+/// hosts are replaced.
+pub fn redact_document(profile: &ProfileDocument) -> Value {
+    redact_document_for(profile, RedactTarget::Renderer)
+}
+
+/// Redact a profile document for an export bundle: handles are replaced too,
+/// because a bundle can be shared.
+pub fn redact_document_for_export(profile: &ProfileDocument) -> Value {
+    redact_document_for(profile, RedactTarget::Export)
+}
+
 /// Redact a profile document: secret keys, credential-shaped values, URL query
 /// strings and private hosts.
-pub fn redact_document(profile: &ProfileDocument) -> Value {
+pub fn redact_document_for(profile: &ProfileDocument, target: RedactTarget) -> Value {
     let mut document = match serde_json::to_value(profile) {
         Ok(value) => value,
         Err(_) => Value::Null,
@@ -168,7 +193,7 @@ pub fn redact_document(profile: &ProfileDocument) -> Value {
         for (_key, value) in object.iter_mut() {
             // The unknown-key map is flattened into the document by the wire
             // format, so it is redacted like any other map.
-            *value = redact_value(value);
+            *value = redact_value_for(value, target);
         }
     }
     redact_private_hosts_in(&mut document);
@@ -178,23 +203,40 @@ pub fn redact_document(profile: &ProfileDocument) -> Value {
 /// Redact an arbitrary JSON value: secret keys, credential-shaped entries and
 /// values, and URL query strings.
 pub fn redact_value(value: &Value) -> Value {
+    redact_value_for(value, RedactTarget::Export)
+}
+
+/// Redact an arbitrary JSON value for a target.
+pub fn redact_value_for(value: &Value, target: RedactTarget) -> Value {
     match value {
         Value::Object(map) => {
             let mut out = Map::new();
             for (key, item) in map {
                 if SECRET_KEYS.contains(&key.as_str()) {
-                    out.insert(key.clone(), Value::String(REDACTED.to_string()));
+                    // A handle is safe for the renderer; a value never is. The
+                    // export replaces both.
+                    let keep_handle = target == RedactTarget::Renderer && item.is_object();
+                    out.insert(
+                        key.clone(),
+                        if keep_handle {
+                            item.clone()
+                        } else {
+                            Value::String(REDACTED.to_string())
+                        },
+                    );
                     continue;
                 }
                 if CREDENTIAL_HEADER_NAMES.contains(&key.to_ascii_lowercase().as_str()) {
+                    // The header name is routing metadata, not a secret; the value
+                    // is. The name stays so the UI can show the header exists.
                     out.insert(key.clone(), Value::String(REDACTED.to_string()));
                     continue;
                 }
-                out.insert(key.clone(), redact_value(item));
+                out.insert(key.clone(), redact_value_for(item, target));
             }
             Value::Object(out)
         }
-        Value::Array(items) => Value::Array(items.iter().map(redact_value).collect()),
+        Value::Array(items) => Value::Array(items.iter().map(|i| redact_value_for(i, target)).collect()),
         Value::String(text) => {
             if looks_like_credential(text) {
                 return Value::String(REDACTED.to_string());

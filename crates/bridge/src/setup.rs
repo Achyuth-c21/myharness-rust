@@ -24,6 +24,8 @@
 //!   runner live in the `settings.Custom3pHelperRun` namespace
 //!   (`docs/18` §3.4) and are not part of this slice.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -33,6 +35,7 @@ use myharness_config::health::ConfigHealth;
 use myharness_config::overlay::MergedConfig;
 use myharness_config::tabs::SetupTab;
 use myharness_config::{ConfigError, ConfigLibrary, ProfileDocument, ProviderKind};
+use myharness_secrets::{SecretRef, SecretStore};
 
 /// A command in the `settings.Custom3pSetup` namespace.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -42,8 +45,16 @@ pub enum SetupCommand {
     ListProfiles,
     /// `read` — one profile document, redacted.
     ReadProfile { id: String },
-    /// `write` — persist an edited draft.
-    WriteProfile { document: Value },
+    /// `write` — persist an edited draft. `secrets` carries the credential
+    /// values the user typed, keyed `section/key`; the bridge stores them in the
+    /// OS keychain and puts the handle in the document, so no secret value is
+    /// ever written into a profile or returned to the renderer
+    /// (`docs/18` §10).
+    WriteProfile {
+        document: Value,
+        #[serde(default)]
+        secrets: BTreeMap<String, String>,
+    },
     /// `apply` — validate and activate a profile.
     ApplyProfile { id: String },
     /// `duplicate` — copy a profile into an independent draft.
@@ -58,6 +69,8 @@ pub enum SetupCommand {
     Health,
     /// `export` — the redacted support bundle.
     Export,
+    /// `egress` — the derived egress allowlist (the read-only Egress tab).
+    Egress,
     /// `tabSchema` — the form schema of one setup tab.
     TabSchema { tab: String },
     /// `connectionSchema` — the Connection form schema of one provider family.
@@ -80,6 +93,8 @@ pub enum SetupResponse {
     Health { health: Value },
     /// The redacted support bundle.
     Export { bundle: Value },
+    /// The derived egress allowlist.
+    Egress { allowlist: Value },
     /// A form schema.
     Schema { schema: Value },
     /// The validation issues of a draft.
@@ -161,18 +176,24 @@ pub trait SetupBackend {
     fn health(&self) -> Result<ConfigHealth, BridgeError>;
     /// The redacted support bundle.
     fn export(&self) -> Result<ExportBundle, BridgeError>;
+    /// The derived egress allowlist.
+    fn egress(&self) -> Result<myharness_config::egress::EgressAllowlist, BridgeError>;
+    /// Store a credential value and return the handle the document carries.
+    fn set_secret(&self, account: &str, value: &str) -> Result<SecretRef, BridgeError>;
 }
 
-/// A backend over the configuration library.
+/// A backend over the configuration library and the OS keychain.
 pub struct ConfigBackend {
     library: ConfigLibrary,
+    secrets: Box<dyn SecretStore>,
 }
 
 impl ConfigBackend {
-    /// Open the library at `root`.
-    pub fn new(root: impl Into<std::path::PathBuf>) -> Self {
+    /// Open the library at `root`, resolving secrets through `store`.
+    pub fn new(root: impl Into<std::path::PathBuf>, store: Box<dyn SecretStore>) -> Self {
         ConfigBackend {
             library: ConfigLibrary::open(root),
+            secrets: store,
         }
     }
 
@@ -236,6 +257,29 @@ impl SetupBackend for ConfigBackend {
     fn export(&self) -> Result<ExportBundle, BridgeError> {
         Ok(self.library.export()?)
     }
+
+    fn egress(&self) -> Result<myharness_config::egress::EgressAllowlist, BridgeError> {
+        let merged = self.library.get_merged()?;
+        let Some(entry) = self.library.active()? else {
+            return Ok(myharness_config::egress::EgressAllowlist { groups: Vec::new() });
+        };
+        let profile = self.library.read(&entry.id)?;
+        Ok(myharness_config::egress::derive(&profile, Some(&merged)))
+    }
+
+    fn set_secret(&self, account: &str, value: &str) -> Result<SecretRef, BridgeError> {
+        // The value is written to the keychain first: a document that references a
+        // secret that was never stored would resolve to nothing (fail closed).
+        let secret = secrecy::SecretString::from(value.to_string());
+        self.secrets.store(account, &secret).map_err(|error| {
+            BridgeError::new("SECRET_STORE", format!("the credential could not be stored: {error}"))
+        })?;
+        Ok(SecretRef {
+            kind: myharness_secrets::RefKind::Keychain,
+            service: self.secrets.service().to_string(),
+            account: account.to_string(),
+        })
+    }
 }
 
 /// Execute one setup command.
@@ -262,9 +306,12 @@ fn run<B: SetupBackend>(backend: &B, command: SetupCommand) -> Result<SetupRespo
                 document: redact(&document),
             })
         }
-        SetupCommand::WriteProfile { document } => {
-            let document = decode_document(document)?;
+        SetupCommand::WriteProfile { document, secrets } => {
+            let mut document = decode_document(document)?;
+            // A renderer must never send a secret value inside the document
+            // (`docs/18` §10): that is refused before anything is written.
             reject_inline_secrets(&document)?;
+            apply_secrets(backend, &mut document, &secrets)?;
             backend.write_profile(&document)?;
             Ok(SetupResponse::Profile {
                 document: redact(&document),
@@ -308,6 +355,9 @@ fn run<B: SetupBackend>(backend: &B, command: SetupCommand) -> Result<SetupRespo
         }),
         SetupCommand::Export => Ok(SetupResponse::Export {
             bundle: serde_json::to_value(backend.export()?).unwrap_or(Value::Null),
+        }),
+        SetupCommand::Egress => Ok(SetupResponse::Egress {
+            allowlist: serde_json::to_value(backend.egress()?).unwrap_or(Value::Null),
         }),
         SetupCommand::TabSchema { tab } => {
             let tab = parse_tab(&tab)?;
@@ -381,21 +431,158 @@ fn decode_document(document: Value) -> Result<ProfileDocument, BridgeError> {
 /// A secret must never be sent as a value (`docs/18` §10: "Secrets are opaque
 /// handles, not values, in renderer messages"). A renderer write that carries an
 /// inline secret is refused rather than stored.
+///
+/// The check is specific to secrets: a document that merely contains a private
+/// host or a URL with a query string is not a secret leak and is not refused here
+/// (the export redacts those; the write keeps them).
 fn reject_inline_secrets(document: &ProfileDocument) -> Result<(), BridgeError> {
-    let redacted = myharness_config::export::redact_document(document);
-    let original = serde_json::to_value(document).unwrap_or(Value::Null);
-    if redacted != original {
-        return Err(BridgeError::new(
-            "CONFIG_VALIDATION",
-            "a secret must be stored as a keychain handle, not as a value",
-        ));
+    let value = serde_json::to_value(document).unwrap_or(Value::Null);
+    if let Some(object) = value.as_object() {
+        for section in SECTIONS {
+            let Some(map) = object.get(section).and_then(Value::as_object) else {
+                continue;
+            };
+            for key in myharness_config::export::SECRET_KEYS {
+                let Some(entry) = map.get(key) else {
+                    continue;
+                };
+                if entry.as_str().is_some() {
+                    return Err(BridgeError::new(
+                        "CONFIG_VALIDATION",
+                        "a secret must be stored as a keychain handle, not as a value",
+                    ));
+                }
+            }
+            if let Some(found) = find_credential_value(map) {
+                return Err(BridgeError::new(
+                    "CONFIG_VALIDATION",
+                    format!("the value of {found:?} looks like a credential; store it as a keychain handle"),
+                ));
+            }
+        }
     }
     Ok(())
+}
+
+/// Find the first value in a map that looks like a credential.
+fn find_credential_value(map: &serde_json::Map<String, Value>) -> Option<String> {
+    for (key, value) in map {
+        match value {
+            Value::String(text) => {
+                let trimmed = text.trim();
+                if trimmed.starts_with("sk-ant-")
+                    || trimmed.to_ascii_lowercase().starts_with("bearer ")
+                {
+                    return Some(key.clone());
+                }
+            }
+            Value::Object(inner) => {
+                for (inner_key, inner_value) in inner {
+                    if let Some(text) = inner_value.as_str() {
+                        let trimmed = text.trim();
+                        if trimmed.starts_with("sk-ant-")
+                            || trimmed.to_ascii_lowercase().starts_with("bearer ")
+                        {
+                            return Some(format!("{key}.{inner_key}"));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Redact a profile document for the renderer.
 fn redact(document: &ProfileDocument) -> Value {
     myharness_config::export::redact_document(document)
+}
+
+/// The sections a secret key can live in.
+const SECTIONS: [&str; 9] = [
+    "connection",
+    "capabilities",
+    "connectors",
+    "telemetry",
+    "limits",
+    "appearance",
+    "plugins",
+    "egress",
+    "source",
+];
+
+/// Store the credentials the user typed and place the handles in the document.
+///
+/// Two rules hold:
+///
+/// - A credential the user did not re-enter keeps the value already stored: the
+///   renderer never received it, so it cannot send it back.
+/// - A credential that was re-entered is written to the keychain first, and only
+///   then does the document carry its handle. A keychain failure fails the whole
+///   write (fail closed) — a document that references a secret that was never
+///   stored would resolve to nothing.
+fn apply_secrets<B: SetupBackend>(
+    backend: &B,
+    document: &mut ProfileDocument,
+    secrets: &BTreeMap<String, String>,
+) -> Result<(), BridgeError> {
+    for section in SECTIONS {
+        let Some(map) = section_mut(document, section) else {
+            continue;
+        };
+        for key in myharness_config::export::SECRET_KEYS {
+            let path = format!("{section}/{key}");
+            let Some(value) = secrets.get(&path) else {
+                continue;
+            };
+            if value.trim().is_empty() {
+                // An emptied field clears the credential: the handle is removed so
+                // the slot resolves to nothing rather than to a stale value.
+                map.remove(key);
+                continue;
+            }
+            let account = account_for(&path)?;
+            let reference = backend.set_secret(&account, value)?;
+            map.insert(
+                key.to_string(),
+                serde_json::to_value(reference).map_err(|e| {
+                    BridgeError::new("CONFIG_PARSE", format!("the credential handle could not be built: {e}"))
+                })?,
+            );
+        }
+    }
+    Ok(())
+}
+
+/// The keychain account a credential is stored under. The account is derived from
+/// the profile id and the field path, so a rewrite overwrites the same entry
+/// instead of leaking duplicates (`crates/secrets::derive_account`).
+fn account_for(path: &str) -> Result<String, BridgeError> {
+    let (section, key) = path.split_once('/').ok_or_else(|| {
+        BridgeError::new("CONFIG_VALIDATION", "a credential field path is malformed")
+    })?;
+    Ok(format!("profile/{section}/{key}"))
+}
+
+/// The mutable section map of a profile document.
+fn section_mut<'a>(
+    document: &'a mut ProfileDocument,
+    section: &str,
+) -> Option<&'a mut serde_json::Map<String, Value>> {
+    let value = match section {
+        "connection" => &mut document.connection.0,
+        "capabilities" => &mut document.capabilities.0,
+        "connectors" => &mut document.connectors.0,
+        "telemetry" => &mut document.telemetry.0,
+        "limits" => &mut document.limits.0,
+        "appearance" => &mut document.appearance.0,
+        "plugins" => &mut document.plugins.0,
+        "egress" => &mut document.egress.0,
+        "source" => &mut document.source.0,
+        _ => return None,
+    };
+    value.as_object_mut()
 }
 
 #[cfg(test)]
@@ -405,7 +592,7 @@ mod tests {
 
     fn backend() -> (ConfigBackend, String) {
         let root = std::env::temp_dir().join(format!("mh-bridge-test-{}", uuid::Uuid::new_v4()));
-        let backend = ConfigBackend::new(root);
+        let backend = ConfigBackend::new(root, Box::new(myharness_secrets::MemoryStore::default()));
         let id = backend
             .library()
             .create("Workspace", ProviderKind::Gateway)
@@ -459,6 +646,7 @@ mod tests {
             &backend,
             SetupCommand::WriteProfile {
                 document: serde_json::to_value(&document).unwrap(),
+                secrets: BTreeMap::new(),
             },
         );
         let SetupResponse::Error { error } = response else {
@@ -466,6 +654,35 @@ mod tests {
         };
         assert_eq!(error.code, "CONFIG_VALIDATION");
         assert!(!error.message.contains("sk-ant-example-value"));
+    }
+
+    /// A credential the user typed is stored in the keychain, and the document
+    /// carries the handle - never the value.
+    #[test]
+    fn a_typed_credential_becomes_a_handle() {
+        let (backend, id) = backend();
+        let mut document = backend.library().read(&id).unwrap();
+        document.connection = myharness_config::Section(json!({
+            "inferenceGatewayBaseUrl": "https://gateway.example",
+        }));
+        let mut secrets = BTreeMap::new();
+        secrets.insert(
+            "connection/inferenceGatewayApiKey".to_string(),
+            "sk-ant-typed-value".to_string(),
+        );
+        let response = dispatch(
+            &backend,
+            SetupCommand::WriteProfile {
+                document: serde_json::to_value(&document).unwrap(),
+                secrets,
+            },
+        );
+        let SetupResponse::Profile { document } = response else {
+            panic!("expected a profile response");
+        };
+        let text = document.to_string();
+        assert!(!text.contains("sk-ant-typed-value"), "{text}");
+        assert!(text.contains("kind"), "the handle should be present: {text}");
     }
 
     /// Arguments are validated in the bridge, before the library is touched.

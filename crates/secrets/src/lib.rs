@@ -165,7 +165,10 @@ fn safe_kind(kind: RefKind) -> &'static str {
 
 /// Backend contract. One method per keychain primitive; no batching/reading of
 /// foreign accounts (principle of least surface at the trust boundary, `docs/10` §8).
-pub trait SecretStore {
+///
+/// The trait is `Send + Sync`: the store lives behind a mutex in the main
+/// process, where it is reached from the IPC thread pool.
+pub trait SecretStore: Send + Sync {
     /// Service namespace this store resolves against (refs must match it).
     fn service(&self) -> &str;
     /// Create or overwrite the entry. Overwrite = rotation (`AI-ADAPTER-12` note).
