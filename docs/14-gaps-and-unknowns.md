@@ -202,11 +202,17 @@ recorded unknowns:
    (EACCES etc.) still reports as "not available in third-party mode" — mislabeled but contractual.
    Directory reads (the main real-world trigger, `/.`) are fixed and take the SPA fallback instead.
    Status: **Unknown** — a faithful error kind would need a documented envelope first.
-2. **The Tauri adapter's host gate (B1 fix) is compile-unverified on this host** (`webkit2gtk`, `gtk`,
-   `soup`, `dbus` system headers missing; no sudo — see §8 of [21-repo-layout.md](21-repo-layout.md)
-   siblings in `tests/report-bug-hunt-phase1.md` §Environment). The change is small and fail-closed;
-   it must be built (`cargo check` in `apps/desktop/src-tauri`) on an unblocked host before the fix is
-   claimed `Verified`. Status: **Unknown (build-gated)**.
+2. **The Tauri adapter's host gate (B1 fix) is compile-verified (2026-10-21):** with the system
+   libraries installed (`webkit2gtk-4.1`, `gtk3`, `libsoup3`, `dbus`, `librsvg`, `pkgconf` — user
+   action), `cargo check` in `apps/desktop/src-tauri` finishes clean. First compilation also
+   surfaced two latent build blockers unrelated to B1, fixed in the same train: (a) the
+   `register_uri_scheme_protocol` sync callback must return `Response` directly (adapter now maps
+   `adapt()` construction failures to a uniform fallback), and (b) the four placeholder icons were
+   1×1 gray+alpha, rejected by `generate_context!` — replaced with RGBA PNGs drawing the documented
+   orange starburst (docs/07 §1.5). Remaining unknown: the **runtime** behavior of real webview
+   requests (whether a given webview sends a `Host` header) is only positively observable through a
+   running window; the fail-closed rejection path stays logic-verified. Status: **compile-verified
+   (cargo check); runtime pass-through exercised by the launched shell, rejection path logic-only**.
 3. **One T30 reload-timeout flake recurred** during the fix verification (same signature as the
    report's recorded one-off: `a.nav-item` absent after `page.reload()`, not reproducible in
    isolation; two subsequent full runs green). Status: **Unknown** — flake of unknown cause; the

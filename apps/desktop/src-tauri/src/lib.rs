@@ -35,9 +35,16 @@ fn asset_root() -> shell::AssetRoot {
     shell::AssetRoot::new(std::path::PathBuf::from("/nonexistent-myharness-dist"))
 }
 
-fn adapt(
-    request: tauri::http::Request<Vec<u8>>,
-) -> Result<tauri::http::Response<Vec<u8>>, Box<dyn std::error::Error>> {
+/// Uniform app:// fallback for adapter-level failures only (e.g. malformed output
+/// construction in `adapt`). All gate/typed-envelope behavior lives in
+/// `shell::protocol::serve`, so this should be unreachable in practice.
+fn fallback_response() -> tauri::http::Response<Vec<u8>> {
+    let mut response = tauri::http::Response::new(Vec::new());
+    *response.status_mut() = tauri::http::StatusCode::INTERNAL_SERVER_ERROR;
+    response
+}
+
+fn adapt(request: tauri::http::Request<Vec<u8>>) -> tauri::http::Response<Vec<u8>> {
     // docs/02 §4 gate 1: hostname must be `localhost`; other hosts return 404.
     // report-bug-hunt B1: a request with NO Host header must not default to the
     // allowed value — consult the request URI's authority when present, and
@@ -84,9 +91,11 @@ fn adapt(
     for (key, value) in &response.headers {
         builder = builder.header(*key, value);
     }
+    // Adapter-level construction failures (never observed in practice) answer with
+    // the uniform fallback rather than a panic — the window keeps its shell.
     builder
         .body(response.body)
-        .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)
+        .unwrap_or_else(|_| fallback_response())
 }
 
 /// First, deliberately minimal typed command (docs/18): liveness only.
