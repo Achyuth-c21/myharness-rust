@@ -22,6 +22,11 @@
 //! overwrite on the same account, and no secret value ever round-trips through a
 //! profile file in the preferred path.
 //!
+//! [`helper`] owns the **helper-script** credential kind: it runs the configured
+//! program under a timeout, treats its output as data (a credential, never an
+//! instruction), and fails closed — a helper failure never falls back to another
+//! credential source (`TEST-CFG-005`).
+//!
 //! Deliberately NOT in this slice: production availability detection + KeyringStore vs
 //! file fallback wiring (bridge/Phase-2 integration), renderer-side redaction of whole
 //! profile documents (bridge slice — it needs `crates/config` types), and export-time
@@ -32,6 +37,8 @@
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
+
+pub mod helper;
 
 use secrecy::{ExposeSecret as _, SecretString};
 use serde::{Deserialize, Serialize};
@@ -286,6 +293,20 @@ pub enum SecretError {
     /// derivation inputs).
     #[error("SECRET_FORMAT: {detail}")]
     Format { detail: String },
+    /// The credential helper failed. Carries the program and a status — never the
+    /// helper's output, because a helper that failed to deliver a credential can
+    /// print one to stderr (`docs/09` §4 never-log rule). There is no fallback to
+    /// another credential source (`TEST-CFG-005`).
+    #[error("SECRET_HELPER: helper {program:?} failed: {detail}")]
+    HelperFailed { program: String, detail: String },
+    /// The credential helper exceeded its timeout and was killed.
+    #[error("SECRET_HELPER_TIMEOUT: helper {program:?} exceeded its {timeout_secs}s timeout")]
+    HelperTimeout { program: String, timeout_secs: u64 },
+    /// The cached helper credential is past its TTL and silent refresh is off, so
+    /// it must not be used. Fail closed: a stale credential is never returned
+    /// (`docs/14` §9 item 15).
+    #[error("SECRET_HELPER_EXPIRED: the cached credential for account {account:?} is past its TTL and cannot be refreshed silently")]
+    HelperExpired { account: String },
 }
 
 #[cfg(test)]
