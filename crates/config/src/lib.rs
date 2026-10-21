@@ -18,10 +18,13 @@
 //!   bridge concern (`docs/18` §10) and lands with the bridge slice.
 //! - **Exclusive credential kinds** — [`CredentialKind`] is an enum, so a profile
 //!   cannot hold a fallback pair (`REQ-SETUP-05`).
-//! - **Structural validation only** — schema version, id, name, provider, and section
-//!   shapes are validated here; per-provider field validation (the provider form
-//!   schemas of `docs/09` §2.2) is its own later Phase-2 slice, as are the managed
-//!   overlay (getMerged), health/recheck, and export redaction rows.
+//! - **Structural validation at write, provider-form validation at apply** — a draft
+//!   may be incomplete (it is a draft); [`ConfigLibrary::apply`] refuses a profile
+//!   whose provider form does not validate (`docs/09` §2.2 "Required fields marked `*`;
+//!   Apply blocks", `docs/13` §4 Phase 2 exit criterion "applying an invalid profile
+//!   does not change the live config"). The provider form schemas live in
+//!   [`forms`]. The managed overlay (getMerged), health/recheck, and export
+//!   redaction rows land in later Phase-2 slices.
 //!
 //! Ops intentionally NOT in this slice (later Phase-2 slices, per `docs/18` §10):
 //! `getMerged` (managed overlay trust), `health`/`recheck`, export redaction, and the
@@ -29,10 +32,12 @@
 //! Apply, mirroring `docs/screens/setup-desktop-3p.md` "Apply is the only save action").
 //! Those slots stay `declared, pending` in `docs/17` §4.8.
 //!
-//! Wire-format spelling: `ProviderKind`/`CredentialKind` serialize kebab-case ("claude-api",
-//! "bedrock-mantle", "static", ...). The shipped renderer's exact enum strings were not
-//! captured (`docs/20` records `enum/string` classes without values) — recorded as an
-//! unknown in `docs/14` §9; legacy `claudeAiImport` mapping must translate freely.
+//! Wire-format spelling: `ProviderKind` values follow `docs/12` §1 ("anthropic","bedrock",
+//! "mantle","vertex","foundry","gateway" — the documented provider IDs); `CredentialKind`
+//! follows the `docs/09` §2.2 kind table in kebab-case ("static", "helper-script",
+//! "vendor-profile", ...). Per-provider *offered subsets* and exact on-wire renderer
+//! strings beyond these docs were not captured (`docs/20` records classes, not values) —
+//! covered as an unknown in `docs/14` §9; the `claudeAiImport` mapping translates freely.
 
 use std::fs;
 use std::io::Write as _;
@@ -41,31 +46,50 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+pub mod forms;
+
 /// Schema versions this crate understands. Profiles from other writers carrying a
 /// future `schemaVersion` stay readable through unknown-key preservation but are
 /// refused at [`ConfigLibrary::apply`] — fail closed (`docs/01` methodology).
 const KNOWN_SCHEMA_VERSIONS: [u32; 1] = [1];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
 pub enum ProviderKind {
-    Gateway,
+    #[serde(rename = "anthropic")]
     ClaudeApi,
+    #[serde(rename = "bedrock")]
     Bedrock,
+    #[serde(rename = "mantle")]
     BedrockMantle,
-    Vertex,
+    #[serde(rename = "foundry")]
     Foundry,
+    /// Anthropic-compatible gateway (`docs/12` §1: `/v1/messages` + `/v1/models`).
+    #[serde(rename = "gateway")]
+    Gateway,
+    #[serde(rename = "vertex")]
+    Vertex,
 }
 
 /// Credential source for a provider. Singular by construction: a profile holds at
 /// most one, so "when set, only that source is used (no fallback)" is not a runtime
-/// check but a type invariant (`REQ-SETUP-05`, docs/09 §2.2).
+/// check but a type invariant (`REQ-SETUP-05`, docs/09 §2.2). The six families follow
+/// the `docs/09` §2.2 credential-kind table (`static`, `helper-script`,
+/// `interactive`, `vendor-profile`, `workforce`, `external-idp`); which subset is
+/// *offered* per provider belongs to the form schemas (`docs/12` §1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CredentialKind {
     Static,
+    HelperScript,
     Interactive,
-    Helper,
+    VendorProfile,
+    Workforce,
+    ExternalIdp,
+    /// Bedrock profiles/SSO identities ride external-idp-ish fields
+    /// (`inferenceBedrockProfile`, SSO keys); retained as its own kind where the
+    /// docs list "profile/SSO" as a selectable mode (`docs/12` §1 bedrock row).
+    #[serde(rename = "sso")]
+    Sso,
 }
 
 /// One section payload. Opaque at this layer (`docs/18` §10: typed per provider);
@@ -424,6 +448,19 @@ impl ConfigLibrary {
     pub fn apply(&self, id: &str) -> Result<(), ConfigError> {
         let doc = self.load_profile(id)?;
         doc.validate_structural()?;
+        // Provider-form validation runs before the pointer flips: an invalid profile
+        // must leave the live config untouched (`docs/13` §4 Phase 2 exit criterion
+        // "applying an invalid profile does not change the live config"; `docs/18` §10
+        // "apply validates the merged config").
+        let issues = forms::validate_document(&doc);
+        if let Some(blocking) = issues
+            .iter()
+            .find(|i| i.severity == forms::Severity::Error)
+        {
+            return Err(ConfigError::Validation {
+                detail: format!("{}: {}", blocking.field, blocking.message),
+            });
+        }
         let mut meta = self.load_meta()?;
         if meta.applied_id.as_deref() != Some(id) {
             meta.applied_id = Some(id.to_string());
@@ -552,7 +589,7 @@ fn temp_stem(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     fn scratch() -> ConfigLibrary {
         let dir = std::env::temp_dir().join(format!("mh-cfg-test-{}", Uuid::new_v4()));
@@ -567,6 +604,57 @@ mod tests {
             provider: Some(provider),
             ..ProfileDocument::default()
         }
+    }
+
+    /// A connection section that satisfies the provider-form requirements
+    /// (`forms::validate_document`). A freshly created profile is *not* applyable:
+    /// the shipped form blocks Apply while required fields are missing
+    /// (`docs/09` §2.2, `docs/screens/setup-desktop-3p.md`), so tests that need an
+    /// applyable profile fill these in explicitly.
+    fn minimal_connection(provider: ProviderKind) -> Value {
+        match provider {
+            ProviderKind::Gateway => json!({
+                "inferenceCredentialKind": "static",
+                "inferenceGatewayBaseUrl": "https://gateway.example",
+                "inferenceGatewayApiKey": "placeholder-credential",
+                "inferenceGatewayAuthScheme": "bearer",
+            }),
+            ProviderKind::ClaudeApi => json!({
+                "inferenceCredentialKind": "static",
+                "inferenceAnthropicApiKey": "placeholder-credential",
+            }),
+            ProviderKind::Bedrock => json!({
+                "inferenceCredentialKind": "static",
+                "inferenceBedrockRegion": "us-east-1",
+                "inferenceBedrockBearerToken": "placeholder-credential",
+            }),
+            ProviderKind::BedrockMantle => json!({
+                "inferenceCredentialKind": "static",
+                "inferenceBedrockMantleRegion": "us-east-1",
+                "inferenceBedrockMantleApiKey": "placeholder-credential",
+            }),
+            ProviderKind::Vertex => json!({
+                "inferenceCredentialKind": "static",
+                "inferenceVertexProjectId": "project",
+                "inferenceVertexRegion": "us-central1",
+                "inferenceVertexCredentialsFile": "/tmp/gcp-credentials.json",
+            }),
+            ProviderKind::Foundry => json!({
+                "inferenceCredentialKind": "static",
+                "inferenceFoundryResource": "resource",
+                "inferenceFoundryApiKey": "placeholder-credential",
+                "inferenceFoundryDeploymentName": "claude-opus-4-1",
+            }),
+        }
+    }
+
+    /// Create a profile whose connection section already satisfies the provider
+    /// form, so it can be applied.
+    fn create_ready(lib: &ConfigLibrary, name: &str, provider: ProviderKind) -> ProfileDocument {
+        let mut draft = lib.create(name, provider).unwrap();
+        draft.connection = Section(minimal_connection(provider));
+        lib.write(&draft).unwrap();
+        draft
     }
 
     /// TEST-CFG-001 (drafting): create + list + read round-trip, and the draft is
@@ -584,8 +672,8 @@ mod tests {
     #[test]
     fn apply_sets_active() {
         let lib = scratch();
-        let draft = lib.create("Workspace A", ProviderKind::Gateway).unwrap();
-        let other = lib.create("Workspace B", ProviderKind::ClaudeApi).unwrap();
+        let draft = create_ready(&lib, "Workspace A", ProviderKind::Gateway);
+        let other = create_ready(&lib, "Workspace B", ProviderKind::ClaudeApi);
         lib.apply(&draft.id.clone().unwrap()).unwrap();
         assert_eq!(lib.active().unwrap().map(|e| e.id.clone()), draft.id);
         lib.apply(&other.id.clone().unwrap()).unwrap();
@@ -618,7 +706,7 @@ mod tests {
     #[test]
     fn invalid_apply_is_rejected_and_previous_profile_stays_active() {
         let lib = scratch();
-        let good = lib.create("Valid", ProviderKind::Gateway).unwrap();
+        let good = create_ready(&lib, "Valid", ProviderKind::Gateway);
         lib.apply(good.id.as_ref().unwrap()).unwrap();
 
         // Unknown schema version cannot pass the merged-config gate.
@@ -644,6 +732,43 @@ mod tests {
         assert_eq!(lib.active().unwrap().map(|e| e.id.clone()), good.id);
     }
 
+    /// TEST-CFG-001 (docs/13 §6.2: "Profile apply is atomic; invalid config leaves
+    /// old profile intact") — the provider-form half of that criterion: a profile
+    /// whose required fields are missing is refused at Apply, and the previously
+    /// applied profile stays active. The shipped form blocks Apply while required
+    /// fields are empty (`docs/09` §2.2).
+    #[test]
+    fn apply_refuses_an_incomplete_profile_and_keeps_the_previous_one() {
+        let lib = scratch();
+        let good = create_ready(&lib, "Valid", ProviderKind::Gateway);
+        lib.apply(good.id.as_ref().unwrap()).unwrap();
+
+        // A freshly created draft has no endpoint — applying it must fail.
+        let incomplete = lib.create("Incomplete", ProviderKind::Gateway).unwrap();
+        let error = lib.apply(incomplete.id.as_ref().unwrap()).unwrap_err();
+        error_contains(error, "CONFIG_VALIDATION");
+        assert_eq!(
+            lib.active().unwrap().map(|e| e.id.clone()),
+            good.id,
+            "the previously applied profile must stay active"
+        );
+
+        // A profile with a non-Anthropic model id is refused too (docs/12 §2.2).
+        let mut bad_model = create_ready(&lib, "Bad model", ProviderKind::Gateway);
+        bad_model.connection = Section(json!({
+            "inferenceCredentialKind": "static",
+            "inferenceGatewayBaseUrl": "https://gateway.example",
+            "inferenceGatewayApiKey": "placeholder-credential",
+            "inferenceModels": ["gpt-4o"],
+        }));
+        lib.write(&bad_model).unwrap();
+        error_contains(
+            lib.apply(bad_model.id.as_ref().unwrap()).unwrap_err(),
+            "CONFIG_VALIDATION",
+        );
+        assert_eq!(lib.active().unwrap().map(|e| e.id.clone()), good.id);
+    }
+
     /// TEST-CFG-005 (docs/18 §10): a disk-level write failure refuses the operation
     /// and leaves the prior document and active selection untouched; the atomic
     /// rename guarantees no torn state. Simulated with a read-only directory (POSIX).
@@ -653,7 +778,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt as _;
         let lib = scratch();
         std::fs::create_dir_all(&lib.root).unwrap();
-        let first = lib.create("First", ProviderKind::Gateway).unwrap();
+        let first = create_ready(&lib, "First", ProviderKind::Gateway);
         lib.apply(first.id.as_ref().unwrap()).unwrap();
         // Freeze the directory so the write cannot create its temp file.
         std::fs::set_permissions(
@@ -667,7 +792,11 @@ mod tests {
         assert!(matches!(error, ConfigError::Io { .. }));
         std::fs::set_permissions(&lib.root, std::fs::Permissions::from_mode(0o700)).unwrap();
         let reread = lib.read(first.id.as_ref().unwrap()).unwrap();
-        assert!(reread.connection.0.is_null(), "edit must not have landed");
+        assert_eq!(
+            reread.connection.0,
+            minimal_connection(ProviderKind::Gateway),
+            "edit must not have landed"
+        );
         assert_eq!(lib.active().unwrap().map(|e| e.id.clone()), first.id, "prior active preserved");
     }
 
@@ -684,13 +813,13 @@ mod tests {
     }
 
     /// TEST-CFG-007 (REQ-SETUP-05 adjacency): exclusive credential kind serializes
-    /// kebab-case and refuses nothing else to deserialize.
+    /// per the docs/09 §2.2 kind table and refuses anything not in it.
     #[test]
     fn credential_kind_round_trip() {
-        let text = serde_json::to_string(&CredentialKind::Helper).unwrap();
-        assert_eq!(text, "\"helper\"");
-        let parsed: CredentialKind = serde_json::from_str("\"interactive\"").unwrap();
-        assert_eq!(parsed, CredentialKind::Interactive);
+        let text = serde_json::to_string(&CredentialKind::HelperScript).unwrap();
+        assert_eq!(text, "\"helper-script\"");
+        let parsed: CredentialKind = serde_json::from_str("\"vendor-profile\"").unwrap();
+        assert_eq!(parsed, CredentialKind::VendorProfile);
         // Inexact words do not become a kind.
         assert!(serde_json::from_str::<CredentialKind>("\"static_with_fallback\"").is_err());
     }
@@ -700,7 +829,7 @@ mod tests {
     #[test]
     fn duplicate_creates_independent_draft() {
         let lib = scratch();
-        let source = lib.create("Base", ProviderKind::Bedrock).unwrap();
+        let source = create_ready(&lib, "Base", ProviderKind::Bedrock);
         lib.apply(source.id.as_ref().unwrap()).unwrap();
         let copy = lib.duplicate(source.id.as_ref().unwrap(), "Base (2)").unwrap();
         assert_ne!(copy.id, source.id);
@@ -731,7 +860,7 @@ mod tests {
     #[test]
     fn delete_refuses_the_applied_profile_but_frees_others() {
         let lib = scratch();
-        let applied = lib.create("Applied", ProviderKind::Gateway).unwrap();
+        let applied = create_ready(&lib, "Applied", ProviderKind::Gateway);
         lib.apply(applied.id.as_ref().unwrap()).unwrap();
         let other = lib.create("Other", ProviderKind::Gateway).unwrap();
         error_contains(lib.delete(applied.id.as_ref().unwrap()).unwrap_err(), "CONFIG_IN_USE");
@@ -745,8 +874,8 @@ mod tests {
     #[test]
     fn profile_switch_moves_only_the_pointer() {
         let lib = scratch();
-        let a = lib.create("A", ProviderKind::Gateway).unwrap();
-        let b = lib.create("B", ProviderKind::ClaudeApi).unwrap();
+        let a = create_ready(&lib, "A", ProviderKind::Gateway);
+        let b = create_ready(&lib, "B", ProviderKind::ClaudeApi);
         let before_a = lib.read(a.id.as_ref().unwrap()).unwrap();
         lib.apply(b.id.as_ref().unwrap()).unwrap();
         lib.apply(a.id.as_ref().unwrap()).unwrap();
@@ -780,7 +909,7 @@ mod tests {
     #[test]
     fn wire_format_matches_observed_camelcase() {
         let lib = scratch();
-        let draft = lib.create("Wire", ProviderKind::Gateway).unwrap();
+        let draft = create_ready(&lib, "Wire", ProviderKind::Gateway);
         lib.apply(draft.id.as_ref().unwrap()).unwrap();
         let meta_text = std::fs::read_to_string(lib.meta_path()).unwrap();
         assert!(meta_text.contains("\"appliedId\""), "meta must use appliedId, not applied_id");
