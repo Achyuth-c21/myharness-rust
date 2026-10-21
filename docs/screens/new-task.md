@@ -52,8 +52,10 @@ the bottom.
 
 ### Sidebar
 
-- Segmented **Cowork / Code** control; each tab carries a small icon (shuffle-arrows / `</>`,
-  2026-10-21 reference). Cowork is selected on this route.
+- Segmented **Cowork / Code** control; each tab carries a small icon (task-list / `</>`,
+  2026-10-21 reference; re-attested same day — the earlier "shuffle-arrows" reading was
+  wrong). Tabs split the control into equal halves with centered content; Cowork is
+  selected on this route.
 - **New**, **Projects**, **Artifacts**, **Scheduled**, **Customize** — each row carries a small
   leading icon (re-attested 2026-10-21; exact glyphs left to the icon set, docs/07 §1.5).
 - Tasks header with a trailing disclosure chevron plus search and filter icons.

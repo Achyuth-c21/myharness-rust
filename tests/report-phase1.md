@@ -237,6 +237,36 @@ account display name (needs the accounts phase — personal data is not committe
 exact nav-icon glyph art (icon-set decision); fonts (Anthropic faces not vendored —
 documented); send/primary styling with text present (unobserved in the empty-home capture).
 
+## Run 6 — Cowork/Code navigation cluster pass (2026-10-21)
+
+Source: user comparison of the navigation area against the reference capture. Focused
+changes only — no behavior, theme, or refactors:
+
+1. **Segmented tabs split the control into equal halves** with centered content
+   (`flex: 1 1 0` + `justify-content: center`); container full-width, min-height 32px
+   (tabs 28px). Previously tabs were content-sized and packed left, leaving an empty
+   gray tail — the reference splits the halves (Cowork's raised pill ends at the
+   control's midpoint, ≈215/405px — now reproduced exactly).
+2. **Cowork tab icon = task-list (checklist) glyph** — the Run-5 "shuffle-arrows"
+   interpretation was wrong; the capture and the documented palette surface
+   (`search-palette.md`: Cowork = task-list, Code = `</>`) agree. 16px, 1.2 stroke.
+3. **Nav icon family unified at 16px** — the `+ New` icon was 14px and broke label
+   alignment with the 16px family; nav rows get `gap: 10px` so all labels align at one
+   x; icons declared `color: text-2` explicitly (reference: icons sit with labels).
+4. **Titlebar spacing** — control centers 36px apart (28px buttons + 8px gaps,
+   `titlebar-left` now `gap: 8px` + 4px inset; first control center ≈25px vs reference
+   ≈27px). Right cluster (round close) unchanged.
+5. **Verified, no change needed:** full-height sidebar divider (border-right hairline);
+   Code panel — `/epitaxy` renders its phase-gated screen, the Code tab takes the raised
+   pill, and Cowork click returns to `/new` (route-reflective selected state confirmed
+   programmatically via pathname). The Code dashboard content itself stays per
+   `docs/05` §4.3 (lands in its own phase).
+
+Gates: `tsc --noEmit` clean, `vite build` OK, E2E **30/30 ALL PASS**; screenshots at
+1920×1080 light/dark re-compared — control halves, tab shapes, nav alignment, and
+toolbar pitch match; navigation state transitions verified live (`/new` → `/epitaxy`
+→ `/new`, selected-tab follows path).
+
 ## Repro commands
 
 ## Run 2 — docs-fidelity audit (behavior vs docs)

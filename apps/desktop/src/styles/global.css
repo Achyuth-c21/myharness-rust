@@ -118,7 +118,13 @@ body {
 .titlebar-left,
 .titlebar-right {
   display: flex;
-  gap: calc(var(--mh-unit) * 1);
+}
+
+/* Reference capture: control centers sit 36px apart (28px ghost buttons + 8px
+   gaps), first control at ~13px from the edge. */
+.titlebar-left {
+  gap: calc(var(--mh-unit) * 2);
+  padding-left: 4px;
 }
 
 .titlebar-right {
@@ -187,7 +193,7 @@ body {
 .nav-item {
   display: flex;
   align-items: center;
-  gap: calc(var(--mh-unit) * 2);
+  gap: calc(var(--mh-unit) * 2.5); /* icon→label spacing (reference ~10px) */
   height: 30px; /* sidebar item 26–34px (docs/07 §1.4) */
   padding: 0 10px;
   border: 0;
@@ -199,6 +205,15 @@ body {
   text-align: left;
   cursor: pointer;
   width: 100%;
+}
+
+.nav-item > svg {
+  flex: none; /* icons share one 16px family; labels align at one x */
+  color: var(--mh-text-2); /* icons sit with the label in the reference */
+}
+
+.nav-item.active > svg {
+  color: var(--mh-text-1);
 }
 
 .nav-item:hover {
@@ -251,17 +266,25 @@ body {
 .segmented {
   display: inline-flex;
   align-items: center;
+  width: 100%; /* control spans the sidebar content width (reference) */
+  min-height: 32px;
   padding: 2px;
   border-radius: var(--mh-radius-pill);
   background: var(--mh-hover-fill);
 }
 
+/* Equal halves with centered content (reference: Cowork's raised pill spans
+   one half; Code fills the other). Selected tab = raised pill shape (docs/07
+   §3.6 segmented verified states). */
 .seg {
   border: 0;
   background: transparent;
   color: var(--mh-text-2);
   font: inherit;
-  padding: 3px 12px;
+  flex: 1 1 0;
+  justify-content: center;
+  min-height: 28px;
+  padding: 4px 12px;
   border-radius: var(--mh-radius-pill);
   cursor: pointer;
   display: inline-flex; /* icon + label (reference capture) */

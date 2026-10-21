@@ -3,22 +3,24 @@
  * SIDEBAR, not the title bar: docs/screens/new-task.md layout shows it in the sidebar
  * column, and docs/06 §4: "The Cowork/Code switch is persistent in the sidebar."
  * Selected mode is visually raised with darkened text (UI-INT-004 verified states).
- * Tab icons (shuffle for Cowork, `</>` for Code) match the reference capture.
+ * Tab icons: task-list (checklist) for Cowork, `</>` for Code — per the reference
+ * capture and the palette surface glyphs (docs/screens/search-palette.md).
  */
 import { useLocation, useNavigate } from "react-router-dom";
 
 function CoworkIcon() {
+  // Task-list (checklist) glyph — matches the user-provided reference tab icon;
+  // docs/screens/search-palette.md also documents the Cowork surface icon as a
+  // task-list glyph. 16px, 1.2 stroke to match the nav icon family.
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      {/* shuffle-arrows glyph */}
       <path
-        d="M2 4.5h2.2c1 0 1.9.5 2.4 1.3L9 10a2.9 2.9 0 0 0 2.5 1.4H14M2 11.5h2.2c1 0 1.9-.5 2.4-1.3l.6-.9M9 5.9A2.9 2.9 0 0 1 11.5 4.5H14"
+        d="m2.5 4.4 1.3 1.3 2-2.5M8.4 4.7h5M2.5 10.9l1.3 1.3 2-2.5M8.4 11.2h5"
         stroke="currentColor"
         strokeWidth="1.2"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-      <path d="M12.2 2.8 14 4.5l-1.8 1.7M12.2 9.6l1.8 1.8-1.8 1.7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
