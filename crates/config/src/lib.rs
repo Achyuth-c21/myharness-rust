@@ -54,9 +54,12 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::export::ExportBundle;
 use crate::health::{ManagedConfig, ManagedSettings};
 use crate::overlay::{merge, managed_write_conflicts, MergedConfig};
 
+pub mod egress;
+pub mod export;
 pub mod forms;
 pub mod health;
 pub mod overlay;
@@ -317,6 +320,22 @@ impl ConfigLibrary {
     /// [`ConfigLibrary::write`].
     pub fn set_managed(&mut self, managed: ManagedConfig) {
         self.managed = managed;
+    }
+
+    /// `export` — the redacted support bundle (`docs/18` §10 operation list).
+    ///
+    /// The bundle enumerates its contents and requires explicit consent before it
+    /// is uploaded anywhere (`docs/09` §4). Secrets, credential-shaped values, URL
+    /// query strings and private-infrastructure hosts are redacted
+    /// (`docs/09` §4; `TEST-CFG-007`, `TEST-CFG-008`).
+    pub fn export(&self) -> Result<ExportBundle, ConfigError> {
+        let mut profiles: Vec<(String, ProfileDocument)> = Vec::new();
+        for entry in self.list()? {
+            let doc = self.load_profile(&entry.id)?;
+            profiles.push((entry.id, doc));
+        }
+        let merged = self.get_merged()?;
+        Ok(export::export_profiles(&profiles, Some(&merged)))
     }
 
     /// `getMerged` — the effective configuration: the applied local profile with
@@ -1053,6 +1072,27 @@ mod tests {
             lib.read(draft.id.as_ref().unwrap()).unwrap().name,
             Some("Renamed".to_string())
         );
+    }
+
+    /// TEST-CFG-007: the export operation redacts secrets and enumerates its
+    /// contents, and requires explicit consent before it is uploaded.
+    #[test]
+    fn export_is_redacted_enumerated_and_requires_consent() {
+        let lib = scratch();
+        let draft = create_ready(&lib, "Support", ProviderKind::Gateway);
+        lib.apply(draft.id.as_ref().unwrap()).unwrap();
+
+        let bundle = lib.export().unwrap();
+        assert!(bundle.consent_required);
+        assert!(!bundle.warnings.is_empty());
+        assert!(!bundle.contents.is_empty());
+        for entry in &bundle.contents {
+            assert!(bundle.files.contains_key(&entry.name));
+        }
+        // The stored secret never reaches the bundle.
+        let text = serde_json::to_string(&bundle.files).unwrap();
+        assert!(!text.contains("placeholder-credential"), "{text}");
+        assert!(text.contains(crate::export::REDACTED));
     }
 
     // -- test helpers -----------------------------------------------------------
