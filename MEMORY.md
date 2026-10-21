@@ -161,8 +161,13 @@ branch. `evidence/app-asar-orig/` is git-ignored by design.
 - Projects, Artifacts, and Scheduled tasks are only **Partial** in the investigation
   (`docs/04` §1): existing-project detail was never created, the artifact pane was never
   available, create/edit and history for scheduled tasks were never exercised.
-- The Phase-1 environment lacked system GTK/WebKit/dbus dev libraries, so native window
-  behavior was never exercised end-to-end (`tests/report-phase1.md`).
+- Phase-1 initially lacked system GTK/WebKit/dbus dev libraries. **Installed 2026-10-21**
+  (`webkit2gtk4.1-devel`, `gtk3-devel`, `libsoup3-devel`, `dbus-devel`, `librsvg2-devel`,
+  `pkgconf-pkg-config`); `cargo check` on `apps/desktop/src-tauri` passes and the first real windowed
+  run launched (`MYHARNESS_DIST=apps/desktop/dist cargo run` in `src-tauri`) — full details and the
+  two latent first-compile blockers it surfaced are in `tests/report-bug-hunt-phase1.md` §F and
+  `docs/14` §9 supplement. Longer-running runtime behaviors (deep-link routes, updater, window-state)
+  have still not been exercised end-to-end.
 - `npm install` has since been run for the test toolchain; dev-server icons were never generated
   (`docs/21` state notes).
 - No screenshot is approved for publication; the private archive stays outside the repo.
