@@ -166,8 +166,10 @@ branch. `evidence/app-asar-orig/` is git-ignored by design.
   `pkgconf-pkg-config`); `cargo check` on `apps/desktop/src-tauri` passes and the first real windowed
   run launched (`MYHARNESS_DIST=apps/desktop/dist cargo run` in `src-tauri`) — full details and the
   two latent first-compile blockers it surfaced are in `tests/report-bug-hunt-phase1.md` §F and
-  `docs/14` §9 supplement. Longer-running runtime behaviors (deep-link routes, updater, window-state)
-  have still not been exercised end-to-end.
+  `docs/14` §9 supplement. Longer-running runtime behaviors are now partially exercised: deep links
+  (argv channel: cold start + second-launch forwarding, `tests/native/shell-runtime.sh` 17/17);
+  upstream OS scheme registration stays a Phase-9 packaging item; updater and window-state have
+  still not been exercised end-to-end.
 - `npm install` has since been run for the test toolchain; dev-server icons were never generated
   (`docs/21` state notes).
 - No screenshot is approved for publication; the private archive stays outside the repo.

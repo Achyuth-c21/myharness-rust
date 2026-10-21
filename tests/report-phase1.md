@@ -306,3 +306,23 @@ node tests/e2e/shell.spec.mjs
 # Frontend gates
 cd apps/desktop && npx tsc --noEmit && npm run build
 ```
+
+---
+
+## Run 7 — native runtime completion (2026-10-21, phase-1 lane — no merge)
+
+Goal: close the native half of the Phase-1 list (`docs/13` §4) now that the system libraries
+landed (user action) and the shell actually builds and launches.
+
+| Item | Result |
+|---|---|
+| First full build + windowed launch | `cargo run` 4m39s; window opens, `WebKitWebProcess` children live, zero GTK/webview warnings. Harness note: runs backgrounded by the agent get reaped when the agent turn ends — launch from a user terminal or inside one command (empirical: direct binary run survived minutes; two `cargo run` background instances exited silently at turn boundaries). |
+| Latent first-compile blockers (fixed) | `register_uri_scheme_protocol` sync callback returns `Response` directly (uniform fallback on adapter construction failure); the four icons were 1×1 gray-alpha placeholders rejected by `generate_context!` — replaced with RGBA PNGs of the documented orange starburst (docs/07 §1.5), stdlib-generated, no new deps. |
+| Deep-link plumbing (docs/02 §2 step 2, docs/06 §6) | Cold-start argv and second-launch forwarding now navigate the primary via `WebviewWindow::navigate`; classification fail-closed via `shell::lifecycle::classify_deep_link`; `Setup3p` recognized but deferred (ARCH-NAV-03: dedicated setup window = Phase 2). Debug-only `[myharness]` stderr traces make the runtime observable; control chars in argv are log-sanitized. |
+| `tests/native/shell-runtime.sh` (new fixture) | **17/17 PASS** in one run: cold boot with webview child; second launch exits fast yet primary persists; `myharness://projects` via second launch navigates primary (log proof); `claude://new` + `myharness://bogus` rejected, no navigation, window unaffected; cold start with `myharness://scheduled-task` navigates at boot; clean shutdown. This makes the Launch sequence runtime-verified, not just unit-tested (`TEST-ARCH-002` spirit, `ARCH-NAV-01`). |
+| Native menu accelerators (docs/06 §7) | Decision recorded as **IMP-30** (docs/19): shell accelerators in-app (N/`,`/K/B), text-edit accelerators WebView-native; the remaining Electron roles and feature accelerators deferred to their feature phases or the future menu surface — hidden native menu proposed when one exists; window roles (Close/Quit) as bridge commands then. Frameless geometry stays intact. |
+| OS scheme registration | Deferred to Phase 9 packaging (x-scheme-handler/`.desktop`): clicking a `myharness://` link in a browser does nothing on this machine today — documented in `docs/14` §9 supplement item 4. |
+
+Gates: `cargo check` + `cargo build` in `apps/desktop/src-tauri` clean; native fixture 17/17;
+renderer untouched (E2E battery unaffected, last known 32/32). Commits land on `phase-1`; dev
+still untouched.

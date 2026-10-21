@@ -217,3 +217,15 @@ recorded unknowns:
    report's recorded one-off: `a.nav-item` absent after `page.reload()`, not reproducible in
    isolation; two subsequent full runs green). Status: **Unknown** — flake of unknown cause; the
    suite is otherwise deterministic over consecutive runs.
+4. **Deep-link plumbing is runtime-exercised (2026-10-21)** — cold-start argv and second-launch
+   forwarding both navigate the primary (fail-closed classification, `Setup3p` deferred to the
+   Phase-2 setup window per ARCH-NAV-03). Fixture: `tests/native/shell-runtime.sh` (17/17).
+   Still unknown/deferred: OS-level scheme registration (the `myharness://` x-scheme-handler /
+   `.desktop` entry) belongs to packaging (docs/13 §4 Phase 9) — clicking such a link in a browser
+   does nothing on this machine today. Status: **runtime-verified via argv channel; OS registration
+   deferred, not implemented**.
+5. **Native menu accelerators: recorded deferral (IMP-30)** — the shipped app's accelerators
+   (docs/06 §7, `Verified`) are honored only insofar as Phase-1 features exist: shell accelerators
+   in-app, text-edit accelerators WebView-native, the rest deferred to the feature phases or the
+   menu surface (a GTK menubar would visibly break the frameless geometry captured in docs/07).
+   Status: **decided and documented (deferred)**, not lost.

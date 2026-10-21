@@ -331,3 +331,21 @@ textarea / contenteditable) and no overlay is open, every global shortcut stays 
 (settings, palette) keep the unscoped behavior their flows rely on. Spec lines in `docs/08` are
 unchanged — this is a renderer-scope rule, not a spec rewrite. **Tests:** T05, T13, T19, T27 still
 green; verified in `tests/report-bug-hunt-phase1.md` §F.
+
+### IMP-30 — Native menu surface for accelerator parity (P2)
+
+**Baseline:** `docs/06` §7 extracted the shipped app's native menu accelerators (`Verified` on the
+shipped bundle). The rebuild's shell is frameless (`docs/05`/`docs/07` geometry), so attaching a
+GTK/muda menubar to carry accelerators would render a visible menu strip and break the captured
+home geometry. `docs/13` §4 lists "native menu accelerators" under Phase 1 — carried here as the
+deferred decision instead.
+
+**Current state (Phase 1):** shell accelerators are implemented in-app (Ctrl+N, Ctrl+,, Ctrl+K,
+Ctrl+B; battery T05/T13/T19/T27); text-edit accelerators (Z/X/C/V/A in editable surfaces) are
+WebView-native in WebKitGTK; the remainder (Ctrl+/, Ctrl+\, Ctrl+;, Ctrl+Shift+T, open file/folder,
+F1, find/zoom roles, Ctrl+W/Q window roles) arrive with the features or menu surface they trigger.
+
+**Proposal:** when a menu surface exists in the product (or at Phase 9 packaging), attach a hidden
+native menu carrying the remaining documented accelerators without touching frameless geometry;
+turn the deferral off. Native window roles (Close/Quit) land with it as bridge commands with
+`docs/18` rows. **Tests:** extend the native runtime fixture with per-accelerator assertions.
