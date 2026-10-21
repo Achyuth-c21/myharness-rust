@@ -1232,8 +1232,9 @@ pub fn connection_schema(provider: ProviderKind) -> FormSchema {
     FormSchema { provider, fields }
 }
 
-/// Validate a whole profile document at Apply time: structural gates (crate core)
-/// then provider forms. Errors block Apply; warnings travel for the renderer banner.
+/// Validate a whole profile document at Apply time: structural gates (crate core),
+/// then the provider form, then the eight non-Connection setup tabs
+/// ([`crate::tabs`]). Errors block Apply; warnings travel for the renderer banner.
 pub fn validate_document(doc: &ProfileDocument) -> Vec<FormIssue> {
     let Some(provider) = doc.provider else {
         return vec![error(
@@ -1247,6 +1248,34 @@ pub fn validate_document(doc: &ProfileDocument) -> Vec<FormIssue> {
         .map(|e| error("profile", e.to_string()));
     let mut issues = structural.into_iter().collect::<Vec<_>>();
     issues.extend(validate_connection(provider, &doc.connection.0));
+    issues.extend(crate::tabs::validate_tab(
+        crate::tabs::SetupTab::Capabilities,
+        &doc.capabilities.0,
+    ));
+    issues.extend(crate::tabs::validate_tab(
+        crate::tabs::SetupTab::Connectors,
+        &doc.connectors.0,
+    ));
+    issues.extend(crate::tabs::validate_tab(
+        crate::tabs::SetupTab::Telemetry,
+        &doc.telemetry.0,
+    ));
+    issues.extend(crate::tabs::validate_tab(
+        crate::tabs::SetupTab::Limits,
+        &doc.limits.0,
+    ));
+    issues.extend(crate::tabs::validate_tab(
+        crate::tabs::SetupTab::Appearance,
+        &doc.appearance.0,
+    ));
+    issues.extend(crate::tabs::validate_tab(
+        crate::tabs::SetupTab::Plugins,
+        &doc.plugins.0,
+    ));
+    issues.extend(crate::tabs::validate_tab(
+        crate::tabs::SetupTab::Source,
+        &doc.source.0,
+    ));
     issues
 }
 

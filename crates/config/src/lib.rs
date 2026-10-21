@@ -63,6 +63,7 @@ pub mod export;
 pub mod forms;
 pub mod health;
 pub mod overlay;
+pub mod tabs;
 
 /// Schema versions this crate understands. Profiles from other writers carrying a
 /// future `schemaVersion` stay readable through unknown-key preservation but are
