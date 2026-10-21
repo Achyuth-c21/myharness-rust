@@ -2070,6 +2070,12 @@ dependencies = [
 [[package]]
 name = "myharness-config"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "uuid",
+]
 
 [[package]]
 name = "myharness-desktop"
