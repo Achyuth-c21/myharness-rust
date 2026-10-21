@@ -125,6 +125,8 @@ Run 1: GO on all automatable layers (16/16 Rust, 13/13 E2E, clean tsc + build) �
 Run 2 (docs-fidelity audit): 9 spec deviations found and fixed; 17/17 E2E — **GO**.
 Run 3 (adversarial battery): 3 product bugs found and fixed; 30/30 E2E ×3 consecutive greens,
 16/16 Rust, clean tsc/build, light+dark screenshots verified — **GO**.
+Run 4 (user-attested UI corrections): title-bar topology/glyphs, composer focus + model pill,
+greeting alignment corrected against the shipped app; 30/30 E2E, clean tsc/build — **GO**.
 Environment gap for the true windowed run remains (GTK/WebKit/dbus dev libs need sudo).
 
 ## Run 3 — adversarial UI battery (same day)
@@ -155,6 +157,34 @@ not a captured spec value. T02 asserts it as a plumbing/regression check, not as
 Evidence of stability: *three consecutive* full-suite greens after the fix batch
 (pass_count 30, exit 0 each), then Rust (16/16), `tsc --noEmit`, `vite build` all clean,
 and light/dark screenshots re-captured with no visual regression.
+
+## Run 4 — user-attested UI corrections (2026-10-21)
+
+Source: the user compared the preview side-by-side with the shipped app and flagged the
+title bar, composer, and model pill. Each change cites its basis; where the docs are
+silent, the change is labeled user-attested and handled per `docs/14` §9:
+
+1. **Title bar topology** — left: hamburger sidebar toggle, back, forward; right: globe
+   (web/browser context, `task-detail.md` §Layout order `[globe] [pane]`), panel toggle,
+   then platform window controls. `docs/05` lists the controls without sides; the burger
+   glyph and the right-side cluster placement are **user-attested** from the shipped app.
+2. **Sidebar toggle glyph** = 3-line hamburger (user-attested; `docs/07` §1.5 leaves exact
+   codepoints to the icon set).
+3. **Window controls** render as real SVG glyphs (– □ ×), full-bar hit areas, flush to the
+   corner; still inert until the desktop/window bridge lands.
+4. **Composer focus** — the composite card carries the keyboard-focus ring via
+   `:has(:focus-visible)`; the boot-time ring on the textarea was a rebuild artifact the
+   shipped app does not show. Boot no longer autofocuses: focus follows the explicit
+   Ctrl+N invocation (UI-INT-005, `focusOnMount` prop).
+5. **Model pill** = selected-pill treatment (raised surface + darker text, `docs/07` §3.6);
+   label text stays "Model" until provider wiring (`model-picker.md` display labels come
+   from provider config, `docs/13` §Phase 3).
+6. **Greeting column** — starburst and composer card share the 720px column, so their
+   left edges align exactly (`new-task.md` §Layout).
+
+Gates after the batch: `tsc --noEmit` clean, `vite build` OK, E2E **30/30** (two consecutive
+runs), light/dark screenshots re-verified; geometry audit shows the model pill within 2px of
+the +/send midpoint (documented "model label centered").
 
 ## Repro commands
 

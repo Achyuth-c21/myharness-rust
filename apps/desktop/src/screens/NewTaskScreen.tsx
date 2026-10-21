@@ -12,6 +12,13 @@
  */
 import { useEffect, useRef, useState } from "react";
 
+interface Props {
+  /** UI-INT-005: the composer focuses on the explicit New invocation (the Ctrl+N
+   *  remount driven by newKey in App). Boot/plain navigation do not steal focus —
+   *  boot focus visuals are unobserved (docs/14 §9 decision note, report Run 4). */
+  focusOnMount?: boolean;
+}
+
 function Starburst() {
   // Orange starburst mark (docs/07 §1.5: starburst uses the orange accent).
   const rays = Array.from({ length: 8 }, (_, i) => {
@@ -57,14 +64,13 @@ function SendGlyph() {
   );
 }
 
-export function NewTaskScreen() {
+export function NewTaskScreen({ focusOnMount = false }: Props) {
   const [draft, setDraft] = useState("");
   const taRef = useRef<HTMLTextAreaElement>(null);
 
-  // UI-INT-005: New (sidebar or Ctrl+N) focuses the composer, context cleared.
   useEffect(() => {
-    taRef.current?.focus();
-  }, []);
+    if (focusOnMount) taRef.current?.focus(); // UI-INT-005 (Ctrl+N remount only)
+  }, [focusOnMount]);
 
   const hasText = draft.trim().length > 0;
 

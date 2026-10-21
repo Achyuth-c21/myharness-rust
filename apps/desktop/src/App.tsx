@@ -111,8 +111,9 @@ export default function App() {
             />
             {/* newKey remounts the screen on Ctrl+N so the draft resets and the
                 composer refocuses (UI-INT-005). The key sits on the ELEMENT, not the
-                Route, so the remount also happens when already on /new. */}
-            <Route path="/new" element={<NewTaskScreen key={newKey} />} />
+                Route, so the remount also happens when already on /new. Focus goes
+                with the explicit invocation; boot does not autofocus (report Run 4). */}
+            <Route path="/new" element={<NewTaskScreen key={newKey} focusOnMount={newKey > 0} />} />
             <Route path="/projects" element={<ProjectsScreen />} />
             <Route path="/cowork-artifact" element={<ArtifactsScreen />} />
             <Route path="/scheduled-task" element={<ScheduledScreen />} />

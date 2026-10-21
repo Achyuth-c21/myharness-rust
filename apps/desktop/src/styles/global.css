@@ -120,6 +120,32 @@ body {
   gap: calc(var(--mh-unit) * 1);
 }
 
+.titlebar-right {
+  gap: 0;
+  margin-right: calc(var(--mh-unit) * -2); /* window controls flush to the corner */
+}
+
+/* Platform window controls: full-bar-height hit areas (docs/05 §2). Inert until
+   the bridge window API lands; visually real glyphs, not text placeholders. */
+.win-btn {
+  width: 46px;
+  height: var(--mh-titlebar-h);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--mh-text-2);
+  cursor: pointer;
+}
+
+.win-btn:disabled {
+  color: var(--mh-text-3);
+  opacity: 0.9;
+  cursor: default;
+}
+
 .titlebar-center {
   flex: 1;
   display: flex;
@@ -614,16 +640,20 @@ body {
 .new-task {
   max-width: 734px; /* composer + active list share ~734px (new-task.md §Layout) */
   margin: 0 auto;
-  padding: 12vh calc(var(--mh-unit) * 4) calc(var(--mh-unit) * 8);
+  padding: 12vh 0 calc(var(--mh-unit) * 8);
   display: flex;
   flex-direction: column;
-  align-items: stretch;
+  align-items: center;
 }
 
+/* Greeting sits in the same 720px column as the composer card, so the starburst
+   aligns flush with the card's left edge (new-task.md §Layout). */
 .greeting {
   display: flex;
   align-items: center;
   gap: calc(var(--mh-unit) * 3);
+  width: 100%;
+  max-width: 720px;
   font-family: var(--mh-font-display);
   font-size: 36px; /* greeting serif (new-task.md §Layout: ~36px) */
   font-weight: var(--mh-w4);
@@ -637,6 +667,8 @@ body {
 }
 
 .code-note {
+  width: 100%;
+  max-width: 720px;
   color: var(--mh-text-2);
   margin: 0;
 }
@@ -660,10 +692,27 @@ body {
   background: transparent; /* transparent textarea (docs/07 §1.4) */
   font: inherit;
   font-size: 14px;
+  line-height: 1.5;
   color: var(--mh-text-1);
   padding: calc(var(--mh-unit) * 4) calc(var(--mh-unit) * 4) calc(var(--mh-unit) * 2);
-  min-height: 56px;
+  min-height: 60px;
   max-height: 200px; /* grows to a maximum, then scrolls (UI-INT-040) */
+}
+
+/* The composite composer card is the focus target (docs/07 §3.1): ring follows
+   keyboard focus only (:has(:focus-visible)), the textarea itself stays clean.
+   Approved decision for unobserved composer focus visuals (docs/14 §9). */
+.composer:has(:focus-visible) {
+  box-shadow: 0 2px 12px rgba(11, 11, 11, 0.06), 0 0 0 2px var(--mh-border-strong);
+}
+
+.composer-input:focus-visible {
+  box-shadow: none;
+}
+
+.composer-input::placeholder {
+  color: var(--mh-text-3);
+  opacity: 1;
 }
 
 .composer-toolbar,
@@ -690,20 +739,25 @@ body {
   display: inline-flex;
   align-items: center;
   gap: calc(var(--mh-unit) * 1);
-  border: 0;
-  background: transparent;
+  border: 1px solid var(--mh-border-hair);
+  background: var(--mh-surface-2); /* selected pill: raised surface (docs/07 §3.6) */
   font: inherit;
   font-size: 13px;
-  color: var(--mh-text-2);
+  font-weight: var(--mh-w5);
+  color: var(--mh-text-1); /* selected pill uses darker text (docs/07 §3.6) */
   cursor: pointer;
-  padding: calc(var(--mh-unit) * 1) calc(var(--mh-unit) * 2);
+  padding: calc(var(--mh-unit) * 1.5) calc(var(--mh-unit) * 3);
   border-radius: var(--mh-radius-pill);
   max-width: 260px;
   overflow: hidden;
+  white-space: nowrap;
+  /* Display labels middle-truncate (model-picker.md §Row anatomy); end-ellipsis
+     is the CSS stand-in until provider wiring lands (docs/13 §Phase 3). */
+  text-overflow: ellipsis;
 }
 
 .composer-model:disabled {
-  opacity: 0.7;
+  opacity: 0.75;
   cursor: default;
 }
 
@@ -755,6 +809,7 @@ body {
 }
 
 .active-list {
+  width: 100%;
   margin-top: calc(var(--mh-unit) * 8);
 }
 
