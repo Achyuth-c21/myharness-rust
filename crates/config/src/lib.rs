@@ -26,10 +26,18 @@
 //!   [`forms`]. The managed overlay (getMerged), health/recheck, and export
 //!   redaction rows land in later Phase-2 slices.
 //!
+//! - **Managed configuration is merged, never copied** — the managed (bootstrap)
+//!   overlay is applied by [`overlay::merge`], which reports the effective source
+//!   and lock state per field (`DATA-CONFIG-04`). Managed fields are read-only and
+//!   that is enforced on write ([`ConfigError::Managed`]), not only by disabling a
+//!   control in the UI (`docs/18` §10). Health and the re-check schedule live in
+//!   [`health`] (`DATA-CONFIG-09`).
+//!
 //! Ops intentionally NOT in this slice (later Phase-2 slices, per `docs/18` §10):
-//! `getMerged` (managed overlay trust), `health`/`recheck`, export redaction, and the
-//! render-layer draft session (the UI keeps drafts in memory and persists only on
-//! Apply, mirroring `docs/screens/setup-desktop-3p.md` "Apply is the only save action").
+//! the bootstrap **fetch** itself (transport and trust policy — the trust/signature
+//! policy was never captured, `docs/14` §9), export redaction, and the render-layer
+//! draft session (the UI keeps drafts in memory and persists only on Apply,
+//! mirroring `docs/screens/setup-desktop-3p.md` "Apply is the only save action").
 //! Those slots stay `declared, pending` in `docs/17` §4.8.
 //!
 //! Wire-format spelling: `ProviderKind` values follow `docs/12` §1 ("anthropic","bedrock",
@@ -46,7 +54,12 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::health::{ManagedConfig, ManagedSettings};
+use crate::overlay::{merge, managed_write_conflicts, MergedConfig};
+
 pub mod forms;
+pub mod health;
+pub mod overlay;
 
 /// Schema versions this crate understands. Profiles from other writers carrying a
 /// future `schemaVersion` stay readable through unknown-key preservation but are
@@ -254,6 +267,12 @@ pub enum ConfigError {
     /// fail-safe (shipped-behavior unknown: recorded in `docs/14` §9).
     #[error("CONFIG_IN_USE: profile {id:?} is applied and cannot be deleted")]
     InUse { id: String },
+    /// A write tried to change a field the managed configuration owns. Managed
+    /// fields are read-only and are enforced here rather than only in the UI
+    /// (`docs/18` §10 "Managed/read-only fields are enforced server-side";
+    /// `docs/09` §3.5).
+    #[error("CONFIG_MANAGED: field(s) {keys:?} are managed by the configuration source and cannot be changed locally")]
+    Managed { keys: Vec<String> },
 }
 
 impl From<std::io::Error> for ConfigError {
@@ -273,12 +292,50 @@ impl From<serde_json::Error> for ConfigError {
 /// tests use a throwaway directory.
 pub struct ConfigLibrary {
     root: PathBuf,
+    /// The managed (bootstrap) configuration state: the landed overlay, its health
+    /// and the re-check settings (`docs/09` §3.2, §2.10; `DATA-CONFIG-04/09`).
+    managed: ManagedConfig,
 }
 
 impl ConfigLibrary {
     /// Pure constructor — no I/O; directories appear on first create (0700 on POSIX).
     pub fn open(root: impl Into<PathBuf>) -> Self {
-        ConfigLibrary { root: root.into() }
+        ConfigLibrary {
+            root: root.into(),
+            managed: ManagedConfig::new(ManagedSettings::default()),
+        }
+    }
+
+    /// The managed-configuration state in force (overlay, health, settings).
+    pub fn managed(&self) -> &ManagedConfig {
+        &self.managed
+    }
+
+    /// Install the managed state — after a bootstrap fetch lands an overlay, or
+    /// after a health check refreshes it. The overlay is what makes managed
+    /// fields read-only, so this is also what arms the server-side enforcement in
+    /// [`ConfigLibrary::write`].
+    pub fn set_managed(&mut self, managed: ManagedConfig) {
+        self.managed = managed;
+    }
+
+    /// `getMerged` — the effective configuration: the applied local profile with
+    /// the managed overlay applied, plus the per-field source and lock state
+    /// (`docs/18` §10 operation list; `DATA-CONFIG-04`).
+    ///
+    /// With no applied profile the merged view is empty; with no managed overlay
+    /// it is the applied profile unchanged.
+    pub fn get_merged(&self) -> Result<MergedConfig, ConfigError> {
+        let Some(entry) = self.active()? else {
+            return Ok(MergedConfig {
+                profile_id: None,
+                fields: Default::default(),
+                overlay_present: false,
+            });
+        };
+        let doc = self.load_profile(&entry.id)?;
+        let overlay = self.managed.overlay();
+        Ok(merge(&doc, Some(overlay)))
     }
 
     fn profile_path(&self, id: &str) -> PathBuf {
@@ -423,6 +480,18 @@ impl ConfigLibrary {
             return Err(ConfigError::NotFound { id });
         }
         self.assert_free_name(&meta, doc.name.as_deref().unwrap_or_default().trim(), Some(&id))?;
+        // Managed fields are read-only, and that is enforced here rather than
+        // only by disabling the control in the UI (`docs/18` §10 "Managed/read-only
+        // fields are enforced server-side"; `docs/09` §3.5). A write that changes
+        // the local copy of a managed field is refused; the effective value is
+        // the managed one either way (`get_merged`).
+        if !self.managed.overlay().is_empty() {
+            let previous = self.load_profile(&id)?;
+            let conflicts = managed_write_conflicts(&previous, doc, self.managed.overlay());
+            if !conflicts.is_empty() {
+                return Err(ConfigError::Managed { keys: conflicts });
+            }
+        }
         // Doc-first ordering keeps the profile authoritative while the entry-name sync
         // is a separate atomic step (a failure between the two is re-runnable).
         let bytes = serde_json::to_vec_pretty(doc)?;
@@ -918,6 +987,72 @@ mod tests {
             std::fs::read_to_string(lib.profile_path(draft.id.as_ref().unwrap())).unwrap();
         assert!(profile_text.contains("\"schemaVersion\""), "profile must use schemaVersion");
         assert!(!profile_text.contains("schema_version"));
+    }
+
+    /// DATA-CONFIG-04 + docs/18 §10: a managed field is read-only, reports the
+    /// bootstrap source in the merged view, and a local write that changes it is
+    /// refused server-side.
+    #[test]
+    fn managed_overlay_is_read_only_and_enforced_on_write() {
+        let mut lib = scratch();
+        let draft = create_ready(&lib, "Managed", ProviderKind::Gateway);
+
+        let mut managed = ManagedConfig::new(ManagedSettings::default());
+        let overlay = overlay::Overlay::parse(&json!({
+            "connection": { "inferenceGatewayBaseUrl": "https://managed.example" },
+        }));
+        managed.apply_result(Ok(overlay), 1_000);
+        lib.set_managed(managed);
+
+        lib.apply(draft.id.as_ref().unwrap()).unwrap();
+
+        // The merged view carries the managed value and its source.
+        let merged = lib.get_merged().unwrap();
+        let field = merged.get("connection", "inferenceGatewayBaseUrl").unwrap();
+        assert_eq!(field.value, json!("https://managed.example"));
+        assert_eq!(field.source, overlay::ConfigSource::Bootstrap);
+        assert_eq!(field.lock, overlay::LockState::ReadOnly);
+        assert!(merged.overlay_present);
+
+        // A local write that changes the managed field is refused.
+        let mut edited = lib.read(draft.id.as_ref().unwrap()).unwrap();
+        edited.connection = Section(json!({
+            "inferenceCredentialKind": "static",
+            "inferenceGatewayBaseUrl": "https://edited.example",
+            "inferenceGatewayApiKey": "placeholder-credential",
+            "inferenceGatewayAuthScheme": "bearer",
+        }));
+        let error = lib.write(&edited).unwrap_err();
+        error_contains(error, "CONFIG_MANAGED");
+
+        // The refused write did not land.
+        let reread = lib.read(draft.id.as_ref().unwrap()).unwrap();
+        assert_eq!(
+            reread.connection.0["inferenceGatewayBaseUrl"],
+            json!("https://gateway.example")
+        );
+    }
+
+    /// A write that leaves the managed field alone is still accepted.
+    #[test]
+    fn managed_overlay_allows_unrelated_edits() {
+        let mut lib = scratch();
+        let draft = create_ready(&lib, "Managed", ProviderKind::Gateway);
+
+        let mut managed = ManagedConfig::new(ManagedSettings::default());
+        let overlay = overlay::Overlay::parse(&json!({
+            "connection": { "inferenceGatewayBaseUrl": "https://managed.example" },
+        }));
+        managed.apply_result(Ok(overlay), 1_000);
+        lib.set_managed(managed);
+
+        let mut edited = lib.read(draft.id.as_ref().unwrap()).unwrap();
+        edited.name = Some("Renamed".to_string());
+        lib.write(&edited).unwrap();
+        assert_eq!(
+            lib.read(draft.id.as_ref().unwrap()).unwrap().name,
+            Some("Renamed".to_string())
+        );
     }
 
     // -- test helpers -----------------------------------------------------------
