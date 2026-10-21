@@ -78,17 +78,21 @@ and border samples are **verified**.
 | Element | Measurement |
 |---|---|
 | Title bar | 36 px high |
-| Sidebar | ~321 px at default window width |
+| Sidebar | ~22.2vw fluid: ~321 px at default window width, ~425 px at 1920 (2026-10-21 reference re-attest) |
 | Sidebar item | 26–34 px high, 5–7 px radius |
-| Composer | 720 px wide on new task; 16 px outer radius? Observed card radius is large (~20 px) |
+| Composer | ~720–735 px wide on new task (fluid); radius large — 16–20 px (2026-10-21 reference reads ~16 px) |
 | Main content column | ~720 px centered, with generous vertical whitespace |
 | Settings modal | ~1400×960; left nav ~208 px; internal content column ~800 px |
 | Code dashboard | centered overview card ~520–570 px wide; composer below |
 | Task transcript | responsive max width; user/assistant blocks separated by whitespace |
+| Window controls | home surface shows a single round close at the top-right corner (2026-10-21 reference); no min/max at this size |
 
 The composer is a rounded white card with a toolbar row. The textarea is transparent. The send button
-is a circular icon button; attachments, skills, connectors, folder, and model controls share the
-toolbar. At rest the send button is low-contrast; when text is present it becomes primary.
+at rest is a low-contrast rounded-square outlined control with an upward arrow (2026-10-21 reference
+re-attest; an earlier note read it circular); when text is present it becomes primary. Attachments,
+skills, connectors, folder, and model controls share the toolbar; on the empty home the model label
+renders as plain text (reads "claude" in the captured build) and the project/folder selector sits in
+its own strip section beneath the input card.
 
 ### 1.5 Iconography
 

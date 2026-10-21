@@ -156,12 +156,16 @@ try {
     await expectTrue(navText.includes("Cowork") && navText.includes("Code"), "segmented control must render inside the sidebar");
   });
 
-  await step("T15 /new greeting + composer copy (new-task.md)", async () => {
+  await step("T15 /new greeting + composer copy (new-task.md + Run 5 reference)", async () => {
     await expectTrue(await page.getByRole("heading", { name: "You’re here!" }).count() === 1, "greeting heading");
     await expectTrue(await page.locator("#composer[placeholder='How can I help you today?']").count() === 1, "composer placeholder");
     await expectTrue(await page.getByText("Project or folder").count() === 1, "project/folder chip");
-    await expectTrue(await page.getByText("Clear active").count() === 1, "Clear active link");
-    const composerBox = await page.locator(".composer").boundingBox();
+    // Empty home shows "Ideas for you" (Run 5 reference capture; the Active list
+    // replaces it when session data exists — Phase 4).
+    await expectTrue(await page.getByText("Ideas for you").count() === 1, "Ideas for you heading");
+    await expectTrue(await page.locator(".idea-row").count() === 3, "three suggestion rows");
+    await expectTrue(await page.getByText("Send me a daily briefing").count() === 1, "first suggestion");
+    const composerBox = await page.locator(".composer-stack").boundingBox();
     await expectTrue(!!composerBox && composerBox.width <= 734, `composer must sit in the 734px column (got ${composerBox?.width})`);
   });
 

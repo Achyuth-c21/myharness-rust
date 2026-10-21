@@ -1,11 +1,12 @@
 /**
  * Title bar — 36px high (docs/07 §1.4), frameless custom bar (docs/05 §2).
- * Left: sidebar hamburger toggle (UI-INT-001), back/forward (UI-INT-003).
- * Right: globe (web/browser context, task-detail.md §Layout) and panel toggle
- * (UI-INT-002) in the task-detail order [globe] [pane], then platform window
- * controls. Placement attested from the shipped app by the user (docs/14 §9
- * decision note in tests/report-phase1.md); docs/05 viewport table lists the
- * controls without a side. The center is a drag region.
+ * Left cluster in the reference order: sidebar hamburger (UI-INT-001), panel
+ * toggle (UI-INT-002), back/forward (UI-INT-003) — matching the user-provided
+ * capture of the shipped home surface. The home bar carries no globe; web/window
+ * context stays a task-surface affordance (task-detail.md §Layout).
+ * Right: a single round close control at the corner — the only window control
+ * visible in the reference (no min/max at this size). Inert until the
+ * desktop/window bridge lands (UI-INT-013 area, crates/bridge).
  */
 import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
@@ -54,21 +55,10 @@ function PanelIcon() {
   );
 }
 
-function GlobeIcon() {
-  // Globe = web/browser context (docs/screens/task-detail.md §Layout).
-  return (
-    <svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <circle cx="8" cy="8" r="6.25" stroke="currentColor" strokeWidth="1.2" />
-      <ellipse cx="8" cy="8" rx="2.85" ry="6.25" stroke="currentColor" strokeWidth="1.2" />
-      <path d="M2 8h12M2.9 5h10.2M2.9 11h10.2" stroke="currentColor" strokeWidth="1.2" />
-    </svg>
-  );
-}
-
 function ArrowIcon({ dir }: { dir: "back" | "forward" }) {
   const d = dir === "back" ? "M10.5 3 5.5 8l5 5" : "M5.5 3l5 5-5 5";
   return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
       <path d={d} stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
@@ -89,6 +79,18 @@ export function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
           onClick={onToggleSidebar}
         >
           <SidebarIcon />
+        </button>
+        {/* UI-INT-002: panel toggle sits between the hamburger and Back in the
+            reference; no surface hosts an auxiliary pane yet (state =
+            unavailable with runtime reason). */}
+        <button
+          type="button"
+          className="icon-btn"
+          aria-label="Toggle panel"
+          disabled
+          title="No auxiliary pane on this surface"
+        >
+          <PanelIcon />
         </button>
         <button
           type="button"
@@ -117,44 +119,12 @@ export function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
       <div className="titlebar-center" data-tauri-drag-region />
 
       <div className="titlebar-right">
-        {/* Globe: web/browser-related context (task-detail.md §Layout). The context
-            pane/tooling arrives in a later phase; disabled with a runtime reason. */}
-        <button
-          type="button"
-          className="icon-btn"
-          aria-label="Web context"
-          disabled
-          title="Web/browser context arrives with the web tooling phase"
-        >
-          <GlobeIcon />
-        </button>
-        {/* UI-INT-002: panel toggle; no surface hosts an auxiliary pane yet
-            (state = unavailable with runtime reason). */}
-        <button
-          type="button"
-          className="icon-btn"
-          aria-label="Toggle panel"
-          disabled
-          title="No auxiliary pane on this surface"
-        >
-          <PanelIcon />
-        </button>
-        {/* Platform window controls (docs/05 §2: frameless custom bar on Linux).
-            Wired via crates/bridge (core invoke) in a later phase; inert for now
-            but rendered as real glyphs, not text approximations. */}
-        <button type="button" className="win-btn" aria-label="Minimize" disabled title="Minimize — via bridge later">
-          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-            <path d="M1 5h8" stroke="currentColor" strokeWidth="1.1" />
-          </svg>
-        </button>
-        <button type="button" className="win-btn" aria-label="Maximize" disabled title="Maximize — via bridge later">
-          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
-            <rect x="1" y="1" width="8" height="8" rx="1.2" stroke="currentColor" strokeWidth="1.1" />
-          </svg>
-        </button>
-        <button type="button" className="win-btn" aria-label="Close" disabled title="Close — via bridge later">
-          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-            <path d="m1.5 1.5 7 7m0-7-7 7" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+        {/* Single round close at the corner — the reference's own window-control
+            arrangement (no min/max visible on this surface). Wired via the
+            desktop/window bridge in a later phase; inert with a reason for now. */}
+        <button type="button" className="win-close" aria-label="Close" disabled title="Close — via bridge later">
+          <svg width="12" height="12" viewBox="0 0 10 10" aria-hidden="true">
+            <path d="m2 2 6 6m0-6-6 6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
           </svg>
         </button>
       </div>

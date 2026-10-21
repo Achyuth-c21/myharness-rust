@@ -186,6 +186,57 @@ Gates after the batch: `tsc --noEmit` clean, `vite build` OK, E2E **30/30** (two
 runs), light/dark screenshots re-verified; geometry audit shows the model pill within 2px of
 the +/send midpoint (documented "model label centered").
 
+## Run 5 — reference-capture fidelity round (2026-10-21)
+
+Source: the user provided a 1920×1080 reference capture of the shipped home surface
+(personally attested; the capture itself is not committed — it contains the account
+display name). This round re-tests earlier "user-attested" claims against real pixels.
+Where the capture contradicts an earlier attestation, the capture wins and the affected
+Run-4 note is marked superseded:
+
+1. **Title bar (supersedes Run-4 item 1)** — left cluster = hamburger, **panel toggle,
+   back, forward** (the Run-4 right-side placement of the toggle was wrong). The home bar
+   carries **no globe**. Right side = a **single round close control** at the corner; no
+   minimize/maximize visible at this size (supersedes the 3-glyph row of Run-4 item 3).
+   `docs/screens/new-task.md` §Title bar updated with the observation.
+2. **Sidebar width** — ~425px at 1920×1080 (earlier note: ~321px). Both figures cohere as a
+   ~22.2vw fluid rule (≈321 px near a default window). Implemented as
+   `clamp(300px, 22.2vw, 426px)`; `docs/07` §1.4 updated.
+3. **Sidebar content** — tab icons on Cowork (shuffle) / Code (`</>`); leading icons on
+   Projects/Artifacts/Scheduled/Customize; `Tasks ›` disclosure chevron; **Update available**
+   banner above a profile row (starburst avatar + display-name slot + "· Gateway" + chevron).
+   The display-name slot renders a neutral placeholder ("Account") — no personal name is
+   baked into source; the string arrives with the accounts phase. Glyph choices for
+   Projects/Artifacts/Scheduled/Customize are stand-ins (reference shows 16px glyphs;
+   exact codepoints remain icon-set details).
+4. **Greeting** — 40px serif with a 40px starburst beside it (docs said ~36px), top padding
+   ~34vh so the heading sits at the reference's vertical position (~427px center at 1080).
+5. **Composer (supersedes Run-4 item 5)** — the model label is **plain text "claude"** at the
+   right (no pill chrome, no chevron); send is a **36px rounded-square outlined button with
+   an up arrow** (supersedes both the docs' circular note and the earlier pill/circle
+   treatments). "+" is a plain glyph at the lower-left. The **Project or folder** selector
+   moved into a distinct 42px strip section directly beneath the input card (its own radius,
+   same width), info icon at its far right.
+6. **Ideas for you** — removes the empty "Active / Clear active" home block; the empty home
+   shows an **Ideas for you** section with three suggestion rows (Send me a daily briefing /
+   Organize my inbox / Customize Cowork for me), small outlined icons at their left. Active
+   list returns with session data (Phase 4). Suggestion click = **prefill the existing
+   composer draft + focus** (Unknown behavior in the shipped app per docs/14 §9; no invented
+   session start). T15 updated to assert the new structure.
+7. **Vertical rhythm** — heading→composer gap ~46px; composer→Ideas gap ~64px; Ideas row
+   pitch ~54px; Ideas heading indented ~44px from the column edge (reference ~45–50px).
+
+Gates after the batch: `tsc --noEmit` clean, `vite build` OK, E2E **30/30 ALL PASS**,
+screenshots re-verified at 1200×800 (light/dark) and **1920×1080** (the reference viewport)
+in light and dark; the 1920 comparison matches the capture's structure (title-bar cluster,
+sidebar geometry and bottom section, greeting position/size, stacked composer, strip,
+Ideas rows).
+
+Remaining known deltas deliberately left (out of instruction scope or phase-gated):
+account display name (needs the accounts phase — personal data is not committed);
+exact nav-icon glyph art (icon-set decision); fonts (Anthropic faces not vendored —
+documented); send/primary styling with text present (unobserved in the empty-home capture).
+
 ## Repro commands
 
 ## Run 2 — docs-fidelity audit (behavior vs docs)
