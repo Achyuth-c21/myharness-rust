@@ -66,7 +66,8 @@ export interface FieldDef {
   group: string;
   required?: boolean;
   requiredWhen?: string[];
-  options?: string[];
+  /** A select's options: the wire value stored in the profile, and its label. */
+  options?: { value: string; label: string }[];
   help?: string;
 }
 

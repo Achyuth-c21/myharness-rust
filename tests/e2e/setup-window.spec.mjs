@@ -63,10 +63,10 @@ const PROFILE = {
 const CONNECTION_SCHEMA = {
   provider: "gateway",
   fields: [
-    { key: "inferenceCredentialKind", label: "Credential kind", kind: "select", group: "credentials", required: true, options: ["Static API key", "Helper script"] },
+    { key: "inferenceCredentialKind", label: "Credential kind", kind: "select", group: "credentials", required: true, options: [{ value: "static", label: "Static API key" }, { value: "helper-script", label: "Helper script" }] },
     { key: "inferenceGatewayApiKey", label: "Gateway API key", kind: "secret", group: "credentials", required: true },
     { key: "inferenceGatewayBaseUrl", label: "Gateway base URL", kind: "url", group: "endpoint", required: true },
-    { key: "inferenceGatewayAuthScheme", label: "Auth scheme", kind: "select", group: "credentials", required: true, options: ["bearer", "x-api-key"] },
+    { key: "inferenceGatewayAuthScheme", label: "Auth scheme", kind: "select", group: "credentials", required: true, options: [{ value: "bearer", label: "bearer" }, { value: "x-api-key", label: "x-api-key" }] },
     { key: "modelDiscoveryEnabled", label: "Model discovery", kind: "switch", group: "models" },
     { key: "inferenceModels", label: "Model list", kind: "tag-list", group: "models" },
   ],
@@ -275,12 +275,62 @@ try {
     );
   });
 
+  await step("S13 the setup window shows none of the main app's chrome", async () => {
+    // The captured setup window is standalone (docs/screens/setup-desktop-3p.md):
+    // its own header, navigation, content and footer, and no sidebar, mode
+    // switch, account menu or title bar.
+    for (const selector of [".sidebar", ".titlebar", ".mode-switch", ".account-item"]) {
+      const found = await page.$(selector);
+      await expectTrue(found === null, `${selector} leaked into the setup window`);
+    }
+  });
+
+  await step("S14 a select shows the stored value, not an empty control", async () => {
+    // The credential kind is stored as the wire value `static` and shown with its
+    // label; a select that carried only labels could never show it.
+    const shown = await page.inputValue("#field-inferenceCredentialKind");
+    await expectTrue(shown === "static", `the credential kind showed ${shown}`);
+    const label = await page.textContent("#field-inferenceCredentialKind option:checked");
+    await expectTrue(label === "Static API key", `the label was ${label}`);
+  });
+
+  await step("S15 the export bundle is a modal over a scrim", async () => {
+    await page.click(".setup-header .setup-secondary-button");
+    await page.waitForSelector(".setup-export-scrim .setup-export");
+    const modal = await page.getAttribute(".setup-export", "aria-modal");
+    await expectTrue(modal === "true", `the export dialog was aria-modal=${modal}`);
+    // The consent step must not sit under the footer's primary action.
+    const exportBox = await (await page.$(".setup-export")).boundingBox();
+    const applyBox = await (await page.$(".setup-primary-button")).boundingBox();
+    const overlaps = !(exportBox.y + exportBox.height < applyBox.y || applyBox.y + applyBox.height < exportBox.y);
+    await expectTrue(!overlaps, "the export dialog covers the Apply button");
+    await page.click(".setup-export .setup-secondary-button");
+  });
+
+  await step("S16 the layout does not overflow a narrow window", async () => {
+    await page.setViewportSize({ width: 700, height: 600 });
+    await page.waitForTimeout(200);
+    const widths = await page.evaluate(() => ({
+      doc: document.documentElement.scrollWidth,
+      win: window.innerWidth,
+    }));
+    await expectTrue(widths.doc <= widths.win, `the content overflowed: ${widths.doc} > ${widths.win}`);
+    // The credential field's Reveal control must stay reachable.
+    const reveal = await page.$(".setup-secret-toggle");
+    await expectTrue(reveal !== null, "the credential reveal control disappeared");
+    const box = await reveal.boundingBox();
+    await expectTrue(box.x + box.width <= widths.win, "the reveal control is off-screen");
+    await page.setViewportSize({ width: 900, height: 720 });
+  });
+
   await step("S10 the Egress tab is read-only and shows the derived list", async () => {
     await page.click(".setup-nav-item:has-text('Egress')");
     await page.waitForSelector(".setup-egress-group");
     const hosts = await page.textContent(".setup-egress-hosts");
     await expectTrue(hosts.includes("downloads.claude.ai"), `hosts were ${hosts}`);
-    const note = await page.textContent(".setup-egress-group:has-text('essential-telemetry') .setup-note");
+    // The group heading is the human label (docs/09 §2.9 names the groups); the
+    // raw id stays in the data.
+    const note = await page.textContent(".setup-egress-group:has-text('Essential telemetry') .setup-note");
     await expectTrue(
       note.includes("never captured"),
       `the unobserved-group note was ${note}`,

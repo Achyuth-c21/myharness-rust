@@ -102,6 +102,26 @@ pub enum FieldGroup {
     Advanced,
 }
 
+/// One option of a select control.
+///
+/// The **value** is what the profile stores (the wire spelling) and the **label**
+/// is what the user reads. They differ - the credential kind is stored as `static`
+/// and shown as "Static API key" - so a select that carried only labels could
+/// never show the stored value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FieldOption {
+    pub value: &'static str,
+    pub label: &'static str,
+}
+
+impl FieldOption {
+    /// An option whose value and label are the same word.
+    pub const fn plain(value: &'static str) -> Self {
+        FieldOption { value, label: value }
+    }
+}
+
 /// One provider form field. `key` is the flat configuration key (`docs/20` §2.1),
 /// carried verbatim so the renderer edits the real document shape and the bridge can
 /// map drafts 1:1.
@@ -126,7 +146,7 @@ pub struct FieldDef {
     pub required_when: &'static [CredentialKind],
     /// Select options, when [`FieldKind::Select`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub options: Vec<&'static str>,
+    pub options: Vec<FieldOption>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub help: Option<&'static str>,
 }
@@ -740,7 +760,8 @@ pub fn validate_connection(provider: ProviderKind, connection: &Value) -> Vec<Fo
     issues
 }
 
-fn wire_kind(kind: CredentialKind) -> &'static str {
+/// The wire spelling of a credential kind (`docs/09` §2.2 kind table).
+pub fn wire_kind(kind: CredentialKind) -> &'static str {
     match kind {
         CredentialKind::Static => "static",
         CredentialKind::HelperScript => "helper-script",
@@ -856,7 +877,7 @@ fn required_for(mut field: FieldDef, kinds: &'static [CredentialKind]) -> FieldD
     field
 }
 
-fn with_options(mut field: FieldDef, options: Vec<&'static str>) -> FieldDef {
+fn with_options(mut field: FieldDef, options: Vec<FieldOption>) -> FieldDef {
     field.options = options;
     field
 }
@@ -879,7 +900,10 @@ pub fn connection_schema(provider: ProviderKind) -> FormSchema {
             )),
             schema_kinds(provider)
                 .iter()
-                .map(|(label, _)| *label)
+                .map(|(label, kind)| FieldOption {
+                    value: wire_kind(*kind),
+                    label,
+                })
                 .collect(),
         ),
         "When set, only that source is used (no fallback).",
@@ -910,7 +934,10 @@ pub fn connection_schema(provider: ProviderKind) -> FormSchema {
                     FieldKind::Select,
                     FieldGroup::Credentials,
                 )),
-                vec!["bearer", "x-api-key"],
+                vec![
+                    FieldOption::plain("bearer"),
+                    FieldOption::plain("x-api-key"),
+                ],
             ));
             fields.push(with_help(
                 field(
@@ -1235,7 +1262,9 @@ pub fn connection_schema(provider: ProviderKind) -> FormSchema {
             FieldKind::Select,
             FieldGroup::Models,
         ),
-        vec!["low", "medium", "high", "xhigh", "max"],
+        ["low", "medium", "high", "xhigh", "max"]
+            .map(FieldOption::plain)
+            .to_vec(),
     ));
     fields.push(field(
         "modelPrefer1mContext",

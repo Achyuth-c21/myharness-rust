@@ -23,41 +23,45 @@ import { SCREENS } from "./routes";
 import SetupWindow from "./setup/SetupWindow";
 
 /**
- * Render the setup window only inside the setup window.
+ * Which window this renderer instance belongs to.
  *
- * The setup surface is a separate window with its own origin-shared renderer
- * (docs/09 §2.1; docs/screens/setup-desktop-3p.md). The main window must never
- * show it, so the route checks the window label and redirects otherwise.
+ * The setup window is a SEPARATE window that loads the same SPA
+ * (docs/09 §2.1; docs/screens/setup-desktop-3p.md). It must show only the setup
+ * surface — the captured setup window has its own header, navigation, content
+ * and footer, and none of the main app's chrome (sidebar, mode switch, account
+ * menu, title bar). The main window must never show the setup surface either.
  */
-function SetupRoute() {
-  const navigate = useNavigate();
-  const [allowed, setAllowed] = useState<boolean | null>(null);
+function useWindowKind(): "main" | "setup" | null {
+  const [kind, setKind] = useState<"main" | "setup" | null>(null);
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      let isSetup = false;
+      let label = "main";
       try {
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
-        isSetup = (await getCurrentWindow().label) === "setup-desktop-3p";
+        label = await getCurrentWindow().label;
       } catch {
-        isSetup = false;
+        label = "main";
       }
       if (cancelled) return;
-      if (!isSetup) {
-        navigate("/", { replace: true });
-        return;
-      }
-      setAllowed(true);
+      setKind(label === "setup-desktop-3p" ? "setup" : "main");
     })();
     return () => {
       cancelled = true;
     };
-  }, [navigate]);
-  if (!allowed) return <LoadingShell label="Opening configuration…" />;
-  return <SetupWindow />;
+  }, []);
+  return kind;
 }
 
 export default function App() {
+  const kind = useWindowKind();
+  if (kind === null) return <LoadingShell label="Starting…" />;
+  // The setup window is a standalone surface: no title bar, no sidebar.
+  if (kind === "setup") return <SetupWindow />;
+  return <MainShell />;
+}
+
+function MainShell() {
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -173,10 +177,10 @@ export default function App() {
                 Route, so the remount also happens when already on /new. Focus goes
                 with the explicit invocation; boot does not autofocus (report Run 4). */}
             <Route path="/new" element={<NewTaskScreen key={newKey} focusOnMount={newKey > 0} />} />
-            {/* The setup window is a SEPARATE window (docs/09 §2.1). The route
-                exists so that window can render it; in the main window the route
-                redirects, so the setup surface is never a page of the main app. */}
-            <Route path="/setup-desktop-3p" element={<SetupRoute />} />
+            {/* The setup window is a SEPARATE window (docs/09 §2.1) and renders
+                its own surface; the main window has no setup route at all, so the
+                setup surface is never a page of the main app. */}
+            <Route path="/setup-desktop-3p" element={<Navigate replace to="/new" />} />
             <Route path="/projects" element={<ProjectsScreen />} />
             <Route path="/cowork-artifact" element={<ArtifactsScreen />} />
             <Route path="/scheduled-task" element={<ScheduledScreen />} />

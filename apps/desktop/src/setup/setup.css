@@ -150,7 +150,10 @@
 
 .setup-field {
   display: grid;
-  grid-template-columns: 240px 1fr;
+  /* minmax(0, …) on both tracks: without it the control column's implicit
+     min-content width (an input's default size) pushes the grid past the
+     viewport in a narrow window. */
+  grid-template-columns: minmax(0, 240px) minmax(0, 1fr);
   gap: calc(var(--mh-unit) * 3);
   padding: calc(var(--mh-unit) * 2) 0;
   border-bottom: 1px solid var(--mh-border-hair);
@@ -181,10 +184,16 @@
   display: flex;
   flex-direction: column;
   gap: var(--mh-unit);
+  /* The control cell must be allowed to shrink below its content's
+     min-content width, or the inputs keep their default size and overflow the
+     window (the grid track alone does not stop the content from spilling). */
+  min-width: 0;
 }
 
 .setup-input,
 .setup-select {
+  width: 100%;
+  min-width: 0;
   padding: calc(var(--mh-unit) * 1) calc(var(--mh-unit) * 2);
   font: inherit;
   color: var(--mh-text-1);
@@ -216,10 +225,16 @@
 .setup-secret {
   display: flex;
   gap: var(--mh-unit);
+  min-width: 0;
 }
 
 .setup-secret .setup-input {
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.setup-secret-toggle {
+  flex: 0 0 auto;
 }
 
 .setup-secret-toggle,
@@ -374,11 +389,21 @@
   font-size: 12px;
 }
 
-.setup-export {
+/* The export bundle is a modal over a scrim: it must not cover the footer's
+   Apply action, and the consent step has to be unmissable (docs/09 §4). */
+.setup-export-scrim {
   position: fixed;
-  right: calc(var(--mh-unit) * 4);
-  bottom: calc(var(--mh-unit) * 12);
-  max-width: 420px;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(11, 11, 11, 0.28);
+}
+
+.setup-export {
+  width: min(460px, calc(100% - 2 * var(--mh-unit) * 4));
+  max-height: calc(100% - 2 * var(--mh-unit) * 8);
+  overflow-y: auto;
   padding: calc(var(--mh-unit) * 4);
   background: var(--mh-surface-2);
   border: 1px solid var(--mh-border-strong);

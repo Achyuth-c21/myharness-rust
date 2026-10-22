@@ -73,8 +73,8 @@ export function Field({ field, value, issues, locked, source, onChange, onSecret
                 "blank means default" from an explicit zero (docs/09 §3.4). */}
             <option value=""></option>
             {(field.options ?? []).map((option) => (
-              <option key={option} value={option}>
-                {option}
+              <option key={option.value} value={option.value}>
+                {option.label}
               </option>
             ))}
           </select>

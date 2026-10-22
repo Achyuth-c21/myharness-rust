@@ -42,6 +42,19 @@ const TABS: { id: SetupTab; label: string }[] = [
   { id: "source", label: "Source" },
 ];
 
+/** The human label of an egress group (docs/09 §2.9 names the groups). */
+const EGRESS_GROUP_LABELS: Record<string, string> = {
+  "core-downloads": "Core downloads",
+  "auto-updates": "Auto-updates",
+  "essential-telemetry": "Essential telemetry",
+  "nonessential-services": "Nonessential services",
+  "provider-endpoint": "Provider endpoint",
+  "plugin-marketplaces": "Plugin marketplaces",
+  "managed-mcp-servers": "Managed MCP servers",
+  "user-mcp-runtime": "User MCP & Python runtime",
+  "ssh-identity-endpoints": "SSH & identity endpoints",
+};
+
 /** The nine profile sections (docs/18 §10). */
 const SECTIONS = [
   "connection",
@@ -405,7 +418,9 @@ export default function SetupWindow() {
           ) : (
             <section className="setup-section" aria-label={schema?.title ?? tab}>
               <div className="setup-section-head">
-                <h2 className="setup-section-title">{schema?.title ?? tab}</h2>
+                <h2 className="setup-section-title">
+                  {TABS.find((entry) => entry.id === tab)?.label ?? tab}
+                </h2>
                 {tab === "connection" ? (
                   <div className="setup-section-actions">
                     {/* The inference probe belongs to the provider adapters of
@@ -471,7 +486,8 @@ export default function SetupWindow() {
       </footer>
 
       {exportOpen && exportBundle ? (
-        <div className="setup-export" role="dialog" aria-label="Export bundle">
+        <div className="setup-export-scrim">
+          <div className="setup-export" role="dialog" aria-modal="true" aria-label="Export bundle">
           <h2>Export bundle</h2>
           <ul>
             {exportBundle.warnings.map((warning) => (
@@ -488,6 +504,7 @@ export default function SetupWindow() {
           <button type="button" className="setup-secondary-button" onClick={() => setExportOpen(false)}>
             Close
           </button>
+          </div>
         </div>
       ) : null}
     </div>
@@ -540,7 +557,7 @@ function EgressTab({
       </div>
       {allowlist.groups.map((group) => (
         <div className="setup-egress-group" key={group.group}>
-          <h3>{group.group}</h3>
+          <h3>{EGRESS_GROUP_LABELS[group.group] ?? group.group}</h3>
           {group.hosts.length ? (
             <ul className="setup-egress-hosts">
               {group.hosts.map((host) => (
