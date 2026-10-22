@@ -116,6 +116,56 @@ The live install contains `native-adapter.cjs`: an **in-process Anthropic→Open
   IMP-03 capability-first UI (P0), IMP-04 signed lazy extension packages (P0), IMP-05 native
   protocol families (P1), IMP-06 MiniMax M3.1 Flash as transparent reconstruction default (P1).
 
+## 7b. Phase 2 state (2026-10-22)
+
+Phase 2 ("Configuration, profiles, and setup window", `docs/13` §4) is implemented on the
+`phase-2` lane as nine commits (`623a019` … `cfadd90`), not yet pushed or merged.
+
+| Slice | Shipped |
+|---|---|
+| 1 | `crates/config` — profile schema, atomic library (`d25005c`) |
+| 2 | `crates/secrets` — keychain store, `SecretRef`/`SecretSlot` (`b66ccb2`) |
+| 3 | `crates/config::forms` — per-provider schemas, model-ID policy, apply-time validation (`623a019`) |
+| 4 | `crates/config::overlay` + `::health` — managed overlay, `getMerged`, health/recheck/taint (`0472ab5`) |
+| 5 | `crates/secrets::helper` — credential helper script runner (`66aa883`) |
+| 6a | `crates/config::tabs` + `crates/bridge::setup` — 8 tab schemas, the `settings.Custom3pSetup` namespace (`78e9c76`) |
+| 6b | The setup window itself — renderer + Tauri (`06a44c8`) |
+| 7 | `crates/config::egress` + `::export` — egress derivation, redacted export (`44b169e`) |
+| 8 | `crates/bridge::helper` — model discovery, published catalog (`b29a3bb`) |
+
+**Deliberately not implemented, with the reason recorded in `docs/14` §9:**
+
+- The **bootstrap fetch** (the transport). The trust/signature policy for
+  bootstrap delivery was never captured, and `trustBootstrapDelivery` is a
+  security-sensitive opt-in — a transport on an unverified trust policy would be
+  a defect. The *state machine* around it is implemented.
+- The **catalog signature check**. The shipped public key was never captured, so
+  there is nothing to verify against; a stored catalog is treated as unverified
+  and the documented failure path (bundled catalog + staleness warning) is taken.
+- The **inference probe** ("Test connection"). It is an inference request and
+  belongs to the Phase-3 provider adapters. The button is shown disabled.
+- The **keychain-less fallback** (mode-`0600` inline profile field). The bridge
+  refuses a renderer write that carries an inline secret, so on a machine with no
+  usable keychain the setup window cannot set a credential at all.
+
+**Test-ID layout in `docs/17` §4.8 — the IDs are not contiguous, by design:**
+
+- `TEST-CFG-001..012` — the canonical `docs/13` §6.2 acceptance criteria.
+- `TEST-CFG-101..112` — the `crates/config` library mechanics (renumbered out of
+  the 001..012 block on 2026-10-22 to break a collision).
+- `TEST-CFG-121..126` — the provider form layer. `141..147` — egress + export.
+  `151..160` — the tab schemas + the bridge namespace. `161..166` — the setup
+  window. `171..176` — model discovery + the catalog.
+
+**Two traps of this phase:**
+
+- The setup window is served over `app://localhost/setup-desktop-3p`, so in
+  development it needs `MYHARNESS_DIST=apps/desktop/dist` like any other
+  `app://` load — the Vite dev server alone does not serve it.
+- The E2E suite needs the Vite dev server on 5173 running (`npm run dev` in
+  `apps/desktop`); without it every case fails with `ERR_CONNECTION_REFUSED`,
+  which looks like a regression but is not (`MEMORY.md` §3 trap #13).
+
 ## 8. Status vocabulary (`docs/17`)
 
 `Available` · `Available, unexercised` · `Partial` · `Policy-disabled` · `Unavailable` ·
@@ -173,6 +223,13 @@ branch. `evidence/app-asar-orig/` is git-ignored by design.
 - `npm install` has since been run for the test toolchain; dev-server icons were never generated
   (`docs/21` state notes).
 - No screenshot is approved for publication; the private archive stays outside the repo.
+- Phase 2 is implemented but **not exercised end-to-end**: the setup window has not
+  been driven in a real run against a live configuration library, and the
+  renderer suite does not open it (`docs/17` §4.9, `docs/14` §9 item 19).
+  `TEST-UX-009` is `Partial` for that reason.
+- `TEST-CFG-009` (retention/legal-hold controls persist and enforce) is still
+  `Unknown`: the Limits tab has a schema and validation, but "enforce" needs the
+  store and the retention engine of Phases 4/7.
 - **Push policy (owner decision, 2026-10-21): `docs/` and `evidence/` are never pushed again.**
   What is already on origin (dev/phase-1/`main` initial commit) will be handled by the owner later;
   do NOT rewrite remote history without an explicit fresh approval. Mechanism adopted:
