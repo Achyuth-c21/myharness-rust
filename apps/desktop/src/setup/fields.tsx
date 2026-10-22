@@ -106,6 +106,10 @@ export function Field({ field, value, issues, locked, source, onChange, onSecret
           />
         );
       case "secret":
+        // A stored credential reaches the renderer as a HANDLE, never a value
+        // (docs/18 §10), so the field is empty and the placeholder says a
+        // credential is already there. Typing replaces it.
+        const hasStored = value !== undefined && value !== null && value !== "";
         return (
           <div className="setup-secret">
             <input
@@ -114,7 +118,7 @@ export function Field({ field, value, issues, locked, source, onChange, onSecret
               type={revealed ? "text" : "password"}
               value={typeof value === "string" ? value : ""}
               disabled={locked}
-              placeholder={typeof value === "string" && value ? "Stored — type to replace" : ""}
+              placeholder={hasStored ? "Stored — type to replace" : ""}
               aria-describedby={describedBy}
               onChange={(event) => onSecret?.(event.target.value)}
             />

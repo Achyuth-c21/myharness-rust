@@ -196,12 +196,53 @@ fn schema_kinds(provider: ProviderKind) -> &'static [(&'static str, CredentialKi
 /// is transcribed from the doc verbatim; a match is a *prefix* match, so `gpt-…`
 /// and `gpt4` are both rejected.
 const NON_ANTHROPIC_FAMILIES: [&str; 47] = [
-    "ark-code", "astron", "command-r", "deepseek", "doubao", "gemini", "gemma", "glm", "gpt",
-    "grok", "hermes", "hy3", "kimi", "lfm", "ling", "llama", "longcat", "mimo", "minimax",
-    "mistral", "mixtral", "moonshot", "nemotron", "openai", "phi-", "qianfan", "qwen",
-    "tc-code", "unic", "yi-", "stepfun", "step-3", "seed-", "bytedance", "hunyuan",
-    "granite", "amazon.nova", "nova-", "devstral", "ministral", "ernie", "codex", "arcee",
-    "trinity", "abab", "ds-", "dpsk",
+    "ark-code",
+    "astron",
+    "command-r",
+    "deepseek",
+    "doubao",
+    "gemini",
+    "gemma",
+    "glm",
+    "gpt",
+    "grok",
+    "hermes",
+    "hy3",
+    "kimi",
+    "lfm",
+    "ling",
+    "llama",
+    "longcat",
+    "mimo",
+    "minimax",
+    "mistral",
+    "mixtral",
+    "moonshot",
+    "nemotron",
+    "openai",
+    "phi-",
+    "qianfan",
+    "qwen",
+    "tc-code",
+    "unic",
+    "yi-",
+    "stepfun",
+    "step-3",
+    "seed-",
+    "bytedance",
+    "hunyuan",
+    "granite",
+    "amazon.nova",
+    "nova-",
+    "devstral",
+    "ministral",
+    "ernie",
+    "codex",
+    "arcee",
+    "trinity",
+    "abab",
+    "ds-",
+    "dpsk",
 ];
 
 /// Anthropic family tiers the shipped predicate accepts (docs/12 §2.2 — "otherwise
@@ -305,7 +346,10 @@ fn validate_vertex_model_id(id: &str) -> Result<(), String> {
             "model id {id:?} must start with \"claude-\" for Vertex AI"
         ));
     }
-    if id.chars().any(|c| c.is_whitespace() || "/\\?#%".contains(c)) {
+    if id
+        .chars()
+        .any(|c| c.is_whitespace() || "/\\?#%".contains(c))
+    {
         return Err(format!(
             "model id {id:?} contains forbidden characters (/ \\ ? # % or whitespace)"
         ));
@@ -422,7 +466,10 @@ pub fn validate_connection(provider: ProviderKind, connection: &Value) -> Vec<Fo
     let kind = parsed_kind.unwrap_or(CredentialKind::Static);
     let static_like = kind == CredentialKind::Static;
     let helper_kind = kind == CredentialKind::HelperScript;
-    let interactive_kind = matches!(kind, CredentialKind::Interactive | CredentialKind::Workforce);
+    let interactive_kind = matches!(
+        kind,
+        CredentialKind::Interactive | CredentialKind::Workforce
+    );
 
     // -- helper-script fields (any family that offers the helper kind) ------------
     if helper_kind {
@@ -436,7 +483,9 @@ pub fn validate_connection(provider: ProviderKind, connection: &Value) -> Vec<Fo
             if !timeout.as_u64().is_some_and(|secs| secs > 0) {
                 issues.push(error(
                     "inferenceCredentialHelperTimeoutSec",
-                    format!("helper timeout must be a positive number of seconds, found {timeout:?}"),
+                    format!(
+                        "helper timeout must be a positive number of seconds, found {timeout:?}"
+                    ),
                 ));
             }
         }
@@ -579,7 +628,8 @@ pub fn validate_connection(provider: ProviderKind, connection: &Value) -> Vec<Fo
             if discovery_enabled(get("modelDiscoveryEnabled")) && (static_like || helper_kind) {
                 issues.push(warning(
                     "modelDiscoveryEnabled",
-                    "model discovery is unavailable for static/helper-script credential kinds".to_string(),
+                    "model discovery is unavailable for static/helper-script credential kinds"
+                        .to_string(),
                 ));
             }
         }
@@ -606,8 +656,13 @@ pub fn validate_connection(provider: ProviderKind, connection: &Value) -> Vec<Fo
                 issues.push(error("inferenceVertexBaseUrl", u));
             }
             // Vertex models: claude- prefix, no / \ ? # % or whitespace.
-            validate_model_list(get("inferenceModels"), validate_vertex_model_id, &mut issues);
-            if discovery_enabled(get("modelDiscoveryEnabled")) && (interactive_kind || helper_kind) {
+            validate_model_list(
+                get("inferenceModels"),
+                validate_vertex_model_id,
+                &mut issues,
+            );
+            if discovery_enabled(get("modelDiscoveryEnabled")) && (interactive_kind || helper_kind)
+            {
                 issues.push(warning(
                     "modelDiscoveryEnabled",
                     "model discovery is unavailable for interactive/workforce/helper/vendor credential kinds".to_string(),
@@ -654,7 +709,11 @@ pub fn validate_connection(provider: ProviderKind, connection: &Value) -> Vec<Fo
 
     // -- shared model-list policy for anthropic/gateway ---------------------------
     if matches!(provider, ProviderKind::Gateway | ProviderKind::ClaudeApi) {
-        validate_model_list(get("inferenceModels"), validate_anthropic_model_id, &mut issues);
+        validate_model_list(
+            get("inferenceModels"),
+            validate_anthropic_model_id,
+            &mut issues,
+        );
     }
 
     // -- custom headers: routing/tenant only; credential-shaped values rejected ---
@@ -773,12 +832,7 @@ pub const UNVERIFIED_KEYS: [&str; 5] = [
     UNVERIFIED_FOUNDRY_DEPLOYMENT,
 ];
 
-fn field(
-    key: &'static str,
-    label: &'static str,
-    kind: FieldKind,
-    group: FieldGroup,
-) -> FieldDef {
+fn field(key: &'static str, label: &'static str, kind: FieldKind, group: FieldGroup) -> FieldDef {
     FieldDef {
         key,
         label,
@@ -823,7 +877,10 @@ pub fn connection_schema(provider: ProviderKind) -> FormSchema {
                 FieldKind::Select,
                 FieldGroup::Credentials,
             )),
-            schema_kinds(provider).iter().map(|(label, _)| *label).collect(),
+            schema_kinds(provider)
+                .iter()
+                .map(|(label, _)| *label)
+                .collect(),
         ),
         "When set, only that source is used (no fallback).",
     )];
@@ -1333,16 +1390,40 @@ mod tests {
         let vertex = connection_schema(ProviderKind::Vertex);
         let foundry = connection_schema(ProviderKind::Foundry);
 
-        assert!(gateway.fields.iter().any(|f| f.key == "inferenceGatewayApiKey"));
-        assert!(!bedrock.fields.iter().any(|f| f.key == "inferenceGatewayApiKey"));
-        assert!(!vertex.fields.iter().any(|f| f.key == "inferenceGatewayApiKey"));
-        assert!(!foundry.fields.iter().any(|f| f.key == "inferenceGatewayApiKey"));
+        assert!(gateway
+            .fields
+            .iter()
+            .any(|f| f.key == "inferenceGatewayApiKey"));
+        assert!(!bedrock
+            .fields
+            .iter()
+            .any(|f| f.key == "inferenceGatewayApiKey"));
+        assert!(!vertex
+            .fields
+            .iter()
+            .any(|f| f.key == "inferenceGatewayApiKey"));
+        assert!(!foundry
+            .fields
+            .iter()
+            .any(|f| f.key == "inferenceGatewayApiKey"));
 
-        assert!(bedrock.fields.iter().any(|f| f.key == "inferenceBedrockRegion"));
-        assert!(!gateway.fields.iter().any(|f| f.key == "inferenceBedrockRegion"));
+        assert!(bedrock
+            .fields
+            .iter()
+            .any(|f| f.key == "inferenceBedrockRegion"));
+        assert!(!gateway
+            .fields
+            .iter()
+            .any(|f| f.key == "inferenceBedrockRegion"));
 
-        assert!(vertex.fields.iter().any(|f| f.key == "inferenceVertexProjectId"));
-        assert!(foundry.fields.iter().any(|f| f.key == "inferenceFoundryResource"));
+        assert!(vertex
+            .fields
+            .iter()
+            .any(|f| f.key == "inferenceVertexProjectId"));
+        assert!(foundry
+            .fields
+            .iter()
+            .any(|f| f.key == "inferenceFoundryResource"));
     }
 
     /// TEST-CFG-005 (credential kind is exclusive, no fallback): a kind the family

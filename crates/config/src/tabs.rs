@@ -108,11 +108,7 @@ pub struct TabSchema {
     pub read_only: bool,
 }
 
-fn field(
-    key: &'static str,
-    label: &'static str,
-    kind: FieldKind,
-) -> FieldDef {
+fn field(key: &'static str, label: &'static str, kind: FieldKind) -> FieldDef {
     FieldDef {
         key,
         label,
@@ -181,8 +177,14 @@ pub fn tab_schema(tab: SetupTab) -> TabSchema {
                 "builtinBrowserDefaultDomainPolicy",
                 "Built-in browser default domain policy",
             ),
-            tags("builtinBrowserAllowedDomains", "Built-in browser allowed domains"),
-            tags("builtinBrowserBlockedDomains", "Built-in browser blocked domains"),
+            tags(
+                "builtinBrowserAllowedDomains",
+                "Built-in browser allowed domains",
+            ),
+            tags(
+                "builtinBrowserBlockedDomains",
+                "Built-in browser blocked domains",
+            ),
             switch("claudeInChromeEnabled", "Claude in Chrome"),
             switch(
                 "claudeInChromePasswordManagersEnabled",
@@ -198,7 +200,10 @@ pub fn tab_schema(tab: SetupTab) -> TabSchema {
             text("sshTransport", "SSH transport"),
             text("sshClientPath", "SSH client path"),
             switch("relocateUncUserData", "Relocate UNC user data"),
-            switch("requireCoworkFullVmSandbox", "Require the full Cowork VM sandbox"),
+            switch(
+                "requireCoworkFullVmSandbox",
+                "Require the full Cowork VM sandbox",
+            ),
             switch("secureVmFeaturesEnabled", "Secure VM features"),
             text("coworkEDRIntegration", "Cowork EDR integration"),
             text("coworkEDRIntegrationVendor", "Cowork EDR vendor"),
@@ -217,10 +222,7 @@ pub fn tab_schema(tab: SetupTab) -> TabSchema {
             tags("officeDisabledHosts", "Disabled Office hosts"),
             switch("hardwareBuddyEnabled", "Hardware buddy"),
             switch("keepAwakeEnabled", "Keep awake"),
-            switch(
-                "chatAdvancedFileAnalysisEnabled",
-                "Advanced file analysis",
-            ),
+            switch("chatAdvancedFileAnalysisEnabled", "Advanced file analysis"),
             text("desktopHome", "Desktop home"),
         ],
         SetupTab::Connectors => vec![
@@ -262,23 +264,26 @@ pub fn tab_schema(tab: SetupTab) -> TabSchema {
             switch("hardwareBuddyEnabled", "Hardware buddy"),
         ],
         SetupTab::Telemetry => vec![
-            text(
-                "deploymentOrganizationUuid",
-                "Organization UUID",
-            ),
+            text("deploymentOrganizationUuid", "Organization UUID"),
             switch("disableEssentialTelemetry", "Block essential telemetry"),
             switch(
                 "disableNonessentialTelemetry",
                 "Block nonessential telemetry",
             ),
             switch("usageMetricsEnabled", "Usage metrics"),
-            tags("disableNonessentialServices", "Blocked nonessential services"),
+            tags(
+                "disableNonessentialServices",
+                "Blocked nonessential services",
+            ),
             url("otlpEndpoint", "OpenTelemetry endpoint"),
             text("otlpProtocol", "OpenTelemetry protocol"),
             map("otlpHeaders", "OpenTelemetry headers"),
             map("otlpHeadersHelper", "OpenTelemetry headers helper"),
             text("otlpAuthMode", "OpenTelemetry auth mode"),
-            map("otlpResourceAttributes", "OpenTelemetry resource attributes"),
+            map(
+                "otlpResourceAttributes",
+                "OpenTelemetry resource attributes",
+            ),
             switch("otlpContentCapture", "OpenTelemetry content capture"),
             text("otlpDesktopLogLevel", "OpenTelemetry desktop log level"),
             switch("otlpTracesEnabled", "OpenTelemetry traces"),
@@ -291,7 +296,10 @@ pub fn tab_schema(tab: SetupTab) -> TabSchema {
             text("releaseChannel", "Release channel"),
             text("updateViaUpdatesHost", "Update host"),
             text("dangerousMaxVersion", "Maximum version"),
-            number("relaunchEnforcementHours", "Relaunch enforcement window (hours)"),
+            number(
+                "relaunchEnforcementHours",
+                "Relaunch enforcement window (hours)",
+            ),
             number(
                 "configRecheckIntervalMinutes",
                 "Configuration re-check interval (minutes)",
@@ -302,7 +310,10 @@ pub fn tab_schema(tab: SetupTab) -> TabSchema {
             number("chatSessionRetentionDays", "Chat retention (days)"),
             number("coworkSessionRetentionDays", "Cowork retention (days)"),
             number("codeSessionRetentionDays", "Code retention (days)"),
-            switch("sessionRetentionHold", "Suspend session deletion (legal hold)"),
+            switch(
+                "sessionRetentionHold",
+                "Suspend session deletion (legal hold)",
+            ),
             number("inferenceMaxTokensPerWindow", "Max tokens per window"),
             number("inferenceTokenWindowHours", "Token window (hours)"),
         ],
@@ -321,10 +332,7 @@ pub fn tab_schema(tab: SetupTab) -> TabSchema {
             tags("allowedPluginMarketplaces", "Plugin marketplaces"),
             tags("organizationPluginsUrl", "Organization plugins endpoint"),
             map("orgPluginSettings", "Per-server tool policies"),
-            switch(
-                "userPluginMarketplacesEnabled",
-                "User plugin marketplaces",
-            ),
+            switch("userPluginMarketplacesEnabled", "User plugin marketplaces"),
             switch("userPluginUploadsEnabled", "User plugin uploads"),
             map("skillBundles", "Skill bundles"),
             url("sharingEndpoint", "Sharing endpoint"),
@@ -338,7 +346,10 @@ pub fn tab_schema(tab: SetupTab) -> TabSchema {
             map("bootstrapOidc", "Bootstrap OIDC parameters"),
             map("bootstrapHeaders", "Bootstrap request headers"),
             map("bootstrapHeadersHelper", "Bootstrap headers helper"),
-            switch("trustBootstrapDelivery", "Trust bootstrap-delivered settings"),
+            switch(
+                "trustBootstrapDelivery",
+                "Trust bootstrap-delivered settings",
+            ),
         ],
     };
 
@@ -387,10 +398,7 @@ pub fn validate_tab(tab: SetupTab, section: &Value) -> Vec<FormIssue> {
                             continue;
                         }
                         if !is_parseable_host(host) {
-                            issues.push(error(
-                                key,
-                                format!("{host:?} is not a parseable host"),
-                            ));
+                            issues.push(error(key, format!("{host:?} is not a parseable host")));
                         }
                     }
                 }
@@ -489,10 +497,7 @@ pub fn validate_tab(tab: SetupTab, section: &Value) -> Vec<FormIssue> {
             ] {
                 if let Some(value) = get(key).and_then(Value::as_i64) {
                     if value < 0 {
-                        issues.push(error(
-                            key,
-                            "the value cannot be negative".to_string(),
-                        ));
+                        issues.push(error(key, "the value cannot be negative".to_string()));
                     }
                 }
             }
@@ -649,10 +654,7 @@ mod tests {
     /// RULES §2: attachment content is never uploaded for telemetry.
     #[test]
     fn telemetry_content_capture_is_refused() {
-        let issues = validate_tab(
-            SetupTab::Telemetry,
-            &json!({ "otlpContentCapture": true }),
-        );
+        let issues = validate_tab(SetupTab::Telemetry, &json!({ "otlpContentCapture": true }));
         assert_eq!(errors(&issues), vec!["otlpContentCapture"]);
     }
 
@@ -672,10 +674,7 @@ mod tests {
         );
         assert!(errors(&issues).is_empty(), "{issues:?}");
 
-        let issues = validate_tab(
-            SetupTab::Source,
-            &json!({ "trustBootstrapDelivery": true }),
-        );
+        let issues = validate_tab(SetupTab::Source, &json!({ "trustBootstrapDelivery": true }));
         assert!(errors(&issues).is_empty());
         assert!(issues
             .iter()

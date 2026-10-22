@@ -302,7 +302,10 @@ pub fn managed_write_conflicts(
     conflicts
 }
 
-fn section_value<'a>(doc: &'a ProfileDocument, section: &str) -> Option<&'a serde_json::Map<String, Value>> {
+fn section_value<'a>(
+    doc: &'a ProfileDocument,
+    section: &str,
+) -> Option<&'a serde_json::Map<String, Value>> {
     match section {
         "connection" => doc.connection.0.as_object(),
         "capabilities" => doc.capabilities.0.as_object(),
@@ -445,7 +448,10 @@ mod tests {
     /// With no overlay, the merged view is the local document unchanged.
     #[test]
     fn no_overlay_means_local_values() {
-        let local = doc_with("telemetry", json!({ "otlpEndpoint": "https://otlp.example" }));
+        let local = doc_with(
+            "telemetry",
+            json!({ "otlpEndpoint": "https://otlp.example" }),
+        );
         let merged = merge(&local, None);
         assert!(!merged.overlay_present);
         assert_eq!(

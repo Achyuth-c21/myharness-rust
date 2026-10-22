@@ -215,7 +215,9 @@ async fn fetch_page(
     url: &str,
     timeout: Duration,
 ) -> Result<Value, BridgeError> {
-    let mut builder = client.get(url).header("anthropic-version", ANTHROPIC_VERSION);
+    let mut builder = client
+        .get(url)
+        .header("anthropic-version", ANTHROPIC_VERSION);
     if let Some(key) = &request.api_key {
         builder = match request.auth_scheme {
             AuthScheme::Bearer => builder.header("authorization", format!("Bearer {key}")),
@@ -225,11 +227,12 @@ async fn fetch_page(
     for (name, value) in &request.custom_headers {
         builder = builder.header(name, value);
     }
-    let response = builder
-        .timeout(timeout)
-        .send()
-        .await
-        .map_err(|error| BridgeError::new("PROVIDER_UNREACHABLE", format!("the gateway could not be reached: {error}")))?;
+    let response = builder.timeout(timeout).send().await.map_err(|error| {
+        BridgeError::new(
+            "PROVIDER_UNREACHABLE",
+            format!("the gateway could not be reached: {error}"),
+        )
+    })?;
     let status = response.status();
     if !status.is_success() {
         // The status is reported; the body is not — it can carry a token, and the
@@ -239,10 +242,12 @@ async fn fetch_page(
             format!("the gateway answered with status {status}"),
         ));
     }
-    response
-        .json::<Value>()
-        .await
-        .map_err(|error| BridgeError::new("PROVIDER_ERROR", format!("the gateway answer could not be read: {error}")))
+    response.json::<Value>().await.map_err(|error| {
+        BridgeError::new(
+            "PROVIDER_ERROR",
+            format!("the gateway answer could not be read: {error}"),
+        )
+    })
 }
 
 /// The model rows of a page, and the cursor of the next page.
@@ -260,7 +265,13 @@ fn parse_page(body: &Value) -> (Vec<Value>, Option<String>) {
         .unwrap_or_default();
     let cursor = ["after_id", "next_cursor", "last_id"]
         .iter()
-        .find_map(|key| body.get(*key).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string))
+        .find_map(|key| {
+            body.get(*key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        })
         .filter(|_| body.get("has_more").and_then(Value::as_bool) != Some(false));
     (rows, cursor)
 }
@@ -378,23 +389,25 @@ pub fn catalog_state(
         return CatalogState {
             freshness: CatalogFreshness::Expired,
             use_bundled_fallback: true,
-            warning: Some("the model catalog has expired; the bundled catalog is in use".to_string()),
+            warning: Some(
+                "the model catalog has expired; the bundled catalog is in use".to_string(),
+            ),
         };
     }
     // The sidecar must be well-formed, and the signature must have been checked.
     // The signature cannot be checked without the shipped public key
     // (`docs/14` §9 item 20), so the caller passes `signature_verified = false`
     // today and a stored catalog is never "verified".
-    let sidecar_present = envelope
-        .sidecar
-        .as_ref()
-        .is_some_and(|s| s.schema == 1 && s.algorithm == "RSASSA-PKCS1-v1_5-SHA512" && !s.signature.is_empty());
+    let sidecar_present = envelope.sidecar.as_ref().is_some_and(|s| {
+        s.schema == 1 && s.algorithm == "RSASSA-PKCS1-v1_5-SHA512" && !s.signature.is_empty()
+    });
     if !(sidecar_present && signature_verified) {
         return CatalogState {
             freshness: CatalogFreshness::Unverified,
             use_bundled_fallback: true,
             warning: Some(
-                "the model catalog could not be verified; the bundled catalog is in use".to_string(),
+                "the model catalog could not be verified; the bundled catalog is in use"
+                    .to_string(),
             ),
         };
     }
@@ -472,20 +485,38 @@ mod tests {
             ),
         ]);
         let client = reqwest::Client::new();
-        let outcome = discover_models(&request(base.clone()), &client).await.unwrap();
+        let outcome = discover_models(&request(base.clone()), &client)
+            .await
+            .unwrap();
         assert_eq!(outcome.pages, 2);
         assert_eq!(outcome.models.len(), 3);
         assert!(!outcome.partial);
         assert_eq!(
-            outcome.models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            outcome
+                .models
+                .iter()
+                .map(|m| m.id.as_str())
+                .collect::<Vec<_>>(),
             vec!["claude-opus-4-1", "claude-sonnet-4", "claude-haiku-4"]
         );
 
         let requests = server.join().unwrap();
-        assert!(requests[0].contains("/v1/models?limit=1000"), "{}", requests[0]);
-        assert!(requests[0].contains("anthropic-version: 2023-06-01"), "{}", requests[0]);
+        assert!(
+            requests[0].contains("/v1/models?limit=1000"),
+            "{}",
+            requests[0]
+        );
+        assert!(
+            requests[0].contains("anthropic-version: 2023-06-01"),
+            "{}",
+            requests[0]
+        );
         assert!(requests[0].contains("authorization: Bearer placeholder-credential"));
-        assert!(requests[1].contains("after_id=claude-sonnet-4"), "{}", requests[1]);
+        assert!(
+            requests[1].contains("after_id=claude-sonnet-4"),
+            "{}",
+            requests[1]
+        );
     }
 
     /// A later-page failure keeps the rows already read and warns.

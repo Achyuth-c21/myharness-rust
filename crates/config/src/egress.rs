@@ -117,7 +117,9 @@ pub fn derive(config: &ProfileDocument, merged: Option<&MergedConfig>) -> Egress
                 return Some(field.value.clone());
             }
         }
-        section_value(config, section).and_then(|s| s.get(key)).cloned()
+        section_value(config, section)
+            .and_then(|s| s.get(key))
+            .cloned()
     };
 
     let mut groups: Vec<EgressGroup> = Vec::new();
@@ -439,22 +441,32 @@ mod tests {
     #[test]
     fn documented_groups_and_hosts_are_present() {
         let allowlist = derive(&profile(ProviderKind::ClaudeApi, json!({})), None);
-        assert!(allowlist.hosts().contains(&"downloads.claude.ai".to_string()));
+        assert!(allowlist
+            .hosts()
+            .contains(&"downloads.claude.ai".to_string()));
         assert!(allowlist.hosts().contains(&"claude.ai".to_string()));
         assert!(allowlist.hosts().contains(&"api.anthropic.com".to_string()));
-        assert!(allowlist.hosts().contains(&"claudeusercontent.com".to_string()));
+        assert!(allowlist
+            .hosts()
+            .contains(&"claudeusercontent.com".to_string()));
         assert!(allowlist.hosts().contains(&"assets.claude.ai".to_string()));
         assert!(allowlist.group(EgressGroupKind::CoreDownloads).is_some());
         assert!(allowlist.group(EgressGroupKind::AutoUpdates).is_some());
-        assert!(allowlist.group(EgressGroupKind::EssentialTelemetry).is_some());
-        assert!(allowlist.group(EgressGroupKind::NonessentialServices).is_some());
+        assert!(allowlist
+            .group(EgressGroupKind::EssentialTelemetry)
+            .is_some());
+        assert!(allowlist
+            .group(EgressGroupKind::NonessentialServices)
+            .is_some());
     }
 
     /// The groups whose hostnames were never captured are marked, not invented.
     #[test]
     fn unobserved_host_groups_are_marked_not_invented() {
         let allowlist = derive(&profile(ProviderKind::ClaudeApi, json!({})), None);
-        let telemetry = allowlist.group(EgressGroupKind::EssentialTelemetry).unwrap();
+        let telemetry = allowlist
+            .group(EgressGroupKind::EssentialTelemetry)
+            .unwrap();
         assert!(telemetry.hosts_unobserved);
         assert!(telemetry.hosts.is_empty(), "no hostname may be invented");
     }
@@ -538,7 +550,9 @@ mod tests {
             json!({ "inferenceGatewayBaseUrl": "https://gw.internal.example/v1" }),
         );
         let allowlist = derive(&config, None);
-        assert!(allowlist.hosts().contains(&"gw.internal.example".to_string()));
+        assert!(allowlist
+            .hosts()
+            .contains(&"gw.internal.example".to_string()));
     }
 
     /// The managed overlay wins: the derivation describes what the app reaches.

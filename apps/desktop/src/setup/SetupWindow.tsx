@@ -179,8 +179,12 @@ export default function SetupWindow() {
 
   const dirty = useMemo(() => {
     if (!baseline || !draft) return false;
+    // A typed credential is a change too: it never lands in the document, so
+    // without this the draft would read as clean and Apply would stay disabled
+    // with the credential unsavable.
+    if (Object.keys(pendingSecrets).length > 0) return true;
     return JSON.stringify(baseline) !== JSON.stringify(draft);
-  }, [baseline, draft]);
+  }, [baseline, draft, pendingSecrets]);
 
   const hasError = issues.some((issue) => issue.severity === "error");
 

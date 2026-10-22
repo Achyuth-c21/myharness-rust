@@ -74,7 +74,9 @@ impl HelperConfig {
     /// A missing helper program is not an error here — the helper kind is one
     /// option among several, and a profile that does not use it carries none of
     /// these keys. The caller decides whether a helper is required.
-    pub fn from_connection(connection: &serde_json::Value) -> Result<Option<HelperConfig>, SecretError> {
+    pub fn from_connection(
+        connection: &serde_json::Value,
+    ) -> Result<Option<HelperConfig>, SecretError> {
         let Some(object) = connection.as_object() else {
             return Ok(None);
         };
@@ -253,11 +255,7 @@ impl HelperResolver {
 }
 
 /// Spawn the helper, enforce the timeout, and return its stdout.
-fn run_process(
-    program: &str,
-    args: &[String],
-    timeout: Duration,
-) -> Result<Vec<u8>, SecretError> {
+fn run_process(program: &str, args: &[String], timeout: Duration) -> Result<Vec<u8>, SecretError> {
     let mut child = Command::new(program)
         .args(args)
         .stdin(Stdio::null())
@@ -320,9 +318,7 @@ fn run_process(
 
 /// Read a pipe to end on a background thread, retaining at most
 /// [`MAX_OUTPUT_BYTES`] but continuing to drain so the child can exit.
-fn spawn_reader<R: Read + Send + 'static>(
-    reader: Option<R>,
-) -> mpsc::Receiver<Vec<u8>> {
+fn spawn_reader<R: Read + Send + 'static>(reader: Option<R>) -> mpsc::Receiver<Vec<u8>> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let Some(mut reader) = reader else {
@@ -387,7 +383,10 @@ mod tests {
         let error = run_helper(&config, false).unwrap_err();
         let text = error.to_string();
         assert!(text.contains("SECRET_HELPER"), "{text}");
-        assert!(!text.contains("secret-leak"), "the error must not echo output");
+        assert!(
+            !text.contains("secret-leak"),
+            "the error must not echo output"
+        );
     }
 
     /// The timeout is enforced: a helper that never exits is killed.
@@ -403,7 +402,10 @@ mod tests {
             silent_refresh: false,
         };
         let error = run_helper(&config, false).unwrap_err();
-        assert!(matches!(error, SecretError::HelperTimeout { .. }), "{error}");
+        assert!(
+            matches!(error, SecretError::HelperTimeout { .. }),
+            "{error}"
+        );
     }
 
     /// Empty output is a failure, not an empty credential.
@@ -462,7 +464,9 @@ mod tests {
     #[test]
     fn absent_helper_yields_no_config() {
         let connection = serde_json::json!({ "inferenceCredentialKind": "static" });
-        assert!(HelperConfig::from_connection(&connection).unwrap().is_none());
+        assert!(HelperConfig::from_connection(&connection)
+            .unwrap()
+            .is_none());
     }
 
     /// The resolver caches a fetched credential and writes it to the keychain;
@@ -491,10 +495,7 @@ mod tests {
             .unwrap();
         assert_eq!(first.expose_secret(), second.expose_secret());
         // The credential was written to the keychain, not returned only in memory.
-        assert!(store
-            .load("profile/a/connection.apiKey")
-            .unwrap()
-            .is_some());
+        assert!(store.load("profile/a/connection.apiKey").unwrap().is_some());
     }
 
     /// A helper failure is an error and never a fallback to another source.

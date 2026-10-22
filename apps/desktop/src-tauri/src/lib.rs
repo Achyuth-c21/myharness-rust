@@ -51,6 +51,9 @@ fn fallback_response() -> tauri::http::Response<Vec<u8>> {
 fn dlog(message: &str) {
     #[cfg(debug_assertions)]
     eprintln!("[myharness] {message}");
+    // Release builds print nothing, so the argument is unused there.
+    #[cfg(not(debug_assertions))]
+    let _ = message;
 }
 
 /// Log-safe rendering of roll-in text: control characters (log-line injection via a
@@ -275,6 +278,9 @@ fn open_setup_window(app: tauri::AppHandle) -> Result<(), String> {
     .inner_size(900.0, 720.0)
     .build()
     .map_err(|error| error.to_string())?;
+    // The fixture asserts on this line: it is the proof that the window was
+    // actually created, not merely that the deep link was classified.
+    dlog("setup window opened");
     Ok(())
 }
 

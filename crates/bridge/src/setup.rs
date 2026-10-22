@@ -272,7 +272,10 @@ impl SetupBackend for ConfigBackend {
         // secret that was never stored would resolve to nothing (fail closed).
         let secret = secrecy::SecretString::from(value.to_string());
         self.secrets.store(account, &secret).map_err(|error| {
-            BridgeError::new("SECRET_STORE", format!("the credential could not be stored: {error}"))
+            BridgeError::new(
+                "SECRET_STORE",
+                format!("the credential could not be stored: {error}"),
+            )
         })?;
         Ok(SecretRef {
             kind: myharness_secrets::RefKind::Keychain,
@@ -407,15 +410,13 @@ fn validate_name(name: &str) -> Result<String, BridgeError> {
 }
 
 fn parse_tab(tab: &str) -> Result<SetupTab, BridgeError> {
-    serde_json::from_value::<SetupTab>(Value::String(tab.to_string())).map_err(|_| {
-        BridgeError::new("CONFIG_VALIDATION", "unknown setup tab")
-    })
+    serde_json::from_value::<SetupTab>(Value::String(tab.to_string()))
+        .map_err(|_| BridgeError::new("CONFIG_VALIDATION", "unknown setup tab"))
 }
 
 fn parse_provider(provider: &str) -> Result<ProviderKind, BridgeError> {
-    serde_json::from_value::<ProviderKind>(Value::String(provider.to_string())).map_err(|_| {
-        BridgeError::new("CONFIG_VALIDATION", "unknown provider family")
-    })
+    serde_json::from_value::<ProviderKind>(Value::String(provider.to_string()))
+        .map_err(|_| BridgeError::new("CONFIG_VALIDATION", "unknown provider family"))
 }
 
 /// Decode a profile document sent by the renderer.
@@ -547,7 +548,10 @@ fn apply_secrets<B: SetupBackend>(
             map.insert(
                 key.to_string(),
                 serde_json::to_value(reference).map_err(|e| {
-                    BridgeError::new("CONFIG_PARSE", format!("the credential handle could not be built: {e}"))
+                    BridgeError::new(
+                        "CONFIG_PARSE",
+                        format!("the credential handle could not be built: {e}"),
+                    )
                 })?,
             );
         }
@@ -682,7 +686,10 @@ mod tests {
         };
         let text = document.to_string();
         assert!(!text.contains("sk-ant-EXAMPLE-TYPED"), "{text}");
-        assert!(text.contains("kind"), "the handle should be present: {text}");
+        assert!(
+            text.contains("kind"),
+            "the handle should be present: {text}"
+        );
     }
 
     /// Arguments are validated in the bridge, before the library is touched.

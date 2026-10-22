@@ -671,7 +671,7 @@ fn atomic_write(path: &Path, payload: &[u8]) -> Result<(), ConfigError> {
 fn temp_stem(path: &Path) -> String {
     path.file_name()
         .and_then(|name| name.to_str())
-        .map(|name| safe_text(name))
+        .map(safe_text)
         .unwrap_or_else(|| "profile".to_string())
 }
 

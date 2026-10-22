@@ -4,7 +4,8 @@
 # Exercised here: TEST-ARCH-002 single-instance second-launch routing, and the
 # deep-link plumbing of docs/02 §2 step 2 / docs/06 §6 (argv on cold start and on a
 # second launch; fail-closed classification per docs/06 §1 route table, TEST-SEC-003;
-# ARCH-NAV-01 deep-linkable routes; ARCH-NAV-03 Setup3p deferred to Phase 2 window).
+# ARCH-NAV-01 deep-linkable routes; ARCH-NAV-03 Setup3p opens the dedicated
+# setup window (Phase 2), and the main renderer is never navigated to it).
 #
 # Observable: debug builds trace `[myharness] …` lines to stderr (release silent).
 # Run: bash tests/native/shell-runtime.sh
@@ -98,11 +99,16 @@ launch "myharness://bogus-rute"
 wait_log "deep-link rejected myharness://bogus-rute" 8
 check "R6 invalid cold-start deep link rejected in log" || true
 is_up; check "R6 window still opens and stays up (fail closed)" || true
-# Setup3p: recognized grammar, deferred navigation (ARCH-NAV-03), no accept line.
+# Setup3p: recognized grammar; the DEDICATED setup window opens (Phase 2,
+# ARCH-NAV-03) and the main renderer is still not navigated to it.
 kill "$PRIMARY" 2>/dev/null; wait "$PRIMARY" 2>/dev/null
 launch "myharness://setup-desktop-3p"
-wait_log "setup-desktop-3p: dedicated setup window lands in Phase 2" 8
-check "R7 Setup3p grammar recognized, renderer not navigated (Phase-2 deferral)" || true
+wait_log "setup-desktop-3p: opening the dedicated setup window" 8
+check "R7 Setup3p grammar recognized, dedicated window requested" || true
+wait_log "setup window opened" 8
+check "R7 dedicated setup window created (log proof)" || true
+if grep -q "deep-link accepted myharness://setup-desktop-3p" "$LOG"; then false; else true; fi
+check "R7 main renderer not navigated to the setup route" || true
 is_up; check "R7 window alive with Setup3p link" || true
 
 kill "$PRIMARY" 2>/dev/null; wait "$PRIMARY" 2>/dev/null

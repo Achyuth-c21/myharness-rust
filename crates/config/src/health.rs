@@ -180,9 +180,9 @@ impl ManagedConfig {
             last_checked: self.last_checked,
             detail: match self.status {
                 HealthStatus::Healthy => None,
-                HealthStatus::Tainted => Some(
-                    "the managed configuration source could not be reached".to_string(),
-                ),
+                HealthStatus::Tainted => {
+                    Some("the managed configuration source could not be reached".to_string())
+                }
             },
         }
     }
@@ -263,7 +263,9 @@ mod tests {
         assert_eq!(health.status, HealthStatus::Tainted);
         assert!(health.overlay_present, "the landed overlay is still known");
         assert!(
-            managed.overlay().locks("connection", "inferenceGatewayBaseUrl"),
+            managed
+                .overlay()
+                .locks("connection", "inferenceGatewayBaseUrl"),
             "managed restrictions must not disappear on a failed check"
         );
     }
@@ -359,8 +361,7 @@ mod tests {
         );
         assert!(!settings.has_source(), "a URL is required to have a source");
         assert_eq!(
-            settings.recheck_interval_minutes,
-            DEFAULT_RECHECK_INTERVAL_MINUTES,
+            settings.recheck_interval_minutes, DEFAULT_RECHECK_INTERVAL_MINUTES,
             "zero is not a valid interval"
         );
     }

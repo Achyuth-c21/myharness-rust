@@ -48,7 +48,7 @@ fn real_dist_serves_shell_routes_assets_and_gates() {
     let html = String::from_utf8(home.body).unwrap();
     assert!(html.contains("<div id=\"root\">"), "index.html should boot React");
     assert!(
-        home.headers.iter().any(|(k, v)| *k == "content-security-policy"),
+        home.headers.iter().any(|(k, _v)| *k == "content-security-policy"),
         "index.html must carry CSP"
     );
 

@@ -133,8 +133,7 @@ pub fn export_profiles(
         files.insert(name.clone(), redact_allowlist(&allowlist));
         contents.push(ExportEntry {
             name,
-            description: "The derived egress allowlist (private hosts redacted)."
-                .to_string(),
+            description: "The derived egress allowlist (private hosts redacted).".to_string(),
             may_contain_private_hosts: true,
         });
     }
@@ -151,8 +150,7 @@ fn bundle(contents: Vec<ExportEntry>, files: BTreeMap<String, Value>) -> ExportB
              deployment. Secrets and private hosts are redacted, but review the file list \
              before sharing it."
                 .to_string(),
-            "Explicit confirmation is required before a diagnostic bundle is uploaded."
-                .to_string(),
+            "Explicit confirmation is required before a diagnostic bundle is uploaded.".to_string(),
         ],
         consent_required: true,
     }
@@ -236,7 +234,9 @@ pub fn redact_value_for(value: &Value, target: RedactTarget) -> Value {
             }
             Value::Object(out)
         }
-        Value::Array(items) => Value::Array(items.iter().map(|i| redact_value_for(i, target)).collect()),
+        Value::Array(items) => {
+            Value::Array(items.iter().map(|i| redact_value_for(i, target)).collect())
+        }
         Value::String(text) => {
             if looks_like_credential(text) {
                 return Value::String(REDACTED.to_string());
@@ -286,10 +286,8 @@ fn redact_private_hosts_in(value: &mut Value) {
                 redact_private_hosts_in(item);
             }
         }
-        Value::String(text) => {
-            if is_private_host(text) {
-                *text = REDACTED_HOST.to_string();
-            }
+        Value::String(text) if is_private_host(text) => {
+            *text = REDACTED_HOST.to_string();
         }
         _ => {}
     }
