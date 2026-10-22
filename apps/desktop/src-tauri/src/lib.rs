@@ -242,6 +242,18 @@ fn setup_command(command: SetupCommand) -> SetupResponse {
     myharness_bridge::setup::dispatch(&*guard, command)
 }
 
+/// Model discovery against an Anthropic-compatible gateway
+/// (`docs/12` §3.1). This is the `settings.Custom3pHelperRun` namespace
+/// (`docs/18` §3.4): a setup-time probe of the gateway's own `/v1/models`
+/// contract, not a translation layer.
+#[tauri::command]
+async fn setup_discover_models(
+    request: myharness_bridge::helper::DiscoveryRequest,
+) -> Result<myharness_bridge::helper::DiscoveryOutcome, myharness_bridge::setup::BridgeError> {
+    let client = reqwest::Client::new();
+    myharness_bridge::helper::discover_models(&request, &client).await
+}
+
 /// Open (or focus) the separate setup window (`docs/09` §2.1: "This is a
 /// separate Electron window, not a modal in the main renderer";
 /// `docs/screens/setup-desktop-3p.md`: `app://localhost/setup-desktop-3p`).
@@ -306,7 +318,12 @@ pub fn run() {
 
     builder
         .register_uri_scheme_protocol("app", |_context, request| adapt(request))
-        .invoke_handler(tauri::generate_handler![ping, setup_command, open_setup_window])
+        .invoke_handler(tauri::generate_handler![
+            ping,
+            setup_command,
+            setup_discover_models,
+            open_setup_window
+        ])
         .setup(move |app| {
             deep_link_rejections(&startup_args);
             let setup_requested = startup_args.iter().any(|arg| {

@@ -128,7 +128,7 @@ pub struct BridgeError {
 }
 
 impl BridgeError {
-    fn new(code: &str, message: impl Into<String>) -> Self {
+    pub fn new(code: &str, message: impl Into<String>) -> Self {
         BridgeError {
             code: code.to_string(),
             message: message.into(),

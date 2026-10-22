@@ -177,6 +177,57 @@ export async function setup(command: SetupCommand): Promise<SetupResponse> {
   }
 }
 
+/**
+ * One discovered model (docs/12 §3.1).
+ */
+export interface DiscoveredModel {
+  id: string;
+  raw: unknown;
+}
+
+/** The outcome of a discovery run (docs/12 §3.1). */
+export interface DiscoveryOutcome {
+  models: DiscoveredModel[];
+  pages: number;
+  /** True when a later page failed and the rows already read were kept. */
+  partial: boolean;
+  warning: string | null;
+}
+
+/**
+ * Run model discovery against an Anthropic-compatible gateway
+ * (`settings.Custom3pHelperRun`, docs/18 §3.4; docs/12 §3.1).
+ *
+ * The credential travels on the request — the user typed it — and is never
+ * stored by the probe.
+ */
+export async function discoverModels(request: {
+  baseUrl: string;
+  apiKey?: string;
+  authScheme?: "bearer" | "xApiKey";
+  customHeaders?: Record<string, string>;
+}): Promise<DiscoveryOutcome | { error: BridgeError }> {
+  try {
+    return await invoke<DiscoveryOutcome>("setup_discover_models", {
+      request: {
+        baseUrl: request.baseUrl,
+        apiKey: request.apiKey ?? null,
+        authScheme: request.authScheme ?? "bearer",
+        customHeaders: Object.entries(request.customHeaders ?? {}),
+      },
+    });
+  } catch (error) {
+    return {
+      error: {
+        code: "PROVIDER_UNREACHABLE",
+        message:
+          typeof error === "string" ? error : "The gateway could not be reached.",
+        retryable: true,
+      },
+    };
+  }
+}
+
 /** Open the separate setup window (docs/09 §2.1). */
 export async function openSetupWindow(): Promise<void> {
   await invoke("open_setup_window");

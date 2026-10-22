@@ -11,6 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod helper;
 pub mod setup;
 
 /// Commands the renderer may invoke. The set grows phase by phase and must never become

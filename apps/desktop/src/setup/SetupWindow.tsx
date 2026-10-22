@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Field } from "./fields";
 import {
+  discoverModels,
   setup,
   type ConfigHealth,
   type EgressAllowlist,
@@ -84,6 +85,8 @@ export default function SetupWindow() {
   const [egress, setEgress] = useState<EgressAllowlist | null>(null);
   const [exportBundle, setExportBundle] = useState<ExportBundle | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
+  const [discoveryNote, setDiscoveryNote] = useState<string | null>(null);
 
   const loadProfiles = useCallback(async () => {
     const response = await setup({ type: "listProfiles" });
@@ -207,6 +210,44 @@ export default function SetupWindow() {
   const setSecret = (key: string, value: string) => {
     const path = `${sectionOf(tab)}/${key}`;
     setPendingSecrets((current) => ({ ...current, [path]: value }));
+  };
+
+  /**
+   * Discover the gateway's model list (docs/12 §3.1) and offer it as the
+   * explicit model list. The discovered ids are de-duplicated by the core; the
+   * first entry is the default (docs/12 §3.2).
+   */
+  const runDiscovery = async () => {
+    const baseUrl = section["inferenceGatewayBaseUrl"];
+    if (typeof baseUrl !== "string" || !baseUrl.trim()) {
+      setDiscoveryNote("A gateway base URL is required before models can be discovered.");
+      return;
+    }
+    setDiscovering(true);
+    setDiscoveryNote(null);
+    const headers = (section["inferenceCustomHeaders"] ?? {}) as Record<string, string>;
+    const response = await discoverModels({
+      baseUrl,
+      apiKey: pendingSecrets["connection/inferenceGatewayApiKey"],
+      authScheme: section["inferenceGatewayAuthScheme"] === "x-api-key" ? "xApiKey" : "bearer",
+      customHeaders: headers,
+    });
+    setDiscovering(false);
+    if ("error" in response) {
+      setDiscoveryNote(response.error.message);
+      return;
+    }
+    const ids = response.models.map((model) => model.id);
+    if (!ids.length) {
+      setDiscoveryNote("The gateway advertised no models.");
+      return;
+    }
+    setValue("inferenceModels", ids);
+    setDiscoveryNote(
+      response.partial
+        ? `Discovered ${ids.length} models; the list is partial${response.warning ? ` (${response.warning})` : ""}.`
+        : `Discovered ${ids.length} models.`,
+    );
   };
 
   const discard = () => {
@@ -359,7 +400,36 @@ export default function SetupWindow() {
             <EgressTab allowlist={egress} onCopy={() => void copyEgress()} />
           ) : (
             <section className="setup-section" aria-label={schema?.title ?? tab}>
-              <h2 className="setup-section-title">{schema?.title ?? tab}</h2>
+              <div className="setup-section-head">
+                <h2 className="setup-section-title">{schema?.title ?? tab}</h2>
+                {tab === "connection" ? (
+                  <div className="setup-section-actions">
+                    {/* The inference probe belongs to the provider adapters of
+                        Phase 3; it is shown disabled rather than faked. */}
+                    <button
+                      type="button"
+                      className="setup-secondary-button"
+                      disabled
+                      title="Not implemented yet"
+                    >
+                      Test connection
+                    </button>
+                    <button
+                      type="button"
+                      className="setup-secondary-button"
+                      disabled={discovering}
+                      onClick={() => void runDiscovery()}
+                    >
+                      {discovering ? "Discovering…" : "Discover models"}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+              {discoveryNote ? (
+                <p className="setup-note" role="status">
+                  {discoveryNote}
+                </p>
+              ) : null}
               {visibleFields.map((field) => {
                 const locked = merged[`${sectionOf(tab)}/${field.key}`]?.lock === "readOnly";
                 return (

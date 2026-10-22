@@ -130,6 +130,18 @@
   max-width: 660px;
 }
 
+.setup-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--mh-unit) * 2);
+}
+
+.setup-section-actions {
+  display: flex;
+  gap: var(--mh-unit);
+}
+
 .setup-section-title {
   margin: 0 0 calc(var(--mh-unit) * 4);
   font-size: 14px;
