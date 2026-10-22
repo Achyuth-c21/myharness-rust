@@ -16,6 +16,8 @@ tauri = { workspace = true }
 tauri-plugin-single-instance = { workspace = true, optional = true }
 myharness-app-shell = { path = "../../../crates/app-shell" }
 myharness-bridge = { path = "../../../crates/bridge" }
+myharness-secrets = { path = "../../../crates/secrets" }
+reqwest = { workspace = true }
 
 [features]
 default = ["single-instance"]

@@ -1,0 +1,557 @@
+/**
+ * The third-party inference setup window (docs/screens/setup-desktop-3p.md;
+ * docs/09 §2.1–§2.10).
+ *
+ * A separate window, not a Settings tab and not a modal. The layout follows the
+ * captured arrangement: a header with the title, the profile selector and
+ * **Export**; a left navigation with a search box and nine entries; a scrolling
+ * content pane; and a fixed footer with **Apply Changes**.
+ *
+ * The draft model is the shipped one: edits live in memory and reach the disk
+ * only on Apply, which is the only save action (docs/09 §3.2;
+ * docs/screens/setup-desktop-3p.md "Apply is the only save action"). Discard
+ * restores the applied values.
+ */
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Field } from "./fields";
+import {
+  discoverModels,
+  setup,
+  type ConfigHealth,
+  type EgressAllowlist,
+  type ExportBundle,
+  type FieldDef,
+  type FormIssue,
+  type ProfileDocument,
+  type ProfileSummary,
+  type Schema,
+  type SetupTab,
+} from "./client";
+import "./setup.css";
+
+/** The nine tabs, in the captured navigation order. */
+const TABS: { id: SetupTab; label: string }[] = [
+  { id: "connection", label: "Connection" },
+  { id: "capabilities", label: "Capabilities" },
+  { id: "connectors", label: "Connectors" },
+  { id: "telemetry", label: "Telemetry & updates" },
+  { id: "limits", label: "Limits" },
+  { id: "appearance", label: "Appearance" },
+  { id: "plugins", label: "Plugins" },
+  { id: "egress", label: "Egress" },
+  { id: "source", label: "Source" },
+];
+
+/** The nine profile sections (docs/18 §10). */
+const SECTIONS = [
+  "connection",
+  "capabilities",
+  "connectors",
+  "telemetry",
+  "limits",
+  "appearance",
+  "plugins",
+  "egress",
+  "source",
+] as const;
+
+type Section = (typeof SECTIONS)[number];
+
+/** The merged view's per-field lock state (DATA-CONFIG-04). */
+type MergedFields = Record<string, { lock: "writable" | "readOnly"; source: string }>;
+
+function sectionOf(tab: SetupTab): Section {
+  return tab as Section;
+}
+
+function clone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+export default function SetupWindow() {
+  const [phase, setPhase] = useState<"loading" | "ready" | "applying" | "error">("loading");
+  const [banner, setBanner] = useState<string | null>(null);
+  const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [baseline, setBaseline] = useState<ProfileDocument | null>(null);
+  const [draft, setDraft] = useState<ProfileDocument | null>(null);
+  const [pendingSecrets, setPendingSecrets] = useState<Record<string, string>>({});
+  const [issues, setIssues] = useState<FormIssue[]>([]);
+  const [tab, setTab] = useState<SetupTab>("connection");
+  const [query, setQuery] = useState("");
+  const [schemas, setSchemas] = useState<Partial<Record<SetupTab, Schema>>>({});
+  const [merged, setMerged] = useState<MergedFields>({});
+  const [health, setHealth] = useState<ConfigHealth | null>(null);
+  const [egress, setEgress] = useState<EgressAllowlist | null>(null);
+  const [exportBundle, setExportBundle] = useState<ExportBundle | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
+  const [discoveryNote, setDiscoveryNote] = useState<string | null>(null);
+
+  const loadProfiles = useCallback(async () => {
+    const response = await setup({ type: "listProfiles" });
+    if (response.type === "error") {
+      setBanner(response.error.message);
+      return [];
+    }
+    if (response.type !== "profiles") return [];
+    setProfiles(response.profiles);
+    return response.profiles;
+  }, []);
+
+  const loadProfile = useCallback(async (id: string) => {
+    const response = await setup({ type: "readProfile", id });
+    if (response.type === "error") {
+      setBanner(response.error.message);
+      return;
+    }
+    if (response.type !== "profile") return;
+    setBaseline(clone(response.document));
+    setDraft(clone(response.document));
+    setPendingSecrets({});
+    setIssues([]);
+  }, []);
+
+  const loadSchemas = useCallback(async (provider: string | null) => {
+    const tabs = await Promise.all(
+      TABS.map(async (entry) => {
+        const response = await setup({ type: "tabSchema", tab: entry.id });
+        return [entry.id, response.type === "schema" ? response.schema : null] as const;
+      }),
+    );
+    const next: Partial<Record<SetupTab, Schema>> = {};
+    for (const [id, schema] of tabs) {
+      if (schema) next[id] = schema;
+    }
+    if (provider) {
+      const response = await setup({
+        type: "connectionSchema",
+        provider: provider as "gateway",
+      });
+      if (response.type === "schema") next.connection = response.schema;
+    }
+    setSchemas(next);
+  }, []);
+
+  const loadMerged = useCallback(async () => {
+    const response = await setup({ type: "merged" });
+    if (response.type !== "merged") return;
+    const fields = (response.merged.fields ?? {}) as Record<
+      string,
+      { lock: "writable" | "readOnly"; source: string }
+    >;
+    setMerged(fields);
+  }, []);
+
+  // Boot: profiles, then the applied one, then the schemas and the health.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const list = await loadProfiles();
+      if (cancelled) return;
+      const applied = list.find((profile) => profile.applied) ?? list[0];
+      if (!applied) {
+        setPhase("ready");
+        setBanner("No configuration profile exists yet. Create one to configure inference.");
+        return;
+      }
+      setSelectedId(applied.id);
+      await loadProfile(applied.id);
+      await loadSchemas(applied.provider);
+      await loadMerged();
+      const healthResponse = await setup({ type: "health" });
+      if (healthResponse.type === "health") setHealth(healthResponse.health);
+      if (!cancelled) setPhase("ready");
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [loadProfiles, loadProfile, loadSchemas, loadMerged]);
+
+  // The Egress tab is derived, so it is fetched when the tab is opened.
+  useEffect(() => {
+    if (tab !== "egress") return;
+    (async () => {
+      const response = await setup({ type: "egress" });
+      if (response.type === "egress") setEgress(response.allowlist);
+    })();
+  }, [tab]);
+
+  const dirty = useMemo(() => {
+    if (!baseline || !draft) return false;
+    return JSON.stringify(baseline) !== JSON.stringify(draft);
+  }, [baseline, draft]);
+
+  const hasError = issues.some((issue) => issue.severity === "error");
+
+  const section = draft ? ((draft[sectionOf(tab)] as Record<string, unknown>) ?? {}) : {};
+  const schema = schemas[tab];
+  const visibleFields: FieldDef[] = useMemo(() => {
+    if (!schema) return [];
+    if (tab !== "connection") return schema.fields;
+    return schema.fields;
+  }, [schema, tab]);
+
+  const filteredTabs = TABS.filter((entry) =>
+    entry.label.toLowerCase().includes(query.trim().toLowerCase()),
+  );
+
+  const setValue = (key: string, value: unknown) => {
+    setDraft((current) => {
+      if (!current) return current;
+      const next = clone(current);
+      const target = (next[sectionOf(tab)] as Record<string, unknown>) ?? {};
+      target[key] = value;
+      (next as Record<string, unknown>)[sectionOf(tab)] = target;
+      return next;
+    });
+  };
+
+  const setSecret = (key: string, value: string) => {
+    const path = `${sectionOf(tab)}/${key}`;
+    setPendingSecrets((current) => ({ ...current, [path]: value }));
+  };
+
+  /**
+   * Discover the gateway's model list (docs/12 §3.1) and offer it as the
+   * explicit model list. The discovered ids are de-duplicated by the core; the
+   * first entry is the default (docs/12 §3.2).
+   */
+  const runDiscovery = async () => {
+    const baseUrl = section["inferenceGatewayBaseUrl"];
+    if (typeof baseUrl !== "string" || !baseUrl.trim()) {
+      setDiscoveryNote("A gateway base URL is required before models can be discovered.");
+      return;
+    }
+    setDiscovering(true);
+    setDiscoveryNote(null);
+    const headers = (section["inferenceCustomHeaders"] ?? {}) as Record<string, string>;
+    const response = await discoverModels({
+      baseUrl,
+      apiKey: pendingSecrets["connection/inferenceGatewayApiKey"],
+      authScheme: section["inferenceGatewayAuthScheme"] === "x-api-key" ? "xApiKey" : "bearer",
+      customHeaders: headers,
+    });
+    setDiscovering(false);
+    if ("error" in response) {
+      setDiscoveryNote(response.error.message);
+      return;
+    }
+    const ids = response.models.map((model) => model.id);
+    if (!ids.length) {
+      setDiscoveryNote("The gateway advertised no models.");
+      return;
+    }
+    setValue("inferenceModels", ids);
+    setDiscoveryNote(
+      response.partial
+        ? `Discovered ${ids.length} models; the list is partial${response.warning ? ` (${response.warning})` : ""}.`
+        : `Discovered ${ids.length} models.`,
+    );
+  };
+
+  const discard = () => {
+    if (!baseline) return;
+    setDraft(clone(baseline));
+    setPendingSecrets({});
+    setIssues([]);
+  };
+
+  const apply = async () => {
+    if (!draft || !selectedId) return;
+    setPhase("applying");
+    setBanner(null);
+    // Validate before writing: the shipped form blocks Apply while invalid
+    // (docs/09 §2.2, "Required fields marked `*`; Apply blocks/shows errors").
+    const validation = await setup({ type: "validate", document: draft });
+    if (validation.type === "issues" && validation.issues.some((i) => i.severity === "error")) {
+      setIssues(validation.issues);
+      setPhase("ready");
+      setBanner("The profile has invalid fields. Apply was not attempted.");
+      return;
+    }
+    if (validation.type === "issues") setIssues(validation.issues);
+    const write = await setup({
+      type: "writeProfile",
+      document: draft,
+      secrets: pendingSecrets,
+    });
+    if (write.type === "error") {
+      setBanner(write.error.message);
+      setPhase("ready");
+      return;
+    }
+    const applied = await setup({ type: "applyProfile", id: selectedId });
+    if (applied.type === "error") {
+      // A failed apply leaves the previous profile active (docs/18 §10); the draft
+      // is kept so the user does not lose their work.
+      setBanner(applied.error.message);
+      setPhase("ready");
+      return;
+    }
+    await loadProfile(selectedId);
+    await loadMerged();
+    setPhase("ready");
+  };
+
+  const switchProfile = async (id: string) => {
+    if (dirty && !window.confirm("Discard the unsaved changes?")) return;
+    setSelectedId(id);
+    await loadProfile(id);
+    const profile = profiles.find((entry) => entry.id === id);
+    await loadSchemas(profile?.provider ?? null);
+    await loadMerged();
+  };
+
+  const runExport = async () => {
+    const response = await setup({ type: "export" });
+    if (response.type === "export") {
+      setExportBundle(response.bundle);
+      setExportOpen(true);
+    } else if (response.type === "error") {
+      setBanner(response.error.message);
+    }
+  };
+
+  const copyEgress = async () => {
+    if (!egress) return;
+    const hosts = egress.groups.flatMap((group) => group.hosts);
+    try {
+      await navigator.clipboard.writeText(hosts.join("\n"));
+    } catch {
+      setBanner("The host list could not be copied to the clipboard.");
+    }
+  };
+
+  return (
+    <div className="setup-window">
+      <header className="setup-header">
+        <h1 className="setup-title">Configure third-party inference</h1>
+        <div className="setup-header-actions">
+          <label className="setup-profile-picker">
+            <span className="setup-visually-hidden">Profile</span>
+            <select
+              className="setup-select"
+              value={selectedId ?? ""}
+              onChange={(event) => void switchProfile(event.target.value)}
+            >
+              {profiles.length === 0 ? <option value="">No profile</option> : null}
+              {profiles.map((profile) => (
+                <option key={profile.id} value={profile.id}>
+                  {profile.name}
+                  {profile.applied ? " (applied)" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button type="button" className="setup-secondary-button" onClick={() => void runExport()}>
+            Export
+          </button>
+        </div>
+      </header>
+
+      {banner ? (
+        <div className="setup-banner setup-banner-error" role="alert">
+          {banner}
+        </div>
+      ) : null}
+
+      {health && health.status === "tainted" ? (
+        <div className="setup-banner setup-banner-warn" role="status">
+          The managed configuration source could not be reached
+          {health.detail ? `: ${health.detail}` : "."} The last known managed values are still in
+          effect.
+        </div>
+      ) : null}
+
+      <div className="setup-body">
+        <nav className="setup-nav" aria-label="Setup sections">
+          <input
+            className="setup-search"
+            type="search"
+            placeholder="Search settings"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <ul className="setup-nav-list">
+            {filteredTabs.map((entry) => {
+              const tabIssues = issues.filter((issue) => issue.field.includes(entry.id));
+              return (
+                <li key={entry.id}>
+                  <button
+                    type="button"
+                    className={`setup-nav-item${tab === entry.id ? " setup-nav-item-active" : ""}`}
+                    aria-current={tab === entry.id ? "page" : undefined}
+                    onClick={() => setTab(entry.id)}
+                  >
+                    <span>{entry.label}</span>
+                    {tabIssues.length ? <span className="setup-nav-dot" aria-hidden="true" /> : null}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
+
+        <main className="setup-content">
+          {phase === "loading" ? <div className="setup-loading">Loading configuration…</div> : null}
+
+          {tab === "egress" ? (
+            <EgressTab allowlist={egress} onCopy={() => void copyEgress()} />
+          ) : (
+            <section className="setup-section" aria-label={schema?.title ?? tab}>
+              <div className="setup-section-head">
+                <h2 className="setup-section-title">{schema?.title ?? tab}</h2>
+                {tab === "connection" ? (
+                  <div className="setup-section-actions">
+                    {/* The inference probe belongs to the provider adapters of
+                        Phase 3; it is shown disabled rather than faked. */}
+                    <button
+                      type="button"
+                      className="setup-secondary-button"
+                      disabled
+                      title="Not implemented yet"
+                    >
+                      Test connection
+                    </button>
+                    <button
+                      type="button"
+                      className="setup-secondary-button"
+                      disabled={discovering}
+                      onClick={() => void runDiscovery()}
+                    >
+                      {discovering ? "Discovering…" : "Discover models"}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+              {discoveryNote ? (
+                <p className="setup-note" role="status">
+                  {discoveryNote}
+                </p>
+              ) : null}
+              {visibleFields.map((field) => {
+                const locked = merged[`${sectionOf(tab)}/${field.key}`]?.lock === "readOnly";
+                return (
+                  <Field
+                    key={`${sectionOf(tab)}/${field.key}`}
+                    field={field}
+                    value={section[field.key]}
+                    issues={issues}
+                    locked={locked}
+                    source={merged[`${sectionOf(tab)}/${field.key}`]?.source}
+                    onChange={(value) => setValue(field.key, value)}
+                    onSecret={(value) => setSecret(field.key, value)}
+                  />
+                );
+              })}
+            </section>
+          )}
+        </main>
+      </div>
+
+      <footer className="setup-footer">
+        {dirty ? (
+          <button type="button" className="setup-secondary-button" onClick={discard}>
+            Discard Changes
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="setup-primary-button"
+          disabled={!dirty || hasError || phase === "applying"}
+          onClick={() => void apply()}
+        >
+          {phase === "applying" ? "Applying…" : "Apply Changes"}
+        </button>
+      </footer>
+
+      {exportOpen && exportBundle ? (
+        <div className="setup-export" role="dialog" aria-label="Export bundle">
+          <h2>Export bundle</h2>
+          <ul>
+            {exportBundle.warnings.map((warning) => (
+              <li key={warning}>{warning}</li>
+            ))}
+          </ul>
+          <ul>
+            {exportBundle.contents.map((entry) => (
+              <li key={entry.name}>
+                <strong>{entry.name}</strong> — {entry.description}
+              </li>
+            ))}
+          </ul>
+          <button type="button" className="setup-secondary-button" onClick={() => setExportOpen(false)}>
+            Close
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The Egress tab: a read-only derived allowlist (docs/09 §2.9). "Test
+ * connectivity" is a network probe that has not been implemented; it is shown
+ * disabled rather than faked.
+ */
+function EgressTab({
+  allowlist,
+  onCopy,
+}: {
+  allowlist: EgressAllowlist | null;
+  onCopy: () => void;
+}) {
+  if (!allowlist) return <div className="setup-loading">Deriving the allowlist…</div>;
+  return (
+    <section className="setup-section" aria-label="Egress">
+      <h2 className="setup-section-title">Egress</h2>
+      <p className="setup-note">
+        Derived from the active configuration. This list can reveal private infrastructure; it must
+        not be published.
+      </p>
+      <div className="setup-egress-actions">
+        <button type="button" className="setup-secondary-button" disabled title="Not implemented yet">
+          Test connectivity
+        </button>
+        <button type="button" className="setup-secondary-button" onClick={onCopy}>
+          Copy hostnames
+        </button>
+        <button
+          type="button"
+          className="setup-secondary-button"
+          onClick={() => {
+            const text = allowlist.groups.flatMap((group) => group.hosts).join("\n");
+            const blob = new Blob([text], { type: "text/plain" });
+            const url = URL.createObjectURL(blob);
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = "egress.txt";
+            anchor.click();
+            URL.revokeObjectURL(url);
+          }}
+        >
+          Download .txt
+        </button>
+      </div>
+      {allowlist.groups.map((group) => (
+        <div className="setup-egress-group" key={group.group}>
+          <h3>{group.group}</h3>
+          {group.hosts.length ? (
+            <ul className="setup-egress-hosts">
+              {group.hosts.map((host) => (
+                <li key={host}>{host}</li>
+              ))}
+            </ul>
+          ) : null}
+          {group.hostsUnobserved ? (
+            <p className="setup-note">
+              Some hosts in this group were never captured; they are not listed rather than
+              guessed.
+            </p>
+          ) : null}
+        </div>
+      ))}
+    </section>
+  );
+}

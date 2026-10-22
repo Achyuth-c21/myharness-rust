@@ -9,10 +9,12 @@
 //!   (`crates/bridge`), which ships only `ping` in Phase 1 (docs/18);
 //! - deep links validate via `myharness_app_shell::lifecycle` (docs/06 route grammar).
 
-use myharness_app_shell as shell;
+use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 
-#[cfg(feature = "single-instance")]
-use tauri::Manager as _;
+use myharness_app_shell as shell;
+use myharness_bridge::setup::{ConfigBackend, SetupCommand, SetupResponse};
+use tauri::{Manager as _, WebviewUrl, WebviewWindowBuilder};
 
 /// Resolve the production static root (`frontendDist`). Development uses `devUrl`
 /// instead, so a missing root must never hard-crash: the protocol still answers with
@@ -76,7 +78,9 @@ fn deep_link_target(args: &[String]) -> Option<tauri::Url> {
                 .map(|route| (arg.clone(), route))
         })?;
     if route == shell::DeepLinkRoute::Setup3p {
-        dlog("deep-link setup-desktop-3p: dedicated setup window lands in Phase 2 (ARCH-NAV-03); renderer not navigated");
+        // The dedicated setup window (docs/09 §2.1; ARCH-NAV-03) is opened by the
+        // caller; the main renderer is never navigated to it.
+        dlog("deep-link setup-desktop-3p: opening the dedicated setup window");
         return None;
     }
     let rest = raw.split_once("://")?.1;
@@ -166,6 +170,114 @@ fn ping() -> myharness_bridge::Response {
     myharness_bridge::dispatch(myharness_bridge::Command::Ping)
 }
 
+/// The profile-library root (`docs/09` §3.1: `~/.config/Claude-3p/configLibrary`).
+///
+/// `XDG_CONFIG_HOME` wins when it is an absolute path (the Linux convention);
+/// otherwise `$HOME/.config`. When neither is available the configuration is
+/// genuinely unreachable, and the setup window says so rather than writing
+/// somewhere unexpected.
+fn config_root() -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .filter(|path| path.is_absolute())
+                .map(|home| home.join(".config"))
+        })?;
+    Some(base.join("Claude-3p").join("configLibrary"))
+}
+
+/// The setup backend, opened once. The library's own writes are atomic
+/// (`crates/config`), and the mutex serializes the read-modify-write sequences
+/// that span more than one file.
+fn setup_backend() -> Result<&'static Mutex<ConfigBackend>, String> {
+    static BACKEND: OnceLock<Mutex<ConfigBackend>> = OnceLock::new();
+    let root = config_root().ok_or_else(|| {
+        "The configuration directory is not available; set HOME or XDG_CONFIG_HOME.".to_string()
+    })?;
+    let backend = BACKEND.get_or_init(|| {
+        // The OS keychain holds the credentials; the profile only carries handles
+        // (`docs/09` §4; `DATA-CONFIG-02`). The keychain's runtime behavior is
+        // compile-verified only (`docs/14` §9 item 8) - a failure here is reported
+        // to the setup window rather than silently falling back to a plaintext
+        // profile field.
+        let store = myharness_secrets::KeyringStore::new(myharness_secrets::DEFAULT_SERVICE);
+        Mutex::new(ConfigBackend::new(root, Box::new(store)))
+    });
+    Ok(backend)
+}
+
+/// The `settings.Custom3pSetup` namespace (docs/18 §3.4): profiles, config
+/// read/write/apply, the merged view, health, the export bundle, and the setup
+/// form schemas. Arguments are validated in the bridge; secrets cross this
+/// boundary as handles, never as values (docs/18 §10).
+#[tauri::command]
+fn setup_command(command: SetupCommand) -> SetupResponse {
+    let backend = match setup_backend() {
+        Ok(backend) => backend,
+        Err(message) => {
+            return SetupResponse::Error {
+                error: myharness_bridge::setup::BridgeError {
+                    code: "CONFIG_IO".to_string(),
+                    message,
+                    retryable: false,
+                },
+            }
+        }
+    };
+    let guard = match backend.lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            return SetupResponse::Error {
+                error: myharness_bridge::setup::BridgeError {
+                    code: "CONFIG_IO".to_string(),
+                    message: "The configuration is locked by another operation.".to_string(),
+                    retryable: true,
+                },
+            }
+        }
+    };
+    myharness_bridge::setup::dispatch(&*guard, command)
+}
+
+/// Model discovery against an Anthropic-compatible gateway
+/// (`docs/12` §3.1). This is the `settings.Custom3pHelperRun` namespace
+/// (`docs/18` §3.4): a setup-time probe of the gateway's own `/v1/models`
+/// contract, not a translation layer.
+#[tauri::command]
+async fn setup_discover_models(
+    request: myharness_bridge::helper::DiscoveryRequest,
+) -> Result<myharness_bridge::helper::DiscoveryOutcome, myharness_bridge::setup::BridgeError> {
+    let client = reqwest::Client::new();
+    myharness_bridge::helper::discover_models(&request, &client).await
+}
+
+/// Open (or focus) the separate setup window (`docs/09` §2.1: "This is a
+/// separate Electron window, not a modal in the main renderer";
+/// `docs/screens/setup-desktop-3p.md`: `app://localhost/setup-desktop-3p`).
+///
+/// The window is created on demand so the app boots with the main window only.
+#[tauri::command]
+fn open_setup_window(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("setup-desktop-3p") {
+        let _ = window.show();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+    WebviewWindowBuilder::new(
+        &app,
+        "setup-desktop-3p",
+        WebviewUrl::App("app://localhost/setup-desktop-3p".into()),
+    )
+    .title("Configure third-party inference")
+    .inner_size(900.0, 720.0)
+    .build()
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
@@ -176,6 +288,18 @@ pub fn run() {
     #[cfg(feature = "single-instance")]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
         deep_link_rejections(&args);
+        let setup_requested = args.iter().any(|arg| {
+            shell::classify_deep_link(arg)
+                .map(|route| route == shell::DeepLinkRoute::Setup3p)
+                .unwrap_or(false)
+        });
+        if setup_requested {
+            // The setup window is separate and independently reachable (ARCH-NAV-03).
+            if let Err(error) = open_setup_window(app.clone()) {
+                dlog(&format!("setup window could not be opened: {error}"));
+            }
+            return;
+        }
         let url = deep_link_target(&args);
         if let Some(window) = app.get_webview_window("main") {
             if let Some(url) = url {
@@ -194,9 +318,24 @@ pub fn run() {
 
     builder
         .register_uri_scheme_protocol("app", |_context, request| adapt(request))
-        .invoke_handler(tauri::generate_handler![ping])
+        .invoke_handler(tauri::generate_handler![
+            ping,
+            setup_command,
+            setup_discover_models,
+            open_setup_window
+        ])
         .setup(move |app| {
             deep_link_rejections(&startup_args);
+            let setup_requested = startup_args.iter().any(|arg| {
+                shell::classify_deep_link(arg)
+                    .map(|route| route == shell::DeepLinkRoute::Setup3p)
+                    .unwrap_or(false)
+            });
+            if setup_requested {
+                if let Err(error) = open_setup_window(app.handle().clone()) {
+                    dlog(&format!("setup window could not be opened: {error}"));
+                }
+            }
             if let Some(url) = deep_link_target(&startup_args) {
                 match app.get_webview_window("main") {
                     Some(window) => {

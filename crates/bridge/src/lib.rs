@@ -4,8 +4,15 @@
 //! `app://` layer needs. Privileged namespaces arrive one roadmap phase at a time; every
 //! added method must carry sender, argument, and policy validation (docs/10 §8,
 //! ARCH-PROC-03) and get a row in docs/18-api-contracts.md.
+//!
+//! Phase 2 adds the `settings.Custom3pSetup` namespace ([`setup`]): profiles, config
+//! read/write/apply, the merged view, health, the export bundle, and the setup-tab
+//! form schemas. Secrets cross this boundary as opaque handles, never as values.
 
 use serde::{Deserialize, Serialize};
+
+pub mod helper;
+pub mod setup;
 
 /// Commands the renderer may invoke. The set grows phase by phase and must never become
 /// a generic CRUD surface (docs/10 §4.3).

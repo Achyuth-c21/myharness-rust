@@ -17,6 +17,7 @@ import { useState } from "react";
 import { NavLink } from "react-router-dom";
 import { NAV_ITEMS } from "../routes";
 import { ModeSwitch } from "./ModeSwitch";
+import { openSetupWindow } from "../setup/client";
 
 interface Props {
   onOpenSettings: () => void;
@@ -258,12 +259,14 @@ export function Sidebar({ onOpenSettings, onOpenSearch }: Props) {
             >
               Language
             </button>
+            {/* The inference configuration lives in its own window
+                (docs/09 §2.1: "a separate Electron window, not a modal in the main
+                renderer"; docs/02 §3). Opening it is a bridge action, not a route. */}
             <button
               type="button"
               role="menuitem"
-              disabled
-              title="Separate setup-desktop-3p window — docs/02 §3"
               className="account-item"
+              onClick={() => void openSetupWindow()}
             >
               Inference configuration
             </button>
