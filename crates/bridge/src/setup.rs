@@ -621,7 +621,7 @@ mod tests {
         let mut document = backend.library().read(&id).unwrap();
         document.connection = myharness_config::Section(json!({
             "inferenceGatewayBaseUrl": "https://gateway.example",
-            "inferenceGatewayApiKey": "sk-ant-example-value",
+            "inferenceGatewayApiKey": "sk-ant-EXAMPLE-INLINE",
         }));
         backend.library().write(&document).unwrap();
 
@@ -630,7 +630,7 @@ mod tests {
             panic!("expected a profile response");
         };
         let text = document.to_string();
-        assert!(!text.contains("sk-ant-example-value"), "{text}");
+        assert!(!text.contains("sk-ant-EXAMPLE-INLINE"), "{text}");
     }
 
     /// A renderer write that carries an inline secret is refused.
@@ -640,7 +640,7 @@ mod tests {
         let mut document = backend.library().read(&id).unwrap();
         document.connection = myharness_config::Section(json!({
             "inferenceGatewayBaseUrl": "https://gateway.example",
-            "inferenceGatewayApiKey": "sk-ant-example-value",
+            "inferenceGatewayApiKey": "sk-ant-EXAMPLE-INLINE",
         }));
         let response = dispatch(
             &backend,
@@ -653,7 +653,7 @@ mod tests {
             panic!("expected an error response");
         };
         assert_eq!(error.code, "CONFIG_VALIDATION");
-        assert!(!error.message.contains("sk-ant-example-value"));
+        assert!(!error.message.contains("sk-ant-EXAMPLE-INLINE"));
     }
 
     /// A credential the user typed is stored in the keychain, and the document
@@ -668,7 +668,7 @@ mod tests {
         let mut secrets = BTreeMap::new();
         secrets.insert(
             "connection/inferenceGatewayApiKey".to_string(),
-            "sk-ant-typed-value".to_string(),
+            "sk-ant-EXAMPLE-TYPED".to_string(),
         );
         let response = dispatch(
             &backend,
@@ -681,7 +681,7 @@ mod tests {
             panic!("expected a profile response");
         };
         let text = document.to_string();
-        assert!(!text.contains("sk-ant-typed-value"), "{text}");
+        assert!(!text.contains("sk-ant-EXAMPLE-TYPED"), "{text}");
         assert!(text.contains("kind"), "the handle should be present: {text}");
     }
 

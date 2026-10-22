@@ -411,7 +411,7 @@ mod tests {
             provider: Some(ProviderKind::Gateway),
             connection: crate::Section(json!({
                 "inferenceGatewayBaseUrl": "https://gw.example/v1",
-                "inferenceGatewayApiKey": "sk-ant-example-value",
+                "inferenceGatewayApiKey": "sk-ant-EXAMPLE-INLINE",
                 "inferenceCustomHeaders": {
                     "X-Tenant": "acme",
                     "Authorization": "Bearer example",
@@ -429,7 +429,7 @@ mod tests {
             redacted["connection"]["inferenceGatewayApiKey"],
             json!(REDACTED)
         );
-        assert!(!redacted.to_string().contains("sk-ant-example-value"));
+        assert!(!redacted.to_string().contains("sk-ant-EXAMPLE-INLINE"));
     }
 
     /// A credential-shaped header entry is redacted; ordinary routing metadata is
@@ -520,7 +520,7 @@ mod tests {
         let _ = redact_document(&config);
         assert_eq!(
             config.connection.0["inferenceGatewayApiKey"],
-            json!("sk-ant-example-value")
+            json!("sk-ant-EXAMPLE-INLINE")
         );
     }
 }
