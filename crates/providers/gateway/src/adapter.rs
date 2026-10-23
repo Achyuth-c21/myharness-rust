@@ -713,6 +713,10 @@ impl TurnStreamImpl {
                     if usage.cache_write.is_some() {
                         self.usage.cache_write = usage.cache_write;
                     }
+                    // Every reported count survives the stream (`AI-USAGE-01`).
+                    if usage.web_search.is_some() {
+                        self.usage.web_search = usage.web_search;
+                    }
                 }
                 Ok(())
             }
@@ -854,6 +858,11 @@ impl TurnStreamImpl {
                     }
                     if usage.cache_write.is_some() {
                         self.usage.cache_write = usage.cache_write;
+                    }
+                    // Every reported count survives the stream
+                    // (`AI-USAGE-01`).
+                    if usage.web_search.is_some() {
+                        self.usage.web_search = usage.web_search;
                     }
                 }
                 Ok(())

@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 myharness-config = { path = "../config" }
+myharness-provider-anthropic = { path = "../providers/anthropic" }
 myharness-provider-gateway = { path = "../providers/gateway" }
 myharness-provider-sdk = { path = "../provider-sdk" }
 myharness-secrets = { path = "../secrets" }

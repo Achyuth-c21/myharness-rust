@@ -26,6 +26,7 @@
 
 use std::collections::BTreeMap;
 
+use myharness_provider_anthropic::AnthropicAdapter;
 use myharness_provider_gateway::{GatewayAdapter, GatewayClientConfig, ProbeStatus};
 use myharness_provider_sdk::{AuthContext, ErrorClass, ProviderAdapter, ProviderError};
 use serde::{Deserialize, Serialize};
@@ -317,15 +318,31 @@ impl SetupBackend for ConfigBackend {
         document: &ProfileDocument,
         typed: &BTreeMap<String, String>,
     ) -> Result<ProbeStatus, BridgeError> {
-        if document
-            .provider
-            .is_some_and(|provider| provider != ProviderKind::Gateway)
-        {
-            return Err(BridgeError::new(
+        match document.provider.unwrap_or(ProviderKind::Gateway) {
+            ProviderKind::Gateway => self.test_connection_gateway(document, typed),
+            ProviderKind::ClaudeApi => self.test_connection_claude_api(document, typed),
+            // The remaining families have no native adapter in this slice;
+            // their probe lanes arrive with their adapters (roadmap order:
+            // Bedrock, Vertex, Mantle, Foundry — `docs/13` Phase 3).
+            ProviderKind::Bedrock
+            | ProviderKind::BedrockMantle
+            | ProviderKind::Vertex
+            | ProviderKind::Foundry => Err(BridgeError::new(
                 "CONFIG_VALIDATION",
-                "this probe verifies the gateway provider only",
-            ));
+                "this probe verifies the gateway and Claude API families only",
+            )),
         }
+    }
+}
+
+impl ConfigBackend {
+    /// The gateway lane: the draft's gateway base URL and scheme decide the
+    /// wire; the credential resolves strictly in the family's slot.
+    fn test_connection_gateway(
+        &self,
+        document: &ProfileDocument,
+        typed: &BTreeMap<String, String>,
+    ) -> Result<ProbeStatus, BridgeError> {
         let connection = &document.connection.0;
         let base = connection
             .get("inferenceGatewayBaseUrl")
@@ -351,7 +368,13 @@ impl SetupBackend for ConfigBackend {
         // slot (typed value first, stored handle second), or the helper
         // script run once. An interactive sign-in cannot be probed and is
         // never emulated.
-        let credential = resolve_probe_credential(connection, typed, self.secrets.as_ref())?;
+        let credential = resolve_probe_credential(
+            connection,
+            typed,
+            self.secrets.as_ref(),
+            "inferenceGatewayApiKey",
+            true,
+        )?;
         let secret = match credential {
             ProbeCredential::Value(secret) => secret,
             ProbeCredential::Helper(config) => {
@@ -412,6 +435,128 @@ impl SetupBackend for ConfigBackend {
     }
 }
 
+impl ConfigBackend {
+    /// The Claude API lane (`docs/09` §2.2 "Claude API"; `docs/18` §6): the
+    /// family's native first-party endpoint with optional base URL — the
+    /// field's on-wire spelling is unverified
+    /// (`UNVERIFIED_ANTHROPIC_BASE_URL` in `crates/config/src/forms.rs`;
+    /// recorded in `docs/14` §9) — and the family's native `x-api-key` auth.
+    /// The credential kinds the family offers are static key and interactive
+    /// sign-in only; helper scripts are not part of this family's form
+    /// (`docs/12` §1).
+    fn test_connection_claude_api(
+        &self,
+        document: &ProfileDocument,
+        typed: &BTreeMap<String, String>,
+    ) -> Result<ProbeStatus, BridgeError> {
+        let connection = &document.connection.0;
+        let base: Option<String> = match connection.get("inferenceAnthropicBaseUrl") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(raw)) => {
+                let trimmed = raw.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            }
+            Some(other) => {
+                return Err(BridgeError::new(
+                    "CONFIG_VALIDATION",
+                    format!("the Anthropic base URL expects a string, found {other:?}"),
+                ));
+            }
+        };
+        let custom_headers = custom_headers_for_probe(connection)?;
+        let credential = resolve_probe_credential(
+            connection,
+            typed,
+            self.secrets.as_ref(),
+            "inferenceAnthropicApiKey",
+            false,
+        )?;
+        let secret = match credential {
+            ProbeCredential::Value(secret) => secret,
+            // The resolver refuses `helper-script` before any request for a
+            // family that does not offer it; this arm exists for exhaustiveness.
+            ProbeCredential::Helper(_) => {
+                return Err(BridgeError::new(
+                    "CONFIG_VALIDATION",
+                    "helper scripts are not offered for the Claude API family",
+                ));
+            }
+        };
+
+        let config = myharness_provider_anthropic::AnthropicClientConfig {
+            // Absent means the first-party host (`docs/12` §1); the adapter
+            // owns the default and the trailing-slash normalization.
+            base_url: base,
+            custom_headers,
+            // The Claude API card carries no idle-timeout field; the crate's
+            // documented default applies (`docs/14` §9).
+            idle_timeout: myharness_provider_anthropic::DEFAULT_IDLE_TIMEOUT,
+            betas: Vec::new(),
+        };
+        let adapter = AnthropicAdapter::new(config, reqwest::Client::new());
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| {
+                BridgeError::new(
+                    "CONFIG_IO",
+                    format!("the probe runtime could not start: {error}"),
+                )
+            })?;
+        runtime.block_on(async {
+            let auth_label = "setup test connection";
+            // Same probe shape as the gateway lane: the draft's legal model
+            // id, or discovery over the same credential to pick one. At most
+            // four requests travel in total (discovery pages + one inference).
+            let model_id = match first_legal_probe_model(connection) {
+                Some(model) => model,
+                None => {
+                    let models = adapter
+                        .list_models(&AuthContext::new(secret.clone(), auth_label))
+                        .await
+                        .map_err(bridge_provider_error)?;
+                    models
+                        .iter()
+                        .map(|model| model.key.model_id.clone())
+                        .find(|id| myharness_config::forms::validate_anthropic_model_id(id).is_ok())
+                        .ok_or_else(|| {
+                            BridgeError::new(
+                                "PROVIDER_ERROR",
+                                "the provider advertised no Anthropic-legal model for a probe",
+                            )
+                        })?
+                }
+            };
+            adapter
+                .probe_inference(&AuthContext::new(secret.clone(), auth_label), &model_id)
+                .await
+                .map_err(bridge_provider_error)
+                // The response type is the renderer's shared probe shape
+                // (`apps/desktop/src/setup/client.ts`): the field sets are
+                // identical, so the value maps field-for-field — no
+                // translation, just the typed seam.
+                .map(probe_status_to_renderer)
+        })
+    }
+}
+
+/// Map the Claude API adapter's probe verdict onto the setup response's probe
+/// type (`Probe { probe }`): identical fields, one typed seam.
+fn probe_status_to_renderer(status: myharness_provider_anthropic::ProbeStatus) -> ProbeStatus {
+    ProbeStatus {
+        ok: status.ok,
+        model: status.model,
+        stop_reason: status.stop_reason,
+        input_tokens: status.input_tokens,
+        output_tokens: status.output_tokens,
+        latency_ms: status.latency_ms,
+    }
+}
+
 /// The probe's credential source. `Helper` carries the configured helper; its
 /// script runs once inside `test_connection` and its output is never stored
 /// (a probe must not persist anything — the TTL/cache machinery belongs to
@@ -425,11 +570,15 @@ enum ProbeCredential {
 /// typed value first, the draft's own slot value second, a stored keychain
 /// handle last — and only one of them. A missing or unreachable credential is
 /// an error; nothing is substituted, nothing is executed, and no raw value is
-/// logged or carried in an error message.
+/// logged or carried in an error message. The slot key is the family's own
+/// spelling (`inferenceGatewayApiKey` / `inferenceAnthropicApiKey`), and
+/// `allow_helper` is the family's offered-kind set (`docs/12` §1).
 fn resolve_probe_credential(
     connection: &Value,
     typed: &BTreeMap<String, String>,
     store: &dyn SecretStore,
+    slot_key: &'static str,
+    allow_helper: bool,
 ) -> Result<ProbeCredential, BridgeError> {
     let kind = connection
         .get("inferenceCredentialKind")
@@ -441,6 +590,14 @@ fn resolve_probe_credential(
     match kind {
         "static" => {}
         "helper-script" => {
+            // A family whose form does not offer helper scripts refuses the
+            // kind outright (`docs/12` §1 credential-kind column).
+            if !allow_helper {
+                return Err(BridgeError::new(
+                    "CONFIG_VALIDATION",
+                    "helper scripts are not offered for this provider family",
+                ));
+            }
             let config = myharness_secrets::helper::HelperConfig::from_connection(connection)
                 .map_err(bridge_secret_error)?
                 .ok_or_else(|| {
@@ -469,7 +626,8 @@ fn resolve_probe_credential(
 
     // The static lane: the typed value wins, then the draft's own value, then
     // the keychain handle. `run` never subsitutes one for another.
-    if let Some(value) = typed.get("connection/inferenceGatewayApiKey") {
+    let typed_key = format!("connection/{slot_key}");
+    if let Some(value) = typed.get(&typed_key) {
         let trimmed = value.trim();
         if !trimmed.is_empty() {
             return Ok(ProbeCredential::Value(secrecy::SecretString::from(
@@ -477,7 +635,7 @@ fn resolve_probe_credential(
             )));
         }
     }
-    match connection.get("inferenceGatewayApiKey") {
+    match connection.get(slot_key) {
         Some(Value::String(value)) => {
             let trimmed = value.trim();
             if trimmed.is_empty() {
@@ -1224,12 +1382,15 @@ mod tests {
         document
     }
 
-    /// The probe refuses a draft for another family before anything sends.
+    /// The probe refuses a draft for a family whose adapter is not in the
+    /// build yet, before anything sends. The probe-capable families unlock
+    /// one adapter at a time (roadmap order, `docs/13` Phase 3): gateway,
+    /// then the Claude API family, then Bedrock, Vertex, Mantle, Foundry.
     #[test]
-    fn test_connection_refuses_a_non_gateway_draft() {
+    fn test_connection_refuses_an_unreleased_family_draft() {
         let (backend, id) = backend();
         let mut document = backend.library().read(&id).unwrap();
-        document.provider = Some(ProviderKind::ClaudeApi);
+        document.provider = Some(ProviderKind::Bedrock);
         let response = dispatch(
             &backend,
             SetupCommand::TestConnection {
@@ -1241,7 +1402,9 @@ mod tests {
             panic!("expected an error response");
         };
         assert_eq!(error.code, "CONFIG_VALIDATION");
-        assert!(error.message.contains("verifies the gateway provider only"));
+        assert!(error
+            .message
+            .contains("verifies the gateway and Claude API families only"));
 
         // The draft never changed: the probe must not persist anything.
         let reread = backend.library().read(&id).unwrap();
@@ -1550,5 +1713,224 @@ mod tests {
         assert_eq!(stub.hits(), 1);
         // A probe must not persist anything: the helper's output was never
         // written to the keychain under a draft-only account.
+    }
+
+    /// A Claude API draft over a live stub, pointed at the family's optional
+    /// base URL field (the field's spelling is a `docs/14` §9 unknown — the
+    /// rebuild contract writes `inferenceAnthropicBaseUrl`).
+    fn claude_document(stub: &str) -> ProfileDocument {
+        let (backend, id) = backend();
+        let mut document = backend.library().read(&id).unwrap();
+        document.provider = Some(ProviderKind::ClaudeApi);
+        document.connection = myharness_config::Section(json!({
+            "inferenceAnthropicBaseUrl": stub,
+            "inferenceAnthropicApiKey": "sk-ant-EXAMPLE-FAMILY",
+            "inferenceModels": ["claude-opus-4-1"],
+        }));
+        document
+    }
+
+    /// A Claude API completion for the stub: the same native one-token probe
+    /// answer any Anthropic Messages host gives.
+    fn claude_completion() -> serde_json::Value {
+        json!({
+            "model": "claude-opus-4-1",
+            "content": [ { "type": "text", "text": "pong" } ],
+            "stop_reason": "end_turn",
+            "usage": { "input_tokens": 3, "output_tokens": 1 }
+        })
+    }
+
+    /// `TEST-SETUP-CFG-001` (claude-api lane) — the probe verifies the Claude
+    /// API family through its native adapter: a real inference, the probe
+    /// result intact, nothing persisted.
+    #[test]
+    fn test_connection_probes_the_claude_api_family() {
+        let stub = StubGateway::serve(vec![canned(
+            200,
+            "application/json",
+            &response_bytes(&claude_completion()),
+        )]);
+        let document = claude_document(&stub.base);
+        let (backend, _id) = backend();
+        let response = dispatch(
+            &backend,
+            SetupCommand::TestConnection {
+                document: serde_json::to_value(document).unwrap(),
+                secrets: BTreeMap::new(),
+            },
+        );
+        let SetupResponse::Probe { probe } = response else {
+            panic!("expected a probe response");
+        };
+        assert!(probe.ok);
+        assert_eq!(probe.model, "claude-opus-4-1");
+        assert_eq!(probe.input_tokens, 3);
+        assert_eq!(probe.output_tokens, 1);
+        assert!(probe.latency_ms > 0);
+        assert_eq!(stub.hits(), 1, "one-token inference, no discovery");
+    }
+
+    /// The family's own slot key decides the lane: the typed value under
+    /// `connection/inferenceAnthropicApiKey` is the one sent, and a gateway-
+    /// slot typed value alone is not a Claude API credential.
+    #[test]
+    fn claude_api_probe_uses_the_family_slot() {
+        // The draft slot carries a DECOY handle with no stored secret; only
+        // the typed family value can succeed — proving it is the one used.
+        let stub = StubGateway::serve(vec![canned(
+            200,
+            "application/json",
+            &response_bytes(&claude_completion()),
+        )]);
+        let mut document = claude_document(&stub.base);
+        document.connection.0.as_object_mut().unwrap().insert(
+            "inferenceAnthropicApiKey".to_string(),
+            json!({ "kind": "keychain", "service": "probe", "account": "decoy/account" }),
+        );
+        let (backend, _id) = backend();
+        let mut secrets = BTreeMap::new();
+        secrets.insert(
+            "connection/inferenceAnthropicApiKey".to_string(),
+            "sk-ant-EXAMPLE-TYPED".to_string(),
+        );
+        let response = dispatch(
+            &backend,
+            SetupCommand::TestConnection {
+                document: serde_json::to_value(document).unwrap(),
+                secrets,
+            },
+        );
+        let SetupResponse::Probe { probe } = response else {
+            panic!("expected a probe response");
+        };
+        assert!(probe.ok, "the typed family value must be the one used");
+        assert_eq!(stub.hits(), 1);
+
+        // A gateway slot alone is not this family's credential: no Claude
+        // API credential resolves, nothing sends.
+        let (fresh, _id) = backend_again();
+        let mut document = {
+            let mut document = claude_document("https://gateway.example");
+            document
+                .connection
+                .0
+                .as_object_mut()
+                .unwrap()
+                .remove("inferenceAnthropicApiKey");
+            document
+        };
+        document.connection.0.as_object_mut().unwrap().insert(
+            "inferenceGatewayApiKey".to_string(),
+            json!("sk-ant-EXAMPLE-GATEWAY-ONLY"),
+        );
+        let response = dispatch(
+            &fresh,
+            SetupCommand::TestConnection {
+                document: serde_json::to_value(document).unwrap(),
+                secrets: BTreeMap::new(),
+            },
+        );
+        let SetupResponse::Error { error } = response else {
+            panic!("expected an error response");
+        };
+        assert_eq!(error.code, "CONFIG_VALIDATION");
+        assert!(error.message.contains("a credential is required"));
+    }
+
+    /// The Claude API family's offered kinds are static and interactive only
+    /// (`docs/12` §1): a helper-script draft is refused before any request.
+    #[test]
+    fn claude_api_probe_refuses_helper_and_interactive_without_a_request() {
+        // Helper: not offered for this family.
+        let stub = StubGateway::serve(Vec::new());
+        let mut document = claude_document(&stub.base);
+        let connection = document.connection.0.as_object_mut().unwrap();
+        connection.insert(
+            "inferenceCredentialKind".to_string(),
+            json!("helper-script"),
+        );
+        connection.insert("inferenceCredentialHelper".to_string(), json!("/bin/echo"));
+        let (backend, _id) = backend();
+        let response = dispatch(
+            &backend,
+            SetupCommand::TestConnection {
+                document: serde_json::to_value(document).unwrap(),
+                secrets: BTreeMap::new(),
+            },
+        );
+        let SetupResponse::Error { error } = response else {
+            panic!("expected an error response");
+        };
+        assert_eq!(error.code, "CONFIG_VALIDATION");
+        assert!(
+            error.message.contains("helper scripts are not offered"),
+            "the refusal names the family's kinds: {error:?}"
+        );
+        assert_eq!(stub.hits(), 0);
+
+        // Interactive: the family offers the sign-in, but the probe cannot
+        // complete one, and nothing is emulated (`docs/14` §9).
+        let mut document = claude_document(&stub.base);
+        document
+            .connection
+            .0
+            .as_object_mut()
+            .unwrap()
+            .insert("inferenceCredentialKind".to_string(), json!("interactive"));
+        let response = dispatch(
+            &backend,
+            SetupCommand::TestConnection {
+                document: serde_json::to_value(document).unwrap(),
+                secrets: BTreeMap::new(),
+            },
+        );
+        let SetupResponse::Error { error } = response else {
+            panic!("expected an error response");
+        };
+        assert_eq!(error.code, "CONFIG_VALIDATION");
+        assert!(error.message.contains("interactive sign-in"));
+        assert_eq!(stub.hits(), 0, "nothing sent");
+    }
+
+    /// The Claude API probe's discovery fallback: an empty model list runs
+    /// the native listing first and infers against a policy-legal row.
+    #[test]
+    fn claude_api_probe_discovers_when_the_draft_has_no_models() {
+        let listing = json!({
+            "data": [
+                { "id": "claude-opus-4-1", "display_name": "Opus 4.1" }
+            ],
+            "has_more": false,
+        });
+        let stub = StubGateway::serve(vec![
+            canned(200, "application/json", &response_bytes(&listing)),
+            canned(
+                200,
+                "application/json",
+                &response_bytes(&claude_completion()),
+            ),
+        ]);
+        let mut document = claude_document(&stub.base);
+        document
+            .connection
+            .0
+            .as_object_mut()
+            .unwrap()
+            .remove("inferenceModels");
+        let (backend, _id) = backend();
+        let response = dispatch(
+            &backend,
+            SetupCommand::TestConnection {
+                document: serde_json::to_value(document).unwrap(),
+                secrets: BTreeMap::new(),
+            },
+        );
+        let SetupResponse::Probe { probe } = response else {
+            panic!("expected a probe response");
+        };
+        assert!(probe.ok, "discovery picked the policy-legal model");
+        assert_eq!(probe.model, "claude-opus-4-1");
+        assert_eq!(stub.hits(), 2, "one listing, one inference — nothing else");
     }
 }

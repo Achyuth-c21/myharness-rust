@@ -27,6 +27,7 @@ import {
   type ProfileSummary,
   type Schema,
   type SetupTab,
+  type ProviderKind,
 } from "./client";
 import "./setup.css";
 
@@ -128,7 +129,7 @@ export default function SetupWindow() {
     setIssues([]);
   }, []);
 
-  const loadSchemas = useCallback(async (provider: string | null) => {
+  const loadSchemas = useCallback(async (provider: ProviderKind | null) => {
     const tabs = await Promise.all(
       TABS.map(async (entry) => {
         const response = await setup({ type: "tabSchema", tab: entry.id });
@@ -142,7 +143,7 @@ export default function SetupWindow() {
     if (provider) {
       const response = await setup({
         type: "connectionSchema",
-        provider: provider as "gateway",
+        provider,
       });
       if (response.type === "schema") next.connection = response.schema;
     }
@@ -272,9 +273,10 @@ export default function SetupWindow() {
 
   /**
    * The *Test connection*: a real one-token inference through the native
-   * adapter (docs/13 Phase 3). The typed credential rides the secrets map
-   * exactly like the apply path; nothing here persists. The wire spelling of
-   * the auth scheme is the contract's own (bearer / x-api-key).
+   * adapter of the draft's family (docs/13 Phase 3 — gateway, then the
+   * Claude API family). The typed credential rides the secrets map exactly
+   * like the apply path; nothing here persists. The adapter owns every
+   * header the family's contract defines.
    */
   const runProbe = async () => {
     if (!draft) return;
@@ -288,12 +290,20 @@ export default function SetupWindow() {
     }
     if (response.type !== "probe") return;
     const { probe } = response;
+    // The note names the family whose adapter ran this probe; the verdict
+    // itself is the shared typed shape.
+    const familyLabel =
+      draft.provider === "anthropic"
+        ? "Claude API"
+        : draft.provider === "gateway"
+          ? "Gateway"
+          : /* family-agnostic for anything else */ "provider";
     setProbeNote(
       probe.ok
-        ? `Connected. The gateway ran ${probe.model} (${probe.latencyMs} ms, ` +
+        ? `Connected. The ${familyLabel} adapter ran ${probe.model} (${probe.latencyMs} ms, ` +
           `${probe.inputTokens} in / ${probe.outputTokens} out` +
           `${probe.stopReason ? `, stop ${probe.stopReason}` : ""}).`
-        : "The gateway answered but the probe did not complete.",
+        : `The ${familyLabel} adapter answered but the probe did not complete.`,
     );
   };
 
@@ -454,17 +464,21 @@ export default function SetupWindow() {
                 {tab === "connection" ? (
                   <div className="setup-section-actions">
                     {/* A real one-token inference through the native adapter
-                        (docs/13 Phase 3). The probe exists for the gateway
-                        family; other families keep it disabled rather than
-                        faked. */}
+                        of the selected family (docs/13 Phase 3, slice per
+                        adapter: gateway, then the Claude API family). Other
+                        families keep the button disabled until their
+                        adapters land rather than faked. */}
                     <button
                       type="button"
                       className="setup-secondary-button"
-                      disabled={probing || draft?.provider !== "gateway"}
+                      disabled={
+                        probing ||
+                        (draft?.provider !== "gateway" && draft?.provider !== "anthropic")
+                      }
                       onClick={() => void runProbe()}
                       title={
-                        draft?.provider !== "gateway"
-                          ? "The gateway provider is the only family the probe verifies"
+                        draft?.provider !== "gateway" && draft?.provider !== "anthropic"
+                          ? "The probe verifies the gateway and Claude API families; other families unlock with their adapters"
                           : undefined
                       }
                     >

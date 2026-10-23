@@ -166,12 +166,13 @@ export type SetupCommand =
 
 /**
  * The *Test connection* verdict: a real probe inference (docs/13 Phase 3).
- * `ok` means the gateway answered for the requested model; exact usage,
- * latency, and the native stop reason ride along.
+ * `ok` means the provider answered for the requested model; exact usage,
+ * latency, and the native stop reason ride along. The shape is shared by
+ * every probe-capable family, so the setup window stays family-agnostic.
  */
 export interface ProbeStatus {
   ok: boolean;
-  /** The model the gateway says it ran (== the requested id). */
+  /** The model the provider says it ran (== the requested id). */
   model: string;
   /** The native stop reason, preserved. */
   stopReason: string | null;

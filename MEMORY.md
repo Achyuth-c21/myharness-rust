@@ -180,9 +180,10 @@ sits in the tree, referenced by nothing - owner decision pending; do not delete 
 
 ## 7c. Phase 3 state (2026-10-23)
 
-Phase 3 ("Provider adapters", `docs/13` §5) slice 1 is implemented on the `phase-3` lane
-(cut from `dev` @ `2d2a840`), not yet committed at review time and not merged. `docs/17`
-(§4.10 rows) and `docs/14` §9 items 21–23 were updated on disk, never committed.
+Phase 3 ("Provider adapters", `docs/13` §5) is implemented on the `phase-3` lane
+(cut from `dev` @ `2d2a840`), stacked commits, not merged and not pushed. Slices 1–2
+(through the Claude API adapter) are done. `docs/17` (§4.10 rows) and `docs/14` §9 items
+21–26 are updated on disk per the standing policy, never committed.
 
 | Slice | Shipped |
 |---|---|
@@ -190,6 +191,14 @@ Phase 3 ("Provider adapters", `docs/13` §5) slice 1 is implemented on the `phas
       discovery + `/v1/messages` SSE + probe + count_tokens), the `TEST-AI` wire battery
       (23 fixtures), `crates/bridge::helper` discovery delegation, `settings.Custom3pSetup`
       `testConnection` command + renderer wiring (Test connection performs a real inference) |
+| 2 | `crates/providers/anthropic` — the Claude API family's native adapter (own crate, no
+      shared code with the gateway crate beyond the sdk contract): first-party
+      `api.anthropic.com/v1/messages` + `/v1/models` discovery + native
+      `/v1/messages/count_tokens`, `x-api-key` auth with no scheme field, 21-fixture wire
+      battery + 10 unit tests. Setup probe lane widened to `ProviderKind::ClaudeApi`
+      (family-aware credential slot `inferenceAnthropicApiKey`; helper kind refused — the
+      family offers static/interactive only). Renderer Test connection unlocked for
+      `"gateway" | "anthropic"`. |
 
 Durable traps and decisions worth not rediscovering:
 
@@ -209,6 +218,29 @@ Durable traps and decisions worth not rediscovering:
 - **The helper credential path must use `run_helper`, not `HelperResolver`** for probe
   paths: the resolver writes fetched credentials to the keychain, and a probe must not
   persist anything.
+- **`ProviderKind::ClaudeApi` serializes as `"anthropic"`** (docs/12 §1's family id), not
+  `"claude-api"` — the renderer draft `provider` field and every serde round-trip key on
+  that spelling.
+- **The probe lane functions split per family** (`test_connection_gateway` /
+  `test_connection_claude_api` as inherent `ConfigBackend` methods): a `match` arm lives
+  in the trait impl, everything else must be inherent — extra fns inside a trait impl
+  fail with E0407, not a borrow error.
+- **The two ad-hoc local SSE mock servers (gateway wire.rs, anthropic wire.rs, bridge
+  StubGateway) share a design, not code** — deliberately: adapters must not grow common
+  transport plumbing that could drift into a shared gateway-shaped client.
+- **Slice 2 decisions recorded in `docs/14` §9 items 24–26, summarized:** first-party
+  discovery sends **no `limit` param** (the gateway's `limit=1000` is the gateway
+  section's URL shape; the family's page size was never captured — a shape-tolerant page
+  parse covers `data`/`models` + `id`/`model`/`name` + a cursor under
+  `after_id`/`next_cursor`/`last_id`); the Claude API idle default applies the app's
+  300-second reading (the family's own shipped default was not separately captured);
+  health_check uses the plain first listing page (no injected `?limit=1` — a
+  gateway-crate convenience reading not carried into the newer crate).
+- **rustfmt drift is pre-existing and repo-wide (~61 files at `e37e08a`):** the
+  2026-10-13 stable toolchain formats committed code differently than the toolchain the
+  earlier gates ran on (config/secrets/app-shell/src-tauri all diff; verified via a HEAD
+  worktree). Slice 2 formatted only its own files; reconciling the repo is a separate,
+  explicit task — do not run bare `cargo fmt --check` as a slice gate until it happens.
 
 ## 8. Status vocabulary (`docs/17`)
 
