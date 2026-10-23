@@ -2183,6 +2183,7 @@ dependencies = [
  "myharness-provider-anthropic",
  "myharness-provider-bedrock",
  "myharness-provider-gateway",
+ "myharness-provider-openai",
  "myharness-provider-sdk",
  "myharness-secrets",
  "reqwest 0.12.28",

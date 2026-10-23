@@ -50,11 +50,13 @@ Source of truth: `STACK.md` and `docs/21-repo-layout.md`.
 - **MCP:** Rust MCP SDK (`rmcp`).
 - **Storage:** SQLite in WAL mode; `keyring` for secrets, `secrecy`/`zeroize` for handling.
 - **Terminal:** `portable-pty`.
-- **Workspace:** 25 members — `crates/{agent,app-shell,artifacts,bridge,config,mcp,plugins,
+- **Workspace:** 26 members — `crates/{agent,app-shell,artifacts,bridge,config,mcp,plugins,
   projects,protocol-core,provider-sdk,scheduler,search,secrets,sessions,shared,skills,store,
   telemetry,updates}` plus `crates/providers/{anthropic,bedrock,bedrock-mantle,foundry,
-  gateway}` and `apps/desktop` (renderer + `src-tauri` shell). (The `providers/vertex`
-  member was removed from rebuild scope at the owner's direction, 2026-10-23 — `docs/04` §3.1.)
+  gateway,openai}` and `apps/desktop` (renderer + `src-tauri` shell). (`providers/vertex`
+  was removed from rebuild scope at the owner's direction, 2026-10-23 — `docs/04` §3.1;
+  `providers/openai` was added by the open-model-layer owner decision, 2026-10-23 —
+  `docs/17` §4.14.)
 
 > **Known doc conflict:** `docs/13` §2 still prescribes Electron/TypeScript, while `STACK.md`,
 > `docs/21`, the Cargo workspace, and the code are Tauri/Rust. **Follow `STACK.md` and
