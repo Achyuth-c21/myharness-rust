@@ -53,6 +53,9 @@ keyring = "3"
 secrecy = { version = "0.10", features = ["serde"] }
 zeroize = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
+sha2 = "0.10"
+hmac = "0.12"
+rand = "0.8"
 portable-pty = "0.8"
 tauri = "2"
 tauri-build = "2"
