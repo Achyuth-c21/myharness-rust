@@ -284,21 +284,26 @@ fn an_injection_shaped_title_stores_as_data() {
     assert!(probe.store.read_session(&listed[0].id).is_ok());
 }
 
-/// Legal hold: deletion refuses while the hold stands and releases only
-/// explicitly (`TEST-DATA-005`).
+/// Legal hold: deletion refuses while the hold stands, the hold survives a
+/// restart, and it releases only explicitly (`TEST-DATA-005`).
 #[test]
-fn legal_hold_blocks_delete_until_released() {
+fn legal_hold_survives_restart_and_blocks_delete_until_released() {
     let probe = TestStore::new();
     let created = probe.fresh_session("held");
     probe.store.set_legal_hold(&created.id, true).unwrap();
+
+    drop(probe.store);
+    let reopened = Store::open(&probe.db_path, &probe.files_dir).expect("reopen");
     assert!(matches!(
-        probe.store.delete_session(&created.id),
+        reopened.delete_session(&created.id),
         Err(StoreError::LegalHold)
     ));
-    probe.store.set_legal_hold(&created.id, false).unwrap();
-    probe.store.delete_session(&created.id).unwrap();
+    assert!(reopened.read_session(&created.id).unwrap().legal_hold);
+
+    reopened.set_legal_hold(&created.id, false).unwrap();
+    reopened.delete_session(&created.id).unwrap();
     assert!(matches!(
-        probe.store.read_session(&created.id),
+        reopened.read_session(&created.id),
         Err(StoreError::NotFound)
     ));
 }
