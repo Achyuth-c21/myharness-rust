@@ -431,3 +431,48 @@ branch. `evidence/app-asar-orig/` is git-ignored by design.
     must print nothing; abort the push otherwise.
   - Slice-1 commit was re-cut to `d25005c` (code only) to honor this; the doc content lives in
     the worktree.
+
+## 7e. Phase 4 slice 1 — the persistence core (2026-10-24)
+
+The `phase-4` lane (cut from `dev` @ `77b6bb3`) implemented the first slice of
+`docs/13` Phase 4: `crates/store` (`fc2e62a`) and `crates/sessions` (`bdc472d`).
+What is durable about it, so a later agent does not re-derive or contradict it:
+
+- **The store is the rebuild's data truth, not a port of the shipped layout.**
+  `docs/11` §4 (per-session `local_<uuid>.json` + `audit.jsonl` +
+  `.audit-key`) stays the preservation baseline; the schema is `docs/11` §14's
+  normalized model. 1:1 session-JSON parity is deliberately not attempted.
+  Turn content lives in a content-addressed blob store (`sha256` names, reads
+  and deletes validate the hex shape before touching a path); rows reference
+  blobs by hash, `list_turns` never loads content bytes.
+- **Migrations are forward-only with no down path.** A database written by a
+  newer build refuses to open (`SchemaAhead`) untouched. Unknown session fields
+  survive round-trips in `sessions.payload` (`TEST-DATA-001`). The supported
+  version constant is pinned to the last migration by a unit test.
+- **Corrupt-row policy is quarantine-then-fail-read.** The row moves to
+  `quarantined_records`, the read returns `QuarantinedRecord { source_table,
+  source_id }`, and the retry lists survivors. Never a silent skip; never an
+  in-place repair. A corrupt database *file* is renamed `<name>.corrupt-<ms>`
+  (never deleted) and `CorruptDatabase` is returned. Only real corruption
+  signals trigger that path (`DatabaseCorrupt` / `SQLITE_NOTADB`); I/O and
+  permission errors stay distinguishable.
+- **Audit keys never live in the database.** `AuditKeyStore` is the seam; the
+  slice-1 implementation is process memory with OS-random 32-byte keys. The
+  keychain implementation lands with the secrets work (`TEST-CFG-006` remains
+  compile-verified only). The chain adds a `prev_hmac` link the captures do not
+  show — an implementation refinement, recorded as such in `docs/17` §4.15.
+- **Delete honors legal hold and sweeps what it owns**: rows (one transaction,
+  cascade), transcript blobs, and the audit key. Uploads/outputs/preview are
+  artifact-phase scope, not this slice's.
+- **Statuses are tracked in `docs/17` §4.15** (18 rows): Available =
+  quarantine, chain, migrations, legal hold; Partial = `TEST-SESSION-001`
+  (persistence half), 004, 007, `TEST-DATA-002`/`007`/`010`; Unknown =
+  retention, aggregation, drafts, backup/export, Code worktrees.
+- **`crates/protocol-core` stays a scaffold on purpose.** The turn types live
+  in `myharness-provider-sdk` (Phase 3 put them there); protocol-core becomes a
+  re-export facade only if the agent layer wants an app-side name. Do not
+  create a second truth for `TurnEvent`.
+
+Next slice (not started): the agent loop over `NativeTurnRequest`/`TurnEvent` —
+one turn, no tools (tools/approvals are MCP-phase work), cancellation, and
+`TEST-SESSION-001`'s send/stream/stop clauses plus `TEST-SESSION-002`.
