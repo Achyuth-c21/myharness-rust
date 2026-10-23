@@ -166,6 +166,18 @@ Phase 2 ("Configuration, profiles, and setup window", `docs/13` §4) is implemen
   `apps/desktop`); without it every case fails with `ERR_CONNECTION_REFUSED`,
   which looks like a regression but is not (`MEMORY.md` §3 trap #13).
 
+### 7c. Phase-2 verification sweep (2026-10-23, post-merge)
+
+All gates re-run on merged `dev` (HEAD `2d2a840`): cargo workspace 118/118, tsc clean,
+vite build OK, E2E `shell.spec.mjs` ALL PASS (T01-32), `setup-window.spec.mjs` 16/16
+(S01-16), native fixture 19/19 (R1-7 incl. dedicated setup window). Phase 2 is complete
+per `docs/13` §4 exit criteria with the four recorded deferrals (`docs/14` §9): bootstrap
+transport, catalog signature, inference probe (Phase 3), keychain-less fallback.
+Setup-window deep-link grammar for manual runs: second launch
+`target/debug/myharness-desktop myharness://setup-desktop-3p` (needs `MYHARNESS_DIST`).
+An untracked stray `apps/desktop/src/components/Untitled-1` (a C file, editor artifact)
+sits in the tree, referenced by nothing - owner decision pending; do not delete on my own.
+
 ## 8. Status vocabulary (`docs/17`)
 
 `Available` · `Available, unexercised` · `Partial` · `Policy-disabled` · `Unavailable` ·
