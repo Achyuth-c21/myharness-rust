@@ -181,9 +181,9 @@ sits in the tree, referenced by nothing - owner decision pending; do not delete 
 ## 7c. Phase 3 state (2026-10-23)
 
 Phase 3 ("Provider adapters", `docs/13` §5) is implemented on the `phase-3` lane
-(cut from `dev` @ `2d2a840`), stacked commits, not merged and not pushed. Slices 1–2
-(through the Claude API adapter) are done. `docs/17` (§4.10 rows) and `docs/14` §9 items
-21–26 are updated on disk per the standing policy, never committed.
+(cut from `dev` @ `2d2a840`), stacked commits, not merged and not pushed. Slices 1–3
+(through the Bedrock adapter) are done. `docs/17` (§4.10–§4.12 rows) and `docs/14` §9
+items 21–27 are updated on disk per the standing policy, never committed.
 
 | Slice | Shipped |
 |---|---|
@@ -199,6 +199,19 @@ Phase 3 ("Provider adapters", `docs/13` §5) is implemented on the `phase-3` lan
       (family-aware credential slot `inferenceAnthropicApiKey`; helper kind refused — the
       family offers static/interactive only). Renderer Test connection unlocked for
       `"gateway" | "anthropic"`. |
+| 3 | `crates/providers/bedrock` — the Bedrock Runtime surface's native adapter (own crate):
+      `POST /model/{id-or-arn}/invoke[-with-response-stream]` with the Anthropic Messages
+      grammar minus the `model` field plus `"anthropic_version": "bedrock-2023-05-31"`,
+      AWS EventStream binary framing (CRC-32C Castagnoli, encode + incremental decoder;
+      1 MiB / <16-byte frame refusals), `nextToken` control-plane discovery on
+      `/foundation-models` with no invented parameters, no native token count (explicit
+      refusal, never an estimate), conditional model echo (an answer without a `model`
+      field is not a refusal), 22 wire fixtures + 12 unit tests (published CRC-32C
+      vector + hand-assembled frames). Setup lane `test_connection_bedrock`
+      (`inferenceBedrockBearerToken` slot, helper kind allowed, `sso`/`external-idp`/
+      `vendor-profile` refused fail-closed; region required; one base override answers
+      both surfaces). `validate_bedrock_model_id` became `pub` (the family policy gate).
+      Renderer Test connection unlocked for `"gateway" | "anthropic" | "bedrock"`. |
 
 Durable traps and decisions worth not rediscovering:
 
@@ -236,11 +249,26 @@ Durable traps and decisions worth not rediscovering:
   300-second reading (the family's own shipped default was not separately captured);
   health_check uses the plain first listing page (no injected `?limit=1` — a
   gateway-crate convenience reading not carried into the newer crate).
+- **Slice 3 (Bedrock) decisions recorded in `docs/14` §9 item 27, summarized:** the
+  family's wire was never observed, so the adapter's contract is one pinned reading —
+  runtime host `bedrock-runtime.{region}.amazonaws.com` + control host
+  `bedrock.{region}.amazonaws.com` (the single `inferenceBedrockBaseUrl` override
+  replaces both); the body is the Anthropic grammar **without `model`** (the path
+  carries the model or ARN, `/` pct-encoded, `:` kept); auth is a plain
+  `Authorization: Bearer`; streaming is AWS EventStream binary frames (CRC-32C) whose
+  payloads are Anthropic event JSON; empty-payload frames are keep-alives that never
+  reset the idle window; exception envelopes map by name under
+  `__type`/`reason`/wrapped `Output`; **a beta-carrying request is refused visibly**
+  (no recorded beta transport — dropping silently would be the `AI-ADAPTER-07` mode in
+  reverse). `NativeStopReason::parse("guardrail_intervened")`-class unknown stop
+  spellings stay `Other` verbatim — preserving the native wording beats reclassifying.
 - **rustfmt drift is pre-existing and repo-wide (~61 files at `e37e08a`):** the
   2026-10-13 stable toolchain formats committed code differently than the toolchain the
   earlier gates ran on (config/secrets/app-shell/src-tauri all diff; verified via a HEAD
-  worktree). Slice 2 formatted only its own files; reconciling the repo is a separate,
-  explicit task — do not run bare `cargo fmt --check` as a slice gate until it happens.
+  worktree). Slices 2–3 formatted only their own files; reconciling the repo is a
+  separate, explicit task — do not run bare `cargo fmt --check` as a slice gate until
+  it happens. (`bridge/src/lib.rs` and `config/src/lib.rs` still diff under
+  `cargo fmt --check`; their slice-3 edits were kept format-clean by hand.)
 
 ## 8. Status vocabulary (`docs/17`)
 

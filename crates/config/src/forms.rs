@@ -331,8 +331,10 @@ fn is_alnum(byte: u8) -> bool {
 /// Bedrock model-ID shape (`docs/09` §2.2): `anthropic.*` IDs or Bedrock language-
 /// model inference / provisioned ARNs. The UI additionally warns that profile/ARN
 /// models are unverified — callers append that warning themselves (see
-/// [`validate_connection`]).
-fn validate_bedrock_model_id(id: &str) -> Result<(), String> {
+/// [`validate_connection`]). `pub` so the family's own adapter can enforce the
+/// policy it cites (`docs/12` §2.2; the Claude API predicate is `pub` for the
+/// same reason).
+pub fn validate_bedrock_model_id(id: &str) -> Result<(), String> {
     let id = id.trim();
     if id.is_empty() {
         return Err("model id must be non-empty".to_string());

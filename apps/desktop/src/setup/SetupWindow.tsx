@@ -273,8 +273,8 @@ export default function SetupWindow() {
 
   /**
    * The *Test connection*: a real one-token inference through the native
-   * adapter of the draft's family (docs/13 Phase 3 — gateway, then the
-   * Claude API family). The typed credential rides the secrets map exactly
+   * adapter of the draft's family (docs/13 Phase 3 — gateway, the Claude API
+   * family, then Bedrock). The typed credential rides the secrets map exactly
    * like the apply path; nothing here persists. The adapter owns every
    * header the family's contract defines.
    */
@@ -295,9 +295,11 @@ export default function SetupWindow() {
     const familyLabel =
       draft.provider === "anthropic"
         ? "Claude API"
-        : draft.provider === "gateway"
-          ? "Gateway"
-          : /* family-agnostic for anything else */ "provider";
+        : draft.provider === "bedrock"
+          ? "Bedrock"
+          : draft.provider === "gateway"
+            ? "Gateway"
+            : /* family-agnostic for anything else */ "provider";
     setProbeNote(
       probe.ok
         ? `Connected. The ${familyLabel} adapter ran ${probe.model} (${probe.latencyMs} ms, ` +
@@ -465,20 +467,24 @@ export default function SetupWindow() {
                   <div className="setup-section-actions">
                     {/* A real one-token inference through the native adapter
                         of the selected family (docs/13 Phase 3, slice per
-                        adapter: gateway, then the Claude API family). Other
-                        families keep the button disabled until their
-                        adapters land rather than faked. */}
+                        adapter: gateway, the Claude API family, then
+                        Bedrock). Other families keep the button disabled
+                        until their adapters land rather than faked. */}
                     <button
                       type="button"
                       className="setup-secondary-button"
                       disabled={
                         probing ||
-                        (draft?.provider !== "gateway" && draft?.provider !== "anthropic")
+                        (draft?.provider !== "gateway" &&
+                          draft?.provider !== "anthropic" &&
+                          draft?.provider !== "bedrock")
                       }
                       onClick={() => void runProbe()}
                       title={
-                        draft?.provider !== "gateway" && draft?.provider !== "anthropic"
-                          ? "The probe verifies the gateway and Claude API families; other families unlock with their adapters"
+                        draft?.provider !== "gateway" &&
+                        draft?.provider !== "anthropic" &&
+                        draft?.provider !== "bedrock"
+                          ? "The probe verifies the gateway, Claude API, and Bedrock families; other families unlock with their adapters"
                           : undefined
                       }
                     >

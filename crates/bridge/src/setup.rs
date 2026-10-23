@@ -321,16 +321,16 @@ impl SetupBackend for ConfigBackend {
         match document.provider.unwrap_or(ProviderKind::Gateway) {
             ProviderKind::Gateway => self.test_connection_gateway(document, typed),
             ProviderKind::ClaudeApi => self.test_connection_claude_api(document, typed),
+            ProviderKind::Bedrock => self.test_connection_bedrock(document, typed),
             // The remaining families have no native adapter in this slice;
             // their probe lanes arrive with their adapters (roadmap order:
-            // Bedrock, Vertex, Mantle, Foundry — `docs/13` Phase 3).
-            ProviderKind::Bedrock
-            | ProviderKind::BedrockMantle
-            | ProviderKind::Vertex
-            | ProviderKind::Foundry => Err(BridgeError::new(
-                "CONFIG_VALIDATION",
-                "this probe verifies the gateway and Claude API families only",
-            )),
+            // Vertex, Mantle, Foundry — `docs/13` Phase 3).
+            ProviderKind::BedrockMantle | ProviderKind::Vertex | ProviderKind::Foundry => {
+                Err(BridgeError::new(
+                    "CONFIG_VALIDATION",
+                    "this probe verifies the gateway, Claude API, and Bedrock families only",
+                ))
+            }
         }
     }
 }
@@ -544,6 +544,162 @@ impl ConfigBackend {
     }
 }
 
+impl ConfigBackend {
+    /// The Bedrock lane (`docs/09` §2.2 "Bedrock"; `docs/18` §6): the
+    /// family's runtime endpoint derived from the required region, an
+    /// optional override base URL, and the family's native bearer credential
+    /// (`inferenceBedrockBearerToken`; `docs/09` §2.2 "static bearer").
+    /// Credential kinds the family offers but whose sign-in flows were never
+    /// captured — AWS profile/SSO, web identity, vendor profile — are
+    /// refused here, never emulated (`docs/14` §9).
+    fn test_connection_bedrock(
+        &self,
+        document: &ProfileDocument,
+        typed: &BTreeMap<String, String>,
+    ) -> Result<ProbeStatus, BridgeError> {
+        let connection = &document.connection.0;
+        let region = connection
+            .get("inferenceBedrockRegion")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|region| !region.is_empty());
+        let Some(region) = region else {
+            // The region forms both endpoints (`docs/12` §1): absent, no
+            // request is formed.
+            return Err(BridgeError::new(
+                "CONFIG_VALIDATION",
+                "the Bedrock region is required for the connection probe",
+            ));
+        };
+        let override_base: Option<String> = match connection.get("inferenceBedrockBaseUrl") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(raw)) => {
+                let trimmed = raw.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            }
+            Some(other) => {
+                return Err(BridgeError::new(
+                    "CONFIG_VALIDATION",
+                    format!("the Bedrock base URL expects a string, found {other:?}"),
+                ));
+            }
+        };
+        // One override replaces both endpoints (`docs/14` §9); when absent,
+        // the region derives both (`docs/12` §1 host shapes).
+        let (runtime_base, control_base) = if let Some(base) = &override_base {
+            (base.clone(), base.clone())
+        } else {
+            (
+                myharness_provider_bedrock::default_runtime_base_url(region)
+                    .map_err(bridge_provider_error)?
+                    .trim_end_matches('/')
+                    .to_string(),
+                myharness_provider_bedrock::default_control_base_url(region)
+                    .map_err(bridge_provider_error)?
+                    .trim_end_matches('/')
+                    .to_string(),
+            )
+        };
+        let custom_headers = custom_headers_for_probe(connection)?;
+
+        // The credential kinds the family offers: static bearer and helper
+        // script probe; profile/SSO (`sso`), web identity (`external-idp`),
+        // and vendor profile (`vendor-profile`) are identity-sign-in kinds
+        // this rebuild cannot resolve — the resolver refuses them, never
+        // substitutes (`docs/12` §1 credential-kind column; `docs/14` §9).
+        let credential = resolve_probe_credential(
+            connection,
+            typed,
+            self.secrets.as_ref(),
+            "inferenceBedrockBearerToken",
+            true,
+        )?;
+        let secret = match credential {
+            ProbeCredential::Value(secret) => secret,
+            ProbeCredential::Helper(config) => {
+                myharness_secrets::helper::run_helper(&config, cfg!(windows))
+                    .map_err(bridge_secret_error)?
+            }
+        };
+
+        let config = myharness_provider_bedrock::BedrockClientConfig {
+            runtime_base_url: runtime_base,
+            control_base_url: control_base,
+            custom_headers,
+            // The Bedrock card carries no idle-timeout field; the crate's
+            // documented default applies (`docs/14` §9).
+            idle_timeout: myharness_provider_bedrock::DEFAULT_IDLE_TIMEOUT,
+        };
+        let adapter =
+            myharness_provider_bedrock::BedrockAdapter::new(config, reqwest::Client::new());
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| {
+                BridgeError::new(
+                    "CONFIG_IO",
+                    format!("the probe runtime could not start: {error}"),
+                )
+            })?;
+        runtime.block_on(async {
+            let auth_label = "setup test connection";
+            // Same probe shape as the other lanes: the draft's legal model
+            // id, or the control plane's listing over the same credential to
+            // pick one. At most four requests travel in total (discovery
+            // pages + one inference).
+            let model_id = match first_legal_probe_model_where(connection, |id| {
+                myharness_config::forms::validate_bedrock_model_id(id).is_ok()
+            }) {
+                Some(model) => model,
+                None => {
+                    let models = adapter
+                        .list_models(&AuthContext::new(secret.clone(), auth_label))
+                        .await
+                        .map_err(bridge_provider_error)?;
+                    models
+                        .iter()
+                        .map(|model| model.key.model_id.clone())
+                        .find(|id| myharness_config::forms::validate_bedrock_model_id(id).is_ok())
+                        .ok_or_else(|| {
+                            BridgeError::new(
+                                "PROVIDER_ERROR",
+                                "the provider advertised no Bedrock-legal model for a probe",
+                            )
+                        })?
+                }
+            };
+            adapter
+                .probe_inference(&AuthContext::new(secret.clone(), auth_label), &model_id)
+                .await
+                .map_err(bridge_provider_error)
+                // The response type is the renderer's shared probe shape
+                // (`apps/desktop/src/setup/client.ts`): the field sets are
+                // identical, so the value maps field-for-field — no
+                // translation, just the typed seam.
+                .map(bedrock_probe_status_to_renderer)
+        })
+    }
+}
+
+/// Map the Bedrock adapter's probe verdict onto the setup response's probe
+/// type (`Probe { probe }`): identical fields, one typed seam per family.
+fn bedrock_probe_status_to_renderer(
+    status: myharness_provider_bedrock::ProbeStatus,
+) -> ProbeStatus {
+    ProbeStatus {
+        ok: status.ok,
+        model: status.model,
+        stop_reason: status.stop_reason,
+        input_tokens: status.input_tokens,
+        output_tokens: status.output_tokens,
+        latency_ms: status.latency_ms,
+    }
+}
+
 /// Map the Claude API adapter's probe verdict onto the setup response's probe
 /// type (`Probe { probe }`): identical fields, one typed seam.
 fn probe_status_to_renderer(status: myharness_provider_anthropic::ProbeStatus) -> ProbeStatus {
@@ -728,13 +884,24 @@ fn custom_headers_for_probe(connection: &Value) -> Result<Vec<(String, String)>,
 /// accepts. A non-Anthropic id is not probed (the policy refuses it); an
 /// empty or absent list means discovery decides.
 fn first_legal_probe_model(connection: &Value) -> Option<String> {
+    first_legal_probe_model_where(connection, |id| {
+        myharness_config::forms::validate_anthropic_model_id(id).is_ok()
+    })
+}
+
+/// The first model id of the draft's list that the family's own policy
+/// accepts (`docs/12` §2.2 family validators). A non-conforming id is not
+/// probed; an empty or absent list means the caller falls back to discovery.
+fn first_legal_probe_model_where(
+    connection: &Value,
+    legal: impl Fn(&str) -> bool,
+) -> Option<String> {
     let list = connection
         .get("inferenceModels")
         .and_then(Value::as_array)?;
     list.iter().find_map(|entry| {
         let id = entry.as_str().map(str::trim).filter(|id| !id.is_empty());
-        id.filter(|id| myharness_config::forms::validate_anthropic_model_id(id).is_ok())
-            .map(str::to_string)
+        id.filter(|id| legal(id)).map(str::to_string)
     })
 }
 
@@ -1390,7 +1557,7 @@ mod tests {
     fn test_connection_refuses_an_unreleased_family_draft() {
         let (backend, id) = backend();
         let mut document = backend.library().read(&id).unwrap();
-        document.provider = Some(ProviderKind::Bedrock);
+        document.provider = Some(ProviderKind::Vertex);
         let response = dispatch(
             &backend,
             SetupCommand::TestConnection {
@@ -1404,7 +1571,7 @@ mod tests {
         assert_eq!(error.code, "CONFIG_VALIDATION");
         assert!(error
             .message
-            .contains("verifies the gateway and Claude API families only"));
+            .contains("verifies the gateway, Claude API, and Bedrock families only"));
 
         // The draft never changed: the probe must not persist anything.
         let reread = backend.library().read(&id).unwrap();
@@ -1932,5 +2099,205 @@ mod tests {
         assert!(probe.ok, "discovery picked the policy-legal model");
         assert_eq!(probe.model, "claude-opus-4-1");
         assert_eq!(stub.hits(), 2, "one listing, one inference — nothing else");
+    }
+
+    // -----------------------------------------------------------------------
+    // The Bedrock family's probe lane (`docs/09` §2.2 "Bedrock"; Phase 3
+    // slice 3)
+    // -----------------------------------------------------------------------
+
+    /// A Bedrock draft over a live stub, pointed at the family's optional
+    /// base override (one override answers both the runtime and the
+    /// control-plane listing — `docs/14` §9) with the required region set.
+    fn bedrock_document(stub: &str) -> ProfileDocument {
+        let (backend, id) = backend();
+        let mut document = backend.library().read(&id).unwrap();
+        document.provider = Some(ProviderKind::Bedrock);
+        document.connection = myharness_config::Section(json!({
+            "inferenceBedrockRegion": "us-east-1",
+            "inferenceBedrockBaseUrl": stub,
+            "inferenceBedrockBearerToken": "BEDROCK-BEARER-EXAMPLE",
+            "inferenceModels": ["anthropic.claude-sonnet-4-5"],
+        }));
+        document
+    }
+
+    /// A Bedrock invoke answer: the native one-token probe response. The
+    /// model field is carrier-dependent on this family (`docs/14` §9), so
+    /// the fixture omits it — the probe reports the requested id.
+    fn bedrock_completion() -> serde_json::Value {
+        json!({
+            "content": [ { "type": "text", "text": "pong" } ],
+            "stop_reason": "end_turn",
+            "usage": { "input_tokens": 7, "output_tokens": 12 }
+        })
+    }
+
+    /// The live probe: one-token inference against the drafted model, no
+    /// discovery when the draft lists a legal id.
+    #[test]
+    fn test_connection_probes_the_bedrock_family() {
+        let stub = StubGateway::serve(vec![canned(
+            200,
+            "application/json",
+            &response_bytes(&bedrock_completion()),
+        )]);
+        let document = bedrock_document(&stub.base);
+        let (backend, _id) = backend();
+        let response = dispatch(
+            &backend,
+            SetupCommand::TestConnection {
+                document: serde_json::to_value(document).unwrap(),
+                secrets: BTreeMap::new(),
+            },
+        );
+        let SetupResponse::Probe { probe } = response else {
+            panic!("expected a probe response");
+        };
+        assert!(probe.ok);
+        assert_eq!(probe.model, "anthropic.claude-sonnet-4-5");
+        assert_eq!(probe.input_tokens, 7);
+        assert_eq!(probe.output_tokens, 12);
+        assert_eq!(probe.stop_reason.as_deref(), Some("end_turn"));
+        assert_eq!(stub.hits(), 1, "one-token inference, no discovery");
+    }
+
+    /// The region is the family's routing key: absent, no endpoint can be
+    /// formed and no request travels.
+    #[test]
+    fn test_connection_bedrock_requires_a_region() {
+        let stub = StubGateway::serve(Vec::new());
+        let mut document = bedrock_document(&stub.base);
+        document
+            .connection
+            .0
+            .as_object_mut()
+            .unwrap()
+            .remove("inferenceBedrockRegion");
+        let (backend, _id) = backend();
+        let response = dispatch(
+            &backend,
+            SetupCommand::TestConnection {
+                document: serde_json::to_value(document).unwrap(),
+                secrets: BTreeMap::new(),
+            },
+        );
+        let SetupResponse::Error { error } = response else {
+            panic!("expected an error response");
+        };
+        assert_eq!(error.code, "CONFIG_VALIDATION");
+        assert!(error.message.contains("region"));
+        assert_eq!(stub.hits(), 0, "nothing sent");
+    }
+
+    /// The family's identity kinds — profile/SSO, web identity, vendor
+    /// profile — are refused before anything sends: their sign-in flows were
+    /// never captured, so they are never emulated (`docs/14` §9).
+    #[test]
+    fn test_connection_bedrock_refuses_the_identity_kinds() {
+        for kind in ["sso", "external-idp", "vendor-profile"] {
+            let stub = StubGateway::serve(Vec::new());
+            let mut document = bedrock_document(&stub.base);
+            document
+                .connection
+                .0
+                .as_object_mut()
+                .unwrap()
+                .insert("inferenceCredentialKind".to_string(), json!(kind));
+            let (backend, _id) = backend();
+            let response = dispatch(
+                &backend,
+                SetupCommand::TestConnection {
+                    document: serde_json::to_value(document).unwrap(),
+                    secrets: BTreeMap::new(),
+                },
+            );
+            let SetupResponse::Error { error } = response else {
+                panic!("expected an error response for {kind:?}");
+            };
+            assert_eq!(error.code, "CONFIG_VALIDATION", "{kind:?}");
+            assert!(
+                error.message.contains("cannot be probed"),
+                "{kind:?}: {}",
+                error.message
+            );
+            assert_eq!(stub.hits(), 0, "{kind:?}: nothing sent");
+        }
+    }
+
+    /// The discovery fallback: an empty model list runs the control plane's
+    /// model APIs first and probes against a policy-legal row.
+    #[test]
+    fn test_connection_bedrock_discovers_when_the_draft_has_no_models() {
+        let listing = json!({
+            "modelSummaries": [
+                { "modelId": "cohere.command-r-v1:0", "modelName": "not ours" },
+                { "modelId": "anthropic.claude-sonnet-4-5", "modelName": "Sonnet 4.5" }
+            ]
+        });
+        let stub = StubGateway::serve(vec![
+            canned(200, "application/json", &response_bytes(&listing)),
+            canned(
+                200,
+                "application/json",
+                &response_bytes(&bedrock_completion()),
+            ),
+        ]);
+        let mut document = bedrock_document(&stub.base);
+        document
+            .connection
+            .0
+            .as_object_mut()
+            .unwrap()
+            .remove("inferenceModels");
+        let (backend, _id) = backend();
+        let response = dispatch(
+            &backend,
+            SetupCommand::TestConnection {
+                document: serde_json::to_value(document).unwrap(),
+                secrets: BTreeMap::new(),
+            },
+        );
+        let SetupResponse::Probe { probe } = response else {
+            panic!("expected a probe response");
+        };
+        assert!(probe.ok, "discovery picked the policy-legal model");
+        assert_eq!(probe.model, "anthropic.claude-sonnet-4-5");
+        assert_eq!(stub.hits(), 2, "one listing, one inference — nothing else");
+    }
+
+    /// The helper-script kind is offered for this family and runs once; its
+    /// output is never persisted (`docs/09` §2.2; `docs/14` §9).
+    #[test]
+    fn test_connection_bedrock_runs_the_helper_kind() {
+        let stub = StubGateway::serve(vec![canned(
+            200,
+            "application/json",
+            &response_bytes(&bedrock_completion()),
+        )]);
+        let mut document = bedrock_document(&stub.base);
+        let connection = document.connection.0.as_object_mut().unwrap();
+        connection.insert(
+            "inferenceCredentialKind".to_string(),
+            json!("helper-script"),
+        );
+        connection.insert("inferenceCredentialHelper".to_string(), json!("/bin/echo"));
+        connection.insert(
+            "inferenceCredentialHelperArgs".to_string(),
+            json!("BEDROCK-HELPER-OUTPUT"),
+        );
+        let (backend, _id) = backend();
+        let response = dispatch(
+            &backend,
+            SetupCommand::TestConnection {
+                document: serde_json::to_value(document).unwrap(),
+                secrets: BTreeMap::new(),
+            },
+        );
+        let SetupResponse::Probe { probe } = response else {
+            panic!("expected a probe response");
+        };
+        assert!(probe.ok);
+        assert_eq!(stub.hits(), 1, "one-token inference, no discovery");
     }
 }
