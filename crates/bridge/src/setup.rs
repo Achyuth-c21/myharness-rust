@@ -323,14 +323,21 @@ impl SetupBackend for ConfigBackend {
             ProviderKind::ClaudeApi => self.test_connection_claude_api(document, typed),
             ProviderKind::Bedrock => self.test_connection_bedrock(document, typed),
             // The remaining families have no native adapter in this slice;
-            // their probe lanes arrive with their adapters (roadmap order:
-            // Mantle, Foundry — `docs/13` Phase 3). The Vertex family was
+            // their probe lanes arrive with the OpenAI-compat adapter (the
+            // open model layer, `docs/13` §C) and, later, Mantle/Foundry
+            // (roadmap order — `docs/13` Phase 3). The Vertex family was
             // removed from rebuild scope entirely (owner decision,
             // 2026-10-23 — `docs/04` §3.1).
-            ProviderKind::BedrockMantle | ProviderKind::Foundry => {
+            ProviderKind::BedrockMantle
+            | ProviderKind::Foundry
+            // The open model layer's lanes land with the OpenAI-compat
+            // adapter (`docs/13` §C); until then they stay here rather than
+            // being faked.
+            | ProviderKind::OpenAi
+            | ProviderKind::Custom => {
                 Err(BridgeError::new(
                     "CONFIG_VALIDATION",
-                    "this probe verifies the gateway, Claude API, and Bedrock families only",
+                    "this probe verifies the gateway, Claude API, and Bedrock families with native adapters; the other families' probe lanes land with their adapters",
                 ))
             }
         }
@@ -404,10 +411,11 @@ impl ConfigBackend {
             })?;
         runtime.block_on(async {
             let auth_label = "setup test connection";
-            // The probe infers with a real model id: the draft's list when it
-            // carries one that the Anthropic model policy accepts, discovery
-            // over the same credential otherwise.
-            let model_id = match first_legal_probe_model(connection) {
+            // The probe infers with a real model id: the draft's first id
+            // (any id the user named is probeable since the open model
+            // layer — `docs/14` §9), discovery over the same credential
+            // otherwise.
+            let model_id = match first_probe_model(connection) {
                 Some(model) => model,
                 None => {
                     let models = adapter
@@ -417,11 +425,11 @@ impl ConfigBackend {
                     models
                         .iter()
                         .map(|model| model.key.model_id.clone())
-                        .find(|id| myharness_config::forms::validate_anthropic_model_id(id).is_ok())
+                        .next()
                         .ok_or_else(|| {
                             BridgeError::new(
                                 "PROVIDER_ERROR",
-                                "the gateway advertised no Anthropic-legal model for a probe",
+                                "the gateway advertised no model for a probe",
                             )
                         })?
                 }
@@ -511,10 +519,11 @@ impl ConfigBackend {
             })?;
         runtime.block_on(async {
             let auth_label = "setup test connection";
-            // Same probe shape as the gateway lane: the draft's legal model
-            // id, or discovery over the same credential to pick one. At most
+            // Same probe shape as the gateway lane: the draft's first model
+            // id (open model layer: any id probes — `docs/14` §9), or
+            // discovery over the same credential to pick one. At most
             // four requests travel in total (discovery pages + one inference).
-            let model_id = match first_legal_probe_model(connection) {
+            let model_id = match first_probe_model(connection) {
                 Some(model) => model,
                 None => {
                     let models = adapter
@@ -524,11 +533,11 @@ impl ConfigBackend {
                     models
                         .iter()
                         .map(|model| model.key.model_id.clone())
-                        .find(|id| myharness_config::forms::validate_anthropic_model_id(id).is_ok())
+                        .next()
                         .ok_or_else(|| {
                             BridgeError::new(
                                 "PROVIDER_ERROR",
-                                "the provider advertised no Anthropic-legal model for a probe",
+                                "the provider advertised no model for a probe",
                             )
                         })?
                 }
@@ -649,13 +658,11 @@ impl ConfigBackend {
             })?;
         runtime.block_on(async {
             let auth_label = "setup test connection";
-            // Same probe shape as the other lanes: the draft's legal model
-            // id, or the control plane's listing over the same credential to
-            // pick one. At most four requests travel in total (discovery
-            // pages + one inference).
-            let model_id = match first_legal_probe_model_where(connection, |id| {
-                myharness_config::forms::validate_bedrock_model_id(id).is_ok()
-            }) {
+            // Same probe shape as the other lanes: the draft's first model id
+            // (open model layer — `docs/14` §9), or the control plane's
+            // listing over the same credential to pick one. At most four
+            // requests travel in total (discovery pages + one inference).
+            let model_id = match first_probe_model(connection) {
                 Some(model) => model,
                 None => {
                     let models = adapter
@@ -665,11 +672,11 @@ impl ConfigBackend {
                     models
                         .iter()
                         .map(|model| model.key.model_id.clone())
-                        .find(|id| myharness_config::forms::validate_bedrock_model_id(id).is_ok())
+                        .next()
                         .ok_or_else(|| {
                             BridgeError::new(
                                 "PROVIDER_ERROR",
-                                "the provider advertised no Bedrock-legal model for a probe",
+                                "the provider advertised no model for a probe",
                             )
                         })?
                 }
@@ -882,28 +889,20 @@ fn custom_headers_for_probe(connection: &Value) -> Result<Vec<(String, String)>,
     Ok(collected)
 }
 
-/// The first model id of the draft's list that the Anthropic model policy
-/// accepts. A non-Anthropic id is not probed (the policy refuses it); an
-/// empty or absent list means discovery decides.
-fn first_legal_probe_model(connection: &Value) -> Option<String> {
-    first_legal_probe_model_where(connection, |id| {
-        myharness_config::forms::validate_anthropic_model_id(id).is_ok()
-    })
-}
-
-/// The first model id of the draft's list that the family's own policy
-/// accepts (`docs/12` §2.2 family validators). A non-conforming id is not
-/// probed; an empty or absent list means the caller falls back to discovery.
-fn first_legal_probe_model_where(
-    connection: &Value,
-    legal: impl Fn(&str) -> bool,
-) -> Option<String> {
+/// The first model id of the draft's list. Since the owner's open model
+/// layer (2026-10-23, `docs/14` §9) there is no family predicate to satisfy —
+/// any id the user named is probeable; an empty or absent list means callers
+/// fall back to discovery.
+fn first_probe_model(connection: &Value) -> Option<String> {
     let list = connection
         .get("inferenceModels")
         .and_then(Value::as_array)?;
     list.iter().find_map(|entry| {
-        let id = entry.as_str().map(str::trim).filter(|id| !id.is_empty());
-        id.filter(|id| legal(id)).map(str::to_string)
+        entry
+            .as_str()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .map(str::to_string)
     })
 }
 
@@ -1536,10 +1535,11 @@ mod tests {
         document
     }
 
-    /// The probe refuses a draft for a family whose adapter is not in the
+    /// The probe refuses a draft for a family whose probe lane is not in the
     /// build yet, before anything sends. The probe-capable families unlock
-    /// one adapter at a time (roadmap order, `docs/13` Phase 3): gateway,
-    /// then the Claude API family, then Bedrock; Mantle and Foundry arrive
+    /// one adapter at a time: gateway, the Claude API family, and Bedrock are
+    /// native (`docs/13` Phase 3); the open model layer's families land with
+    /// the OpenAI-compat adapter (`docs/13` §C); Mantle and Foundry arrive
     /// last. (The Vertex family was removed from rebuild scope on
     /// 2026-10-23 — `docs/04` §3.1.)
     #[test]
@@ -1547,6 +1547,14 @@ mod tests {
         let (backend, id) = backend();
         let mut document = backend.library().read(&id).unwrap();
         document.provider = Some(ProviderKind::BedrockMantle);
+        // Schema-valid mantle fields, so the refusal under test is the probe
+        // lane's, not a form issue: a valid draft must still be refused.
+        document.connection = myharness_config::Section(json!({
+            "inferenceBedrockMantleRegion": "us-east-1",
+            "inferenceBedrockMantleBaseUrl": "https://mantle.example",
+            "inferenceBedrockMantleApiKey": "placeholder-credential",
+            "inferenceModels": ["any-model-v1"],
+        }));
         let response = dispatch(
             &backend,
             SetupCommand::TestConnection {
@@ -1560,7 +1568,7 @@ mod tests {
         assert_eq!(error.code, "CONFIG_VALIDATION");
         assert!(error
             .message
-            .contains("verifies the gateway, Claude API, and Bedrock families only"));
+            .contains("with native adapters; the other families' probe lanes land with their adapters"));
 
         // The draft never changed: the probe must not persist anything.
         let reread = backend.library().read(&id).unwrap();
@@ -1784,12 +1792,14 @@ mod tests {
         }
     }
 
-    /// The draft's non-Anthropic id is skipped: the model policy decides the
-    /// target, and the probe's echo check proves the requested id ran.
+    /// The draft's first entry is the probe's target: since the open model
+    /// layer (2026-10-23, `docs/14` §9) there is no family predicate — the
+    /// first id the user named is sent verbatim, and the echo check proves
+    /// the requested id ran.
     #[test]
-    fn test_connection_skips_a_non_anthropic_draft_entry() {
+    fn test_connection_sends_the_first_draft_entry_verbatim() {
         let completion = json!({
-            "model": "claude-opus-4-1",
+            "model": "gpt-4o",
             "content": [ { "type": "text", "text": "pong" } ],
             "stop_reason": "end_turn",
             "usage": { "input_tokens": 3, "output_tokens": 1 }
@@ -1801,8 +1811,8 @@ mod tests {
         )]);
         let mut document = gateway_document(&stub.base);
         let connection = document.connection.0.as_object_mut().unwrap();
-        // A whole other family (`gpt-…`) is exactly what the Anthropic model
-        // policy refuses — the probe skips it and takes the legal entry.
+        // `gpt-4o` is simply the first entry of the user's list now; the
+        // probe rings it, not some policy-legal alternate.
         connection.insert(
             "inferenceModels".to_string(),
             json!(["gpt-4o", "claude-opus-4-1"]),
@@ -1822,7 +1832,8 @@ mod tests {
         let SetupResponse::Probe { probe } = response else {
             panic!("expected a probe response");
         };
-        assert!(probe.ok, "the echo check must hold for the legal id");
+        assert!(probe.ok, "the echo check must hold for the requested id");
+        assert_eq!(probe.model, "gpt-4o");
         assert_eq!(stub.hits(), 1);
     }
 
@@ -2250,8 +2261,11 @@ mod tests {
         let SetupResponse::Probe { probe } = response else {
             panic!("expected a probe response");
         };
-        assert!(probe.ok, "discovery picked the policy-legal model");
-        assert_eq!(probe.model, "anthropic.claude-sonnet-4-5");
+        assert!(probe.ok, "the listing's first model ran the probe");
+        assert_eq!(
+            probe.model, "cohere.command-r-v1:0",
+            "the first row of the listing runs the probe — the open model layer has no family preference (docs/14 §9)"
+        );
         assert_eq!(stub.hits(), 2, "one listing, one inference — nothing else");
     }
 

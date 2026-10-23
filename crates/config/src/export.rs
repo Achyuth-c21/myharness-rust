@@ -389,6 +389,9 @@ pub fn provider_label(profile: &ProfileDocument) -> &'static str {
         Some(ProviderKind::Bedrock) => "bedrock",
         Some(ProviderKind::BedrockMantle) => "bedrock-mantle",
         Some(ProviderKind::Foundry) => "foundry",
+        // The open model layer's families (`docs/13` §C).
+        Some(ProviderKind::OpenAi) => "openai",
+        Some(ProviderKind::Custom) => "custom",
         None => "unknown",
     }
 }

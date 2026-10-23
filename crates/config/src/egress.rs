@@ -314,6 +314,19 @@ fn provider_hosts(
                 hosts.push(format!("{resource}.services.ai.azure.com"));
             }
         }
+        Some(ProviderKind::OpenAi) => {
+            // Override when the user set one; otherwise the first-party host
+            // (`docs/13` §C open model layer; the default is the adapter's).
+            match base_url("inferenceOpenAiBaseUrl") {
+                Some(url) => hosts.extend(host_of(&Value::String(url))),
+                None => hosts.push("api.openai.com".to_string()),
+            }
+        }
+        Some(ProviderKind::Custom) => {
+            if let Some(url) = base_url("inferenceCustomBaseUrl") {
+                hosts.extend(host_of(&Value::String(url)));
+            }
+        }
         None => {}
     }
     hosts

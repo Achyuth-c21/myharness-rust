@@ -7,8 +7,11 @@
 //! `docs/12` §1/§2.2): the host shape `bedrock-runtime[-fips].<region>.
 //! amazonaws.com` (control plane `bedrock.<region>.amazonaws.com`), static
 //! bearer / profile-SSO / web-identity / helper / vendor credentials, optional
-//! base URL, and the model-ID policy `anthropic.*` or Bedrock inference /
-//! provisioned ARNs (`validate_bedrock_model_id`). `docs/12` §8.5 maps this
+//! base URL, and the recorded model-ID shapes `anthropic.*` or Bedrock
+//! inference / provisioned ARNs — which, since the owner's open model layer
+//! (2026-10-23, `docs/14` §9), travel verbatim instead of being gated:
+//! `docs/12` §2.2's family predicates no longer govern the rebuild.
+//! `docs/12` §8.5 maps this
 //! family to "AWS SDK Bedrock Runtime stream, Anthropic body": the payload
 //! grammar is the Anthropic Messages one, in this rebuild hand-built and
 //! wire-tested against this crate's own native client — no AWS SDK, no shared
@@ -31,9 +34,9 @@
 //!   regression). Profile/SSO, web-identity, and vendor-profile sign-in flows
 //!   were never observed, so this rebuild refuses them fail-closed instead of
 //!   emulating an identity flow (`docs/14` §9).
-//! - **The model policy** gates every send: an id outside
-//!   `validate_bedrock_model_id` is refused before any bytes go out
-//!   (`TEST-AI-007` applied to this family).
+//! - **Model ids travel verbatim, ungated** since the owner's open model
+//!   layer (2026-10-23, `docs/14` §9): the recorded family shapes are now
+//!   descriptive, not a policy gate.
 //! - **No substitution**: the model id or ARN travels verbatim in the request
 //!   path (`AI-ADAPTER-11`); an answer that names a different model ends the
 //!   turn visibly (`AI-MODEL-01`).

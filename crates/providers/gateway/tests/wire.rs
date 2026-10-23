@@ -1120,40 +1120,42 @@ async fn a_missing_credential_blocks_the_send() {
     );
 }
 
-/// `TEST-AI-007`/`TEST-AI-008` — the Anthropic model policy gate: a
-/// non-Anthropic id is refused before anything is sent (`AI-MODEL-02`;
-/// the `AI-ADAPTER-03` regression is the policy itself, enforced), and no
-/// alternate model is used (`AI-MODEL-01`).
+/// Open model layer (`docs/14` §9 owner decision, 2026-10-23) — the shipped
+/// `TEST-AI-007/008` policy fixtures went out with the policy they pinned:
+/// any id the user names travels verbatim on the wire (`AI-ADAPTER-11`), no
+/// family predicate screens it, and no alternate model is chosen
+/// (`AI-MODEL-01`). The mock answers legally; the assertions check both the
+/// sent model id and that a normal turn completed.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_non_anthropic_model_blocks_the_send() {
-    let gw = gateway(vec![Canned::Bare(200)]);
-    let adapter = GatewayAdapter::new(
-        GatewayClientConfig {
-            base_url: gw.base.clone(),
-            auth_scheme: myharness_provider_gateway::AuthScheme::Bearer,
-            custom_headers: vec![("X-Tenant".to_string(), "acme".to_string())],
-            idle_timeout: Duration::from_millis(150),
-            betas: vec!["prompt-caching-2024-07-31".to_string()],
-        },
-        reqwest::Client::new(),
-    );
+async fn a_non_anthropic_id_travels_verbatim() {
     for id in ["gpt-4o", "gemini-2.5-pro", "codex-mini"] {
-        let error = adapter
+        let gw = gateway(legal_stream(id, "ok", "end_turn", 2));
+        let adapter = GatewayAdapter::new(
+            GatewayClientConfig {
+                base_url: gw.base.clone(),
+                auth_scheme: myharness_provider_gateway::AuthScheme::Bearer,
+                custom_headers: vec![],
+                idle_timeout: Duration::from_millis(150),
+                betas: vec![],
+            },
+            reqwest::Client::new(),
+        );
+        let stream = adapter
             .create_turn(&auth("placeholder-credential"), &stream_request(id))
             .await
-            .err()
-            .expect("the model policy must refuse a non-Anthropic id");
-        assert_eq!(error.class, ErrorClass::InvalidRequest, "{id}");
+            .expect("the id is sent, not screened");
+        let events: Vec<Result<TurnEvent, _>> = stream.collect().await;
         assert!(
-            error.message.contains("was not sent"),
-            "{id}: {}",
-            error.message
+            events.iter().all(|event| event.is_ok()) && matches!(events.last(), Some(Ok(TurnEvent::Done))),
+            "a named id produces a legal turn: {events:?}"
+        );
+        let requests = gw.requests();
+        assert_eq!(requests.len(), 1, "{id}");
+        assert_eq!(
+            requests[0].body()["model"], id,
+            "the id travels verbatim, ungated: {id}"
         );
     }
-    assert!(
-        gw.requests().is_empty(),
-        "zero requests must have travelled"
-    );
 }
 
 /// `docs/12` §2.1 — `sk-ant-oat…` is an OAuth access token whose beta header

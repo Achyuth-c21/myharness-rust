@@ -42,8 +42,9 @@ use serde::{Deserialize, Serialize};
 /// Every family in the shipped app is Anthropic Messages, in one transport or
 /// another (`docs/12` §1 native-protocol column); the variant carries the
 /// transport. Non-Anthropic families (`docs/12` §8.4 lists them as registry
-/// entries, not shipped behavior) arrive as their own adapters with their own
-/// policy — never through a translation layer.
+/// entries, not shipped behavior) arrive as their own adapters — the owner's
+/// open model layer added OpenAI Chat Completions this way (`docs/13` §C,
+/// `docs/14` §9); each family's adapter owns its wire and its policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProtocolFamily {
@@ -54,6 +55,12 @@ pub enum ProtocolFamily {
     /// Foundry" — `docs/12` §1; the shipped set also lists "via Vertex", removed
     /// from rebuild scope, `docs/04` §3.1). The string is the provider id.
     AnthropicMessagesViaCloud(&'static str),
+    /// OpenAI Chat Completions (`docs/13` §C, open model layer — owner decision
+    /// 2026-10-23): first-party OpenAI and every OpenAI-compatible endpoint the
+    /// user defines. One protocol family, one native adapter wall; the app's
+    /// internal model maps onto this wire inside the family's own adapter, and
+    /// no other family's wire is rewritten anywhere.
+    OpenAiChat,
 }
 
 // ---------------------------------------------------------------------------

@@ -10,10 +10,12 @@
 //!   caller per request — rotation without a second credential source
 //!   (`AI-PROVIDER-03`; the `AI-ADAPTER-12` regression). The adapter neither
 //!   reads the keychain nor writes provider credentials anywhere.
-//! - **The model policy** gates every send: an id that fails the Anthropic
-//!   predicate (`myharness_config::forms::validate_anthropic_model_id`,
-//!   `docs/12` §2.2) is refused before any bytes go out (`TEST-AI-007`
-//!   gateway half; the `AI-ADAPTER-03` regression is that policy, enforced).
+//! - **Model ids travel verbatim, ungated** — since the owner's open model layer
+//!   (2026-10-23, `docs/14` §9) the shipped `docs/12` §2.2 Anthropic predicate
+//!   no longer governs the rebuild: any id the user names is sent as-is. The
+//!   identity checks that remain are structural: the endpoint must exist, and
+//!   the model an answer names must match the one requested (`AI-MODEL-01`,
+//!   below).
 //! - **No substitution** at any layer: the model id travels verbatim on the
 //!   wire (`AI-ADAPTER-11`), the performed model in the stream's opening
 //!   frame is compared against it, and a mismatch ends the stream with a
@@ -182,7 +184,11 @@ impl GatewayAdapter {
         Ok(response)
     }
 
-    /// The unsigned policy gate every send passes first (`TEST-AI-007/008`).
+    /// The structural gate every send passes first (the endpoint must exist
+    /// and be reachable-shaped). Since the owner's open model layer
+    /// (2026-10-23, `docs/14` §9) no model-family predicate screens ids here:
+    /// the id the user named travels verbatim, and a substitution is a
+    /// user-visible error instead (`AI-MODEL-01`).
     fn gate_model(&self, model: &ModelKey) -> Result<(), ProviderError> {
         if self.config.base_url.is_empty() {
             return Err(ProviderError {
@@ -191,15 +197,12 @@ impl GatewayAdapter {
                 message: "the gateway base URL is required before sending anything".to_string(),
             });
         }
-        match myharness_config::forms::validate_anthropic_model_id(&model.model_id) {
+        match myharness_config::forms::validate_open_model_id(&model.model_id) {
             Ok(()) => Ok(()),
             Err(reason) => Err(ProviderError {
                 class: ErrorClass::InvalidRequest,
                 status: None,
-                message: format!(
-                    "the requested model {:?} does not pass the Anthropic model policy and was not sent: {reason}",
-                    model.model_id
-                ),
+                message: format!("the requested model was not sent: {reason}"),
             }),
         }
     }

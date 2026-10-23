@@ -7,7 +7,8 @@
 //!
 //! Boundaries this crate holds (`docs/12` §11): credentials arrive resolved
 //! in an [`AuthContext`], re-resolved by the caller per request
-//! (`AI-PROVIDER-03`); the model policy gates every send and nothing is
+//! (`AI-PROVIDER-03`); model ids travel verbatim and ungated since the
+//! owner's open model layer (2026-10-23, `docs/14` §9) and nothing is
 //! substituted (`AI-MODEL-01`, `AI-ADAPTER-11`); nothing here is
 //! process-global (`AI-ADAPTER-13`); the credential is never logged, never
 //! persisted, and never copied into any other store.
@@ -195,19 +196,18 @@ impl BedrockAdapter {
         Self::response_json(response).await
     }
 
-    /// The policy gate every send passes first (`TEST-AI-007/008`): the
-    /// family's recorded model-ID policy, `anthropic.*` ids and Bedrock
-    /// inference/provisioned ARNs.
+    /// The structure gate every send passes (an id must name something):
+    /// since the owner's open model layer (2026-10-23, `docs/14` §9) no
+    /// family predicate screens ids — `anthropic.*` ids, Bedrock inference
+    /// ARNs, and any other id the user names travel verbatim, and a
+    /// substituted model is a user-visible error instead (`AI-MODEL-01`).
     fn gate_model(&self, model: &ModelKey) -> Result<(), ProviderError> {
-        match myharness_config::forms::validate_bedrock_model_id(&model.model_id) {
+        match myharness_config::forms::validate_open_model_id(&model.model_id) {
             Ok(()) => Ok(()),
             Err(reason) => Err(ProviderError {
                 class: ErrorClass::InvalidRequest,
                 status: None,
-                message: format!(
-                    "the requested model {:?} does not pass the Bedrock model policy and was not sent: {reason}",
-                    model.model_id
-                ),
+                message: format!("the requested model was not sent: {reason}"),
             }),
         }
     }

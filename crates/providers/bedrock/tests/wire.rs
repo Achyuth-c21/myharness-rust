@@ -1012,27 +1012,39 @@ async fn a_missing_credential_blocks_the_send() {
     );
 }
 
-/// `TEST-AI-007/008`, `AI-MODEL-02` — a model the Bedrock policy rejects
-/// (`docs/12` §2.2; only `anthropic.*` and Bedrock ARNs are the family's)
-/// is blocked before any bytes go out; a benign id is allowed through
-/// verbatim.
+/// Open model layer (`docs/14` §9 owner decision, 2026-10-23) — the shipped
+/// `TEST-AI-007/008` policy fixtures went out with the policy they pinned:
+/// any id the user names (including a plain `gpt-4o`, no Bedrock ARN) travels
+/// verbatim on the wire, no family predicate screens it, and no alternate
+/// model is chosen (`AI-MODEL-01`). The mock answers legally; the assertions
+/// check both the sent id and that a normal turn completed.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_non_bedrock_model_blocks_the_send() {
-    let host = provider(vec![]);
+async fn a_non_bedrock_id_travels_verbatim() {
+    let host = provider(legal_stream(
+        "gpt-4o",
+        "ok",
+        "end_turn",
+        2,
+    ));
     let adapter = adapter(host.base.clone());
-    let error = adapter
+    let stream = adapter
         .create_turn(&auth("placeholder-credential"), &stream_request("gpt-4o"))
         .await
-        .err()
-        .expect("a non-Bedrock family id must refuse");
-    assert_eq!(error.class, ErrorClass::InvalidRequest);
+        .expect("the id is sent, not screened");
+    let events: Vec<Result<TurnEvent, _>> = stream.collect().await;
     assert!(
-        error.message.contains("not sent"),
-        "the refusal says nothing was sent: {error:?}"
+        events.iter().all(|event| event.is_ok())
+            && matches!(events.last(), Some(Ok(TurnEvent::Done))),
+        "a named id produces a legal turn: {events:?}"
     );
+    let requests = host.requests();
+    assert_eq!(requests.len(), 1);
     assert!(
-        host.requests().is_empty(),
-        "zero requests must have travelled"
+        requests[0]
+            .raw
+            .contains("POST /model/gpt-4o/invoke-with-response-stream"),
+        "the plain id travels verbatim in the path, ungated: {}",
+        requests[0].raw
     );
 }
 
