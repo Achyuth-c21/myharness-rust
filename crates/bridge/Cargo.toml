@@ -9,7 +9,6 @@ myharness-provider-anthropic = { path = "../providers/anthropic" }
 myharness-provider-bedrock = { path = "../providers/bedrock" }
 myharness-provider-gateway = { path = "../providers/gateway" }
 myharness-provider-sdk = { path = "../provider-sdk" }
-myharness-provider-vertex = { path = "../providers/vertex" }
 myharness-secrets = { path = "../secrets" }
 reqwest = { workspace = true }
 secrecy = { workspace = true }

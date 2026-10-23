@@ -322,14 +322,15 @@ impl SetupBackend for ConfigBackend {
             ProviderKind::Gateway => self.test_connection_gateway(document, typed),
             ProviderKind::ClaudeApi => self.test_connection_claude_api(document, typed),
             ProviderKind::Bedrock => self.test_connection_bedrock(document, typed),
-            ProviderKind::Vertex => self.test_connection_vertex(document, typed),
             // The remaining families have no native adapter in this slice;
             // their probe lanes arrive with their adapters (roadmap order:
-            // Mantle, Foundry — `docs/13` Phase 3).
+            // Mantle, Foundry — `docs/13` Phase 3). The Vertex family was
+            // removed from rebuild scope entirely (owner decision,
+            // 2026-10-23 — `docs/04` §3.1).
             ProviderKind::BedrockMantle | ProviderKind::Foundry => {
                 Err(BridgeError::new(
                     "CONFIG_VALIDATION",
-                    "this probe verifies the gateway, Claude API, Bedrock, and Vertex families only",
+                    "this probe verifies the gateway, Claude API, and Bedrock families only",
                 ))
             }
         }
@@ -684,131 +685,6 @@ impl ConfigBackend {
                 .map(bedrock_probe_status_to_renderer)
         })
     }
-
-    /// The Vertex lane (`docs/09` §2.2 "Vertex AI"; Phase 3 slice 4): the
-    /// regional host derived from the required region
-    /// (`https://{region}-aiplatform.googleapis.com`), the required project
-    /// id (both travel in the request path), and an optional override base
-    /// URL that replaces the derived host in full. The credential kind is
-    /// resolved strictly per the family's kind table: the helper-script kind
-    /// runs once and its output is the Google bearer the adapter sends; the
-    /// sign-in/identity kinds are refused (`resolve_vertex_probe_credential`,
-    /// `docs/14` §9 item 28). **No discovery exists for this family** — model
-    /// discovery is disabled for every credential kind it offers
-    /// (`docs/09` §2.2), so the draft must list the `claude-` model id the
-    /// probe targets; exactly one request travels.
-    fn test_connection_vertex(
-        &self,
-        document: &ProfileDocument,
-        _typed: &BTreeMap<String, String>,
-    ) -> Result<ProbeStatus, BridgeError> {
-        let connection = &document.connection.0;
-        let region = connection
-            .get("inferenceVertexRegion")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|region| !region.is_empty());
-        let Some(region) = region else {
-            // The region forms the host (`docs/12` §1): absent, no request
-            // is formed.
-            return Err(BridgeError::new(
-                "CONFIG_VALIDATION",
-                "the Vertex region is required for the connection probe",
-            ));
-        };
-        let project = connection
-            .get("inferenceVertexProjectId")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|project| !project.is_empty());
-        let Some(project) = project else {
-            // The project forms the request path: absent, no request is
-            // formed.
-            return Err(BridgeError::new(
-                "CONFIG_VALIDATION",
-                "the Vertex project id is required for the connection probe",
-            ));
-        };
-        let override_base: Option<String> = match connection.get("inferenceVertexBaseUrl") {
-            None | Some(Value::Null) => None,
-            Some(Value::String(raw)) => {
-                let trimmed = raw.trim();
-                if trimmed.is_empty() {
-                    None
-                } else {
-                    Some(trimmed.to_string())
-                }
-            }
-            Some(other) => {
-                return Err(BridgeError::new(
-                    "CONFIG_VALIDATION",
-                    format!("the Vertex base URL expects a string, found {other:?}"),
-                ));
-            }
-        };
-        let base = match override_base {
-            Some(base) => base,
-            None => myharness_provider_vertex::default_base_url(region)
-                .map_err(bridge_provider_error)?
-                .trim_end_matches('/')
-                .to_string(),
-        };
-        let custom_headers = custom_headers_for_probe(connection)?;
-
-        // No discovery fallback exists: the draft must name the model
-        // (`docs/09` §2.2 "Vertex AI" disables discovery for every kind the
-        // family offers). The family's own policy gate decides which ids
-        // are legal (`docs/12` §2.2; `TEST-AI-003`). The gate runs before
-        // the credential so a refused draft never executes the helper.
-        let model_id = first_legal_probe_model_where(connection, |id| {
-            myharness_config::forms::validate_vertex_model_id(id).is_ok()
-        })
-        .ok_or_else(|| {
-            BridgeError::new(
-                "PROVIDER_ERROR",
-                "the draft carries no claude- model id for the Vertex probe: model discovery is unavailable for this family's credential kinds (docs/09 §2.2 \"Vertex AI\")",
-            )
-        })?;
-
-        // The credential: strictly per the family's kind table, above. The
-        // helper script runs once; its output is never stored.
-        let credential = resolve_vertex_probe_credential(connection)?;
-        let secret = match credential {
-            VertexProbeCredential::Helper(config) => {
-                myharness_secrets::helper::run_helper(&config, cfg!(windows))
-                    .map_err(bridge_secret_error)?
-            }
-        };
-
-        let config = myharness_provider_vertex::VertexClientConfig {
-            base_url: base,
-            project_id: project.to_string(),
-            region: region.to_string(),
-            custom_headers,
-            // The Vertex card carries no idle-timeout field; the crate's
-            // documented default applies (`docs/14` §9 item 28).
-            idle_timeout: myharness_provider_vertex::DEFAULT_IDLE_TIMEOUT,
-        };
-        let adapter = myharness_provider_vertex::VertexAdapter::new(config, reqwest::Client::new());
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|error| {
-                BridgeError::new(
-                    "CONFIG_IO",
-                    format!("the probe runtime could not start: {error}"),
-                )
-            })?;
-        runtime.block_on(async {
-            let auth_label = "setup test connection";
-            adapter
-                .probe_inference(&AuthContext::new(secret, auth_label), &model_id)
-                .await
-                .map_err(bridge_provider_error)
-                // Identical field sets, one typed seam per family.
-                .map(vertex_probe_status_to_renderer)
-        })
-    }
 }
 
 /// Map the Bedrock adapter's probe verdict onto the setup response's probe
@@ -823,76 +699,6 @@ fn bedrock_probe_status_to_renderer(
         input_tokens: status.input_tokens,
         output_tokens: status.output_tokens,
         latency_ms: status.latency_ms,
-    }
-}
-
-/// Map the Vertex adapter's probe verdict onto the setup response's probe
-/// type (`Probe { probe }`): identical fields, one typed seam per family.
-fn vertex_probe_status_to_renderer(
-    status: myharness_provider_vertex::ProbeStatus,
-) -> ProbeStatus {
-    ProbeStatus {
-        ok: status.ok,
-        model: status.model,
-        stop_reason: status.stop_reason,
-        input_tokens: status.input_tokens,
-        output_tokens: status.output_tokens,
-        latency_ms: status.latency_ms,
-    }
-}
-
-/// The Vertex probe's credential source. The family offers interactive
-/// (Google sign-in), Workforce, helper-script, and vendor-profile kinds
-/// (`docs/09` §2.2), and **no static slot** — there is no secret field on
-/// the form for a stored key. The sign-in / identity kinds carry flows that
-/// were never captured: they are refused here, never emulated, and the
-/// adapter takes only material the caller resolves (`docs/14` §9 item 28).
-enum VertexProbeCredential {
-    Helper(myharness_secrets::helper::HelperConfig),
-}
-
-/// Resolve the Vertex probe's credential, strictly: the draft must name a
-/// kind, and only the helper-script kind resolves — its command runs once
-/// inside `test_connection` (`run_helper`, never the caching resolver: a
-/// probe must not persist anything, `docs/14` §9 item 21's reading) and its
-/// output is the bearer the adapter sends. No raw value is logged or
-/// carried in an error message.
-fn resolve_vertex_probe_credential(
-    connection: &Value,
-) -> Result<VertexProbeCredential, BridgeError> {
-    let kind = connection
-        .get("inferenceCredentialKind")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|kind| !kind.is_empty());
-    match kind {
-        Some("helper-script") => {
-            let config = myharness_secrets::helper::HelperConfig::from_connection(connection)
-                .map_err(bridge_secret_error)?
-                .ok_or_else(|| {
-                    BridgeError::new(
-                        "CONFIG_VALIDATION",
-                        "helper script is required for the helper credential kind",
-                    )
-                })?;
-            Ok(VertexProbeCredential::Helper(config))
-        }
-        Some("interactive") | Some("workforce") | Some("external-idp") | Some("vendor-profile") => {
-            Err(BridgeError::new(
-                "CONFIG_VALIDATION",
-                format!("credential kind {kind:?} cannot be probed"),
-            ))
-        }
-        Some(other) => Err(BridgeError::new(
-            "CONFIG_VALIDATION",
-            format!(
-                "credential kind {other:?} is not one of the kinds the Vertex form offers (docs/09 §2.2 \"Vertex AI\")"
-            ),
-        )),
-        None => Err(BridgeError::new(
-            "CONFIG_VALIDATION",
-            "the Vertex connection names no credential kind; the form offers Google sign-in, Workforce, helper script, and vendor profile, and the probe resolves the helper script only",
-        )),
     }
 }
 
@@ -1585,21 +1391,6 @@ mod tests {
             };
             assert_eq!(schema["title"], expected);
         }
-
-        let response = dispatch(
-            &backend,
-            SetupCommand::ConnectionSchema {
-                provider: "vertex".to_string(),
-            },
-        );
-        let SetupResponse::Schema { schema } = response else {
-            panic!("expected a schema response");
-        };
-        assert!(schema["fields"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|f| f["key"] == "inferenceVertexProjectId"));
     }
 
     /// An unknown tab or provider is refused, not guessed.
@@ -1748,8 +1539,9 @@ mod tests {
     /// The probe refuses a draft for a family whose adapter is not in the
     /// build yet, before anything sends. The probe-capable families unlock
     /// one adapter at a time (roadmap order, `docs/13` Phase 3): gateway,
-    /// then the Claude API family, then Bedrock, then Vertex; Mantle and
-    /// Foundry arrive last.
+    /// then the Claude API family, then Bedrock; Mantle and Foundry arrive
+    /// last. (The Vertex family was removed from rebuild scope on
+    /// 2026-10-23 — `docs/04` §3.1.)
     #[test]
     fn test_connection_refuses_an_unreleased_family_draft() {
         let (backend, id) = backend();
@@ -1768,7 +1560,7 @@ mod tests {
         assert_eq!(error.code, "CONFIG_VALIDATION");
         assert!(error
             .message
-            .contains("verifies the gateway, Claude API, Bedrock, and Vertex families only"));
+            .contains("verifies the gateway, Claude API, and Bedrock families only"));
 
         // The draft never changed: the probe must not persist anything.
         let reread = backend.library().read(&id).unwrap();
@@ -2498,222 +2290,4 @@ mod tests {
         assert_eq!(stub.hits(), 1, "one-token inference, no discovery");
     }
 
-    // ---------------------------------------------------------------------------
-    // The Vertex family's probe lane (`docs/09` §2.2 "Vertex AI"; Phase 3
-    // slice 4)
-    // ---------------------------------------------------------------------------
-
-    /// A Vertex draft over a live stub, pointed at the family's optional
-    /// base override (`inferenceVertexBaseUrl` replaces the region-derived
-    /// host in full — `docs/14` §9 item 28; the tests never let the
-    /// region-derived host reach the internet), with the required region,
-    /// project, credential kind, and a `claude-` model listed (no
-    /// discovery exists for this family).
-    fn vertex_document(stub: &str) -> ProfileDocument {
-        let (backend, id) = backend();
-        let mut document = backend.library().read(&id).unwrap();
-        document.provider = Some(ProviderKind::Vertex);
-        document.connection = myharness_config::Section(json!({
-            "inferenceVertexRegion": "us-east5",
-            "inferenceVertexProjectId": "synthetic-project",
-            "inferenceVertexBaseUrl": stub,
-            "inferenceCredentialKind": "helper-script",
-            "inferenceCredentialHelper": "/bin/echo",
-            "inferenceCredentialHelperArgs": "VERTEX-HELPER-OUTPUT",
-            "inferenceModels": ["claude-sonnet-4-5"],
-        }));
-        document
-    }
-
-    /// A Vertex raw-prediction answer: the native one-token probe response.
-    /// The `model` field is optional on this family (`docs/14` §9 item 28's
-    /// conditional echo), so the fixture omits it — the probe reports the
-    /// requested id.
-    fn vertex_completion() -> serde_json::Value {
-        json!({
-            "content": [ { "type": "text", "text": "pong" } ],
-            "stop_reason": "end_turn",
-            "usage": { "input_tokens": 7, "output_tokens": 12 }
-        })
-    }
-
-    /// The live probe: one-token `rawPredict` against the drafted model.
-    /// No discovery travels because none exists for this family; the
-    /// helper-script credential is the only kind this lane resolves.
-    #[test]
-    fn test_connection_probes_the_vertex_family() {
-        let stub = StubGateway::serve(vec![canned(
-            200,
-            "application/json",
-            &response_bytes(&vertex_completion()),
-        )]);
-        let document = vertex_document(&stub.base);
-        let (backend, _id) = backend();
-        let response = dispatch(
-            &backend,
-            SetupCommand::TestConnection {
-                document: serde_json::to_value(document).unwrap(),
-                secrets: BTreeMap::new(),
-            },
-        );
-        let SetupResponse::Probe { probe } = response else {
-            panic!("expected a probe response");
-        };
-        assert!(probe.ok);
-        assert_eq!(probe.model, "claude-sonnet-4-5");
-        assert_eq!(probe.input_tokens, 7);
-        assert_eq!(probe.output_tokens, 12);
-        assert_eq!(probe.stop_reason.as_deref(), Some("end_turn"));
-        assert_eq!(stub.hits(), 1, "one-token inference; no discovery exists");
-    }
-
-    /// The region forms the host: absent, no request travels.
-    #[test]
-    fn test_connection_vertex_requires_a_region() {
-        let stub = StubGateway::serve(Vec::new());
-        let mut document = vertex_document(&stub.base);
-        document
-            .connection
-            .0
-            .as_object_mut()
-            .unwrap()
-            .remove("inferenceVertexRegion");
-        let (backend, _id) = backend();
-        let response = dispatch(
-            &backend,
-            SetupCommand::TestConnection {
-                document: serde_json::to_value(document).unwrap(),
-                secrets: BTreeMap::new(),
-            },
-        );
-        let SetupResponse::Error { error } = response else {
-            panic!("expected an error response");
-        };
-        assert_eq!(error.code, "CONFIG_VALIDATION");
-        assert!(error.message.contains("region"));
-        assert_eq!(stub.hits(), 0, "nothing sent");
-    }
-
-    /// The project forms the request path: absent, no request travels.
-    #[test]
-    fn test_connection_vertex_requires_a_project() {
-        let stub = StubGateway::serve(Vec::new());
-        let mut document = vertex_document(&stub.base);
-        document
-            .connection
-            .0
-            .as_object_mut()
-            .unwrap()
-            .remove("inferenceVertexProjectId");
-        let (backend, _id) = backend();
-        let response = dispatch(
-            &backend,
-            SetupCommand::TestConnection {
-                document: serde_json::to_value(document).unwrap(),
-                secrets: BTreeMap::new(),
-            },
-        );
-        let SetupResponse::Error { error } = response else {
-            panic!("expected an error response");
-        };
-        assert_eq!(error.code, "CONFIG_VALIDATION");
-        assert!(error.message.contains("project"));
-        assert_eq!(stub.hits(), 0, "nothing sent");
-    }
-
-    /// The family's identity kinds — Google sign-in, Workforce, web/external
-    /// identity, vendor profile — are refused before anything sends: their
-    /// sign-in flows were never captured, so they are never emulated
-    /// (`docs/14` §9 item 28). The helper script must never run for them
-    /// either.
-    #[test]
-    fn test_connection_vertex_refuses_the_identity_kinds() {
-        for kind in ["interactive", "workforce", "external-idp", "vendor-profile"] {
-            let stub = StubGateway::serve(Vec::new());
-            let mut document = vertex_document(&stub.base);
-            document
-                .connection
-                .0
-                .as_object_mut()
-                .unwrap()
-                .insert("inferenceCredentialKind".to_string(), json!(kind));
-            let (backend, _id) = backend();
-            let response = dispatch(
-                &backend,
-                SetupCommand::TestConnection {
-                    document: serde_json::to_value(document).unwrap(),
-                    secrets: BTreeMap::new(),
-                },
-            );
-            let SetupResponse::Error { error } = response else {
-                panic!("expected an error response for {kind:?}");
-            };
-            assert_eq!(error.code, "CONFIG_VALIDATION", "{kind:?}");
-            assert!(
-                error.message.contains("cannot be probed"),
-                "{kind:?}: {}",
-                error.message
-            );
-            assert_eq!(stub.hits(), 0, "{kind:?}: nothing sent");
-        }
-    }
-
-    /// A draft that names no credential kind is refused: the lane never
-    /// guesses a source (`docs/09` §2.2 "when set, only that source is
-    /// used"; fail-closed discipline).
-    #[test]
-    fn test_connection_vertex_names_no_kind() {
-        let stub = StubGateway::serve(Vec::new());
-        let mut document = vertex_document(&stub.base);
-        document
-            .connection
-            .0
-            .as_object_mut()
-            .unwrap()
-            .remove("inferenceCredentialKind");
-        let (backend, _id) = backend();
-        let response = dispatch(
-            &backend,
-            SetupCommand::TestConnection {
-                document: serde_json::to_value(document).unwrap(),
-                secrets: BTreeMap::new(),
-            },
-        );
-        let SetupResponse::Error { error } = response else {
-            panic!("expected an error response");
-        };
-        assert_eq!(error.code, "CONFIG_VALIDATION");
-        assert!(error.message.contains("credential kind"));
-        assert_eq!(stub.hits(), 0, "nothing sent");
-    }
-
-    /// No discovery exists for this family: a draft without a `claude-`
-    /// model id is refused before the helper even runs and before anything
-    /// sends (`docs/09` §2.2 "Vertex AI" disables discovery for every kind
-    /// the family offers; `docs/14` §9 item 28).
-    #[test]
-    fn test_connection_vertex_needs_a_drafted_model() {
-        let stub = StubGateway::serve(Vec::new());
-        let mut document = vertex_document(&stub.base);
-        document
-            .connection
-            .0
-            .as_object_mut()
-            .unwrap()
-            .remove("inferenceModels");
-        let (backend, _id) = backend();
-        let response = dispatch(
-            &backend,
-            SetupCommand::TestConnection {
-                document: serde_json::to_value(document).unwrap(),
-                secrets: BTreeMap::new(),
-            },
-        );
-        let SetupResponse::Error { error } = response else {
-            panic!("expected an error response");
-        };
-        assert_eq!(error.code, "PROVIDER_ERROR");
-        assert!(error.message.contains("no claude- model id"));
-        assert_eq!(stub.hits(), 0, "nothing sent");
-    }
 }

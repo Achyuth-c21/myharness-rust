@@ -303,18 +303,6 @@ fn provider_hosts(
                 hosts.push(format!("bedrock-mantle.{region}.api.aws"));
             }
         }
-        Some(ProviderKind::Vertex) => {
-            let region = effective("connection", "inferenceVertexRegion")
-                .and_then(|v| v.as_str().map(str::trim).map(str::to_string))
-                .filter(|s| !s.is_empty());
-            if let Some(url) = base_url("inferenceVertexBaseUrl") {
-                hosts.extend(host_of(&Value::String(url)));
-            }
-            match region {
-                Some(region) => hosts.push(format!("{region}-aiplatform.googleapis.com")),
-                None => hosts.push("aiplatform.googleapis.com".to_string()),
-            }
-        }
         Some(ProviderKind::Foundry) => {
             let resource = effective("connection", "inferenceFoundryResource")
                 .and_then(|v| v.as_str().map(str::trim).map(str::to_string))
@@ -508,17 +496,6 @@ mod tests {
     /// docs/12 §1: the other families' default host shapes.
     #[test]
     fn provider_default_host_shapes() {
-        let vertex = derive(
-            &profile(
-                ProviderKind::Vertex,
-                json!({ "inferenceVertexRegion": "us-central1" }),
-            ),
-            None,
-        );
-        assert!(vertex
-            .hosts()
-            .contains(&"us-central1-aiplatform.googleapis.com".to_string()));
-
         let foundry = derive(
             &profile(
                 ProviderKind::Foundry,

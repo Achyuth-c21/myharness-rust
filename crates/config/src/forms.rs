@@ -2,7 +2,9 @@
 //! docs/09 §2.2; docs/12 §2.2; docs/features/third-party-setup.md "Validation and
 //! error states").
 //!
-//! One schema per provider family (`docs/12` §1 six-provider table), built from the
+//! One schema per supported provider family (the shipped set is six — `docs/12` §1 —
+//! the rebuild carries five; the Vertex family was removed from rebuild scope, owner
+//! decision 2026-10-23, `docs/04` §3.1), built from the
 //! observed flat `inference*` / per-provider key names (`docs/20` §2.1 — the key
 //! index is the naming ground truth). Each [`FieldDef`] carries the metadata the setup
 //! window's renderer needs (label, kind, required marker, options, help text), and
@@ -13,15 +15,14 @@
 //! - **Model-ID policy per family** (`docs/12` §2.2): the Anthropic predicate (family
 //!   accept list + non-Anthropic family denylist) for Claude API, Gateway and Foundry;
 //!   Bedrock accepts `anthropic.*` or Bedrock inference ARNs and warns the underlying
-//!   model is unverified (observed UI warning); Vertex enforces the `claude-` prefix
-//!   and rejects `/ \ ? # %` and whitespace.
+//!   model is unverified (observed UI warning).
 //! - **Custom headers are routing/tenant only** — credential-shaped names and values
 //!   are rejected (`TEST-SEC-004`; `docs/09` §2.2 / §4; `docs/08` "Authorization is
 //!   treated as a credential").
 //! - **Credential kinds are exclusive** (`REQ-SETUP-05`) — the kind enum is singular
 //!   by construction; per-provider offered subsets validated here.
-//! - **Discovery gating**: disabled for mantle static/helper, vertex
-//!   interactive/workforce/helper/vendor (`docs/09` §2.2 provider bullets); Foundry's
+//! - **Discovery gating**: disabled for mantle static/helper (`docs/09` §2.2
+//!   provider bullets); Foundry's
 //!   exact disabled combinations were not captured (`docs/14` §9) and are not
 //!   enforced here.
 //!
@@ -193,12 +194,6 @@ fn schema_kinds(provider: ProviderKind) -> &'static [(&'static str, CredentialKi
             ("Helper script", CredentialKind::HelperScript),
             ("Vendor profile", CredentialKind::VendorProfile),
         ],
-        ProviderKind::Vertex => &[
-            ("Google sign-in", CredentialKind::Interactive),
-            ("Workforce identity", CredentialKind::Workforce),
-            ("Helper script", CredentialKind::HelperScript),
-            ("Vendor profile", CredentialKind::VendorProfile),
-        ],
         ProviderKind::Foundry => &[
             ("Static API key", CredentialKind::Static),
             ("Interactive sign-in", CredentialKind::Interactive),
@@ -356,31 +351,6 @@ pub fn validate_bedrock_model_id(id: &str) -> Result<(), String> {
     ))
 }
 
-/// Vertex model-ID shape (`docs/09` §2.2): starts with `claude-` and contains no
-/// `/`, `\`, `?`, `#`, `%`, or whitespace. `pub` so the family's own adapter can
-/// enforce the policy it cites (`docs/12` §2.2 `TEST-AI-003`; the Claude API
-/// predicate is `pub` for the same reason).
-pub fn validate_vertex_model_id(id: &str) -> Result<(), String> {
-    let id = id.trim();
-    if id.is_empty() {
-        return Err("model id must be non-empty".to_string());
-    }
-    if !id.starts_with("claude-") {
-        return Err(format!(
-            "model id {id:?} must start with \"claude-\" for Vertex AI"
-        ));
-    }
-    if id
-        .chars()
-        .any(|c| c.is_whitespace() || "/\\?#%".contains(c))
-    {
-        return Err(format!(
-            "model id {id:?} contains forbidden characters (/ \\ ? # % or whitespace)"
-        ));
-    }
-    Ok(())
-}
-
 // ---------------------------------------------------------------------------
 // Credential / header shape
 // ---------------------------------------------------------------------------
@@ -490,10 +460,6 @@ pub fn validate_connection(provider: ProviderKind, connection: &Value) -> Vec<Fo
     let kind = parsed_kind.unwrap_or(CredentialKind::Static);
     let static_like = kind == CredentialKind::Static;
     let helper_kind = kind == CredentialKind::HelperScript;
-    let interactive_kind = matches!(
-        kind,
-        CredentialKind::Interactive | CredentialKind::Workforce
-    );
 
     // -- helper-script fields (any family that offers the helper kind) ------------
     if helper_kind {
@@ -654,42 +620,6 @@ pub fn validate_connection(provider: ProviderKind, connection: &Value) -> Vec<Fo
                     "modelDiscoveryEnabled",
                     "model discovery is unavailable for static/helper-script credential kinds"
                         .to_string(),
-                ));
-            }
-        }
-        ProviderKind::Vertex => {
-            if !text_present(get("inferenceVertexProjectId")) {
-                issues.push(error(
-                    "inferenceVertexProjectId",
-                    "GCP project ID is required".to_string(),
-                ));
-            }
-            if !text_present(get("inferenceVertexRegion")) {
-                issues.push(error(
-                    "inferenceVertexRegion",
-                    "GCP region is required".to_string(),
-                ));
-            }
-            if !text_present(get("inferenceVertexCredentialsFile")) {
-                issues.push(error(
-                    "inferenceVertexCredentialsFile",
-                    "GCP credentials file is required".to_string(),
-                ));
-            }
-            if let Some(u) = url_value(get("inferenceVertexBaseUrl")).err() {
-                issues.push(error("inferenceVertexBaseUrl", u));
-            }
-            // Vertex models: claude- prefix, no / \ ? # % or whitespace.
-            validate_model_list(
-                get("inferenceModels"),
-                validate_vertex_model_id,
-                &mut issues,
-            );
-            if discovery_enabled(get("modelDiscoveryEnabled")) && (interactive_kind || helper_kind)
-            {
-                issues.push(warning(
-                    "modelDiscoveryEnabled",
-                    "model discovery is unavailable for interactive/workforce/helper/vendor credential kinds".to_string(),
                 ));
             }
         }
@@ -1085,74 +1015,6 @@ pub fn connection_schema(provider: ProviderKind) -> FormSchema {
                 FieldGroup::Endpoint,
             ));
         }
-        ProviderKind::Vertex => {
-            fields.push(required(field(
-                "inferenceVertexProjectId",
-                "GCP project ID",
-                FieldKind::Text,
-                FieldGroup::Endpoint,
-            )));
-            fields.push(required(field(
-                "inferenceVertexRegion",
-                "GCP region",
-                FieldKind::Text,
-                FieldGroup::Endpoint,
-            )));
-            fields.push(required(field(
-                "inferenceVertexCredentialsFile",
-                "GCP credentials file",
-                FieldKind::Text,
-                FieldGroup::Credentials,
-            )));
-            fields.push(field(
-                "inferenceVertexBaseUrl",
-                "Vertex base URL",
-                FieldKind::Url,
-                FieldGroup::Endpoint,
-            ));
-            fields.push(field(
-                "inferenceVertexOAuthClientId",
-                "OAuth client ID",
-                FieldKind::Text,
-                FieldGroup::Credentials,
-            ));
-            fields.push(field(
-                "inferenceVertexOAuthClientSecret",
-                "OAuth client secret",
-                FieldKind::Secret,
-                FieldGroup::Credentials,
-            ));
-            fields.push(field(
-                "inferenceVertexOAuthLoginHint",
-                "OAuth login hint",
-                FieldKind::Text,
-                FieldGroup::Credentials,
-            ));
-            fields.push(field(
-                "inferenceVertexOAuthScopes",
-                "OAuth scopes",
-                FieldKind::TagList,
-                FieldGroup::Credentials,
-            ));
-            fields.push(field(
-                "inferenceVertexWorkforceAudience",
-                "Workforce audience",
-                FieldKind::Text,
-                FieldGroup::Credentials,
-            ));
-            fields.push(field(
-                "inferenceVertexWorkforceUserProject",
-                "Workforce billing project",
-                FieldKind::Text,
-                FieldGroup::Credentials,
-            ));
-            fields.push(field(
-                "inferenceVertexWorkforceOidc",
-                "Workforce IdP (OIDC)",
-                FieldKind::KeyValue,
-                FieldGroup::Credentials,
-            ));
-        }
         ProviderKind::Foundry => {
             fields.push(required(field(
                 "inferenceFoundryResource",
@@ -1395,7 +1257,6 @@ mod tests {
             ProviderKind::ClaudeApi,
             ProviderKind::Bedrock,
             ProviderKind::BedrockMantle,
-            ProviderKind::Vertex,
             ProviderKind::Foundry,
         ] {
             let issues = connection(provider, json!({}));
@@ -1414,13 +1275,12 @@ mod tests {
         }
     }
 
-    /// The six families must not share a key set: the earlier draft emitted the
+    /// The five supported families must not share a key set: the earlier draft emitted the
     /// Gateway keys for every provider, which contradicted `docs/20` §2.1.
     #[test]
     fn connection_schemas_are_provider_specific() {
         let gateway = connection_schema(ProviderKind::Gateway);
         let bedrock = connection_schema(ProviderKind::Bedrock);
-        let vertex = connection_schema(ProviderKind::Vertex);
         let foundry = connection_schema(ProviderKind::Foundry);
 
         assert!(gateway
@@ -1428,10 +1288,6 @@ mod tests {
             .iter()
             .any(|f| f.key == "inferenceGatewayApiKey"));
         assert!(!bedrock
-            .fields
-            .iter()
-            .any(|f| f.key == "inferenceGatewayApiKey"));
-        assert!(!vertex
             .fields
             .iter()
             .any(|f| f.key == "inferenceGatewayApiKey"));
@@ -1449,10 +1305,6 @@ mod tests {
             .iter()
             .any(|f| f.key == "inferenceBedrockRegion"));
 
-        assert!(vertex
-            .fields
-            .iter()
-            .any(|f| f.key == "inferenceVertexProjectId"));
         assert!(foundry
             .fields
             .iter()
@@ -1482,15 +1334,6 @@ mod tests {
         assert!(validate_anthropic_model_id("llama3-70b").is_err());
         assert!(validate_anthropic_model_id("minimax-m2").is_err());
         assert!(validate_anthropic_model_id("").is_err());
-    }
-
-    /// docs/09 §2.2 — Vertex accepts only `claude-` ids without the forbidden set.
-    #[test]
-    fn vertex_model_id_policy() {
-        assert!(validate_vertex_model_id("claude-sonnet-4@20250514").is_ok());
-        assert!(validate_vertex_model_id("sonnet-4").is_err());
-        assert!(validate_vertex_model_id("claude/sonnet").is_err());
-        assert!(validate_vertex_model_id("claude sonnet").is_err());
     }
 
     /// docs/09 §2.2 — Bedrock accepts the Anthropic vendor prefix or an ARN.

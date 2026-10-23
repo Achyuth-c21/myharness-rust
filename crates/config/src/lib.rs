@@ -41,7 +41,8 @@
 //! Those slots stay `declared, pending` in `docs/17` §4.8.
 //!
 //! Wire-format spelling: `ProviderKind` values follow `docs/12` §1 ("anthropic","bedrock",
-//! "mantle","vertex","foundry","gateway" — the documented provider IDs); `CredentialKind`
+//! "mantle","foundry","gateway"; the shipped "vertex" family is outside rebuild scope,
+//! owner decision 2026-10-23 — `docs/04` §3.1); `CredentialKind`
 //! follows the `docs/09` §2.2 kind table in kebab-case ("static", "helper-script",
 //! "vendor-profile", ...). Per-provider *offered subsets* and exact on-wire renderer
 //! strings beyond these docs were not captured (`docs/20` records classes, not values) —
@@ -83,14 +84,12 @@ pub enum ProviderKind {
     /// Anthropic-compatible gateway (`docs/12` §1: `/v1/messages` + `/v1/models`).
     #[serde(rename = "gateway")]
     Gateway,
-    #[serde(rename = "vertex")]
-    Vertex,
 }
 
 /// Credential source for a provider. Singular by construction: a profile holds at
 /// most one, so "when set, only that source is used (no fallback)" is not a runtime
-/// check but a type invariant (`REQ-SETUP-05`, docs/09 §2.2). The six families follow
-/// the `docs/09` §2.2 credential-kind table (`static`, `helper-script`,
+/// check but a type invariant (`REQ-SETUP-05`, docs/09 §2.2). The supported families
+/// follow the `docs/09` §2.2 credential-kind table (`static`, `helper-script`,
 /// `interactive`, `vendor-profile`, `workforce`, `external-idp`); which subset is
 /// *offered* per provider belongs to the form schemas (`docs/12` §1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -722,12 +721,6 @@ mod tests {
                 "inferenceBedrockMantleRegion": "us-east-1",
                 "inferenceBedrockMantleApiKey": "placeholder-credential",
             }),
-            ProviderKind::Vertex => json!({
-                "inferenceCredentialKind": "static",
-                "inferenceVertexProjectId": "project",
-                "inferenceVertexRegion": "us-central1",
-                "inferenceVertexCredentialsFile": "/tmp/gcp-credentials.json",
-            }),
             ProviderKind::Foundry => json!({
                 "inferenceCredentialKind": "static",
                 "inferenceFoundryResource": "resource",
@@ -932,7 +925,7 @@ mod tests {
     #[test]
     fn rename_updates_doc_and_entry_and_rejects_duplicates() {
         let lib = scratch();
-        let a = lib.create("Alpha", ProviderKind::Vertex).unwrap();
+        let a = lib.create("Alpha", ProviderKind::BedrockMantle).unwrap();
         let b = lib.create("Beta", ProviderKind::Foundry).unwrap();
         lib.rename(a.id.as_ref().unwrap(), "Alpha 2").unwrap();
         assert_eq!(lib.read(a.id.as_ref().unwrap()).unwrap().name.clone(), Some("Alpha 2".into()));

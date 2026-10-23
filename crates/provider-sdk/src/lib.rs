@@ -51,7 +51,8 @@ pub enum ProtocolFamily {
     /// `/v1/messages` + `/v1/models` contract.
     AnthropicMessages,
     /// Anthropic Messages over a cloud transport ("via Bedrock Runtime", "via
-    /// Vertex", "via Foundry" — `docs/12` §1). The string is the provider id.
+    /// Foundry" — `docs/12` §1; the shipped set also lists "via Vertex", removed
+    /// from rebuild scope, `docs/04` §3.1). The string is the provider id.
     AnthropicMessagesViaCloud(&'static str),
 }
 

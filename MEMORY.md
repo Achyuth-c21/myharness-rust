@@ -111,7 +111,8 @@ The live install contains `native-adapter.cjs`: an **in-process Anthropic→Open
 - **Phase 0** — foundations; exit criterion includes a lint rule/test that forbids global
   `fetch` monkey-patching and arbitrary provider URL translation.
 - **Phase 1** — app shell + bridge (this is what exists today).
-- **Phase 3** — adapter order: **gateway → anthropic → bedrock → vertex → mantle → foundry**.
+- **Phase 3** — adapter order: **gateway → anthropic → bedrock → mantle → foundry**. (The
+  Vertex family was **removed from rebuild scope** at the owner's direction, 2026-10-23 — §7c.)
 - `docs/19` priorities: IMP-01 native adapters (P0), IMP-02 per-provider model policy (P0),
   IMP-03 capability-first UI (P0), IMP-04 signed lazy extension packages (P0), IMP-05 native
   protocol families (P1), IMP-06 MiniMax M3.1 Flash as transparent reconstruction default (P1).
@@ -181,9 +182,14 @@ sits in the tree, referenced by nothing - owner decision pending; do not delete 
 ## 7c. Phase 3 state (2026-10-23)
 
 Phase 3 ("Provider adapters", `docs/13` §5) is implemented on the `phase-3` lane
-(cut from `dev` @ `2d2a840`), stacked commits, not merged and not pushed. Slices 1–4
-(through the Vertex adapter) are done. `docs/17` (§4.10–§4.13 rows) and `docs/14` §9
-items 21–28 are updated on disk per the standing policy, never committed.
+(cut from `dev` @ `2d2a840`), stacked commits, not merged and not pushed. Slices 1–3
+(gateway, Claude API, Bedrock) are done. **The Vertex slice (4) was removed from the
+rebuild on 2026-10-23 at the owner's direction** — crate, wire battery, bridge probe
+lane, config form family/keys, egress/export keys, and renderer unlock were deleted
+outright; the Vertex family is out of rebuild scope (the shipped app keeps it,
+`docs/09` §2.2 stays). The pre-removal state is preserved at commit `7b84886` on the
+lane. `docs/17` (§4.10–§4.13 rows) and `docs/14` §9 items 21–28 are updated on disk
+per the standing policy, never committed.
 
 | Slice | Shipped |
 |---|---|
@@ -212,28 +218,7 @@ items 21–28 are updated on disk per the standing policy, never committed.
       `vendor-profile` refused fail-closed; region required; one base override answers
       both surfaces). `validate_bedrock_model_id` became `pub` (the family policy gate).
       Renderer Test connection unlocked for `"gateway" | "anthropic" | "bedrock"`. |
-| 4 | `crates/providers/vertex` — the Vertex AI raw-prediction surface's native adapter
-      (own crate): `POST {base}/v1/projects/{project}/locations/{region}/publishers/google/
-      models/{model}:rawPredict[-stream]` with the Anthropic Messages grammar minus
-      `model` and minus `anthropic_version` (neither is recorded for the family —
-      `docs/14` §9 item 28), data-only SSE (`data:` lines only, optional
-      `data: [DONE]` sentinel completing a turn that already named a stop reason,
-      comments/blank lines are keep-alives never resetting the idle window), resolved
-      Google bearer (`Authorization: Bearer {material}`); the adapter takes resolved
-      material and never mints a token. **No listing and no native count**: both refuse
-      with zero requests (discovery is disabled for every kind the family offers —
-      `docs/09` §2.2). Conditional model echo as in Bedrock. No beta transport →
-      visible refusal. Idle default = the 300-second reading. 21 wire fixtures +
-      10 unit tests. Setup lane `test_connection_vertex`: region and project both
-      required (each forms the request), `inferenceVertexBaseUrl` replaces the
-      region-derived host in full, the draft MUST list a `claude-` id (no discovery
-      fallback exists), the credential kind must be named and **only `helper-script`
-      resolves** (`run_helper`; the interactive/Workforce/`external-idp`/
-      vendor-profile kinds are refused, never emulated — the family has no static
-      slot); the model gate runs before the helper so a refused draft never executes
-      the script. `validate_vertex_model_id` became `pub` for the policy gate.
-      Renderer Test connection unlocked for `"gateway" | "anthropic" | "bedrock" |
-      "vertex"`. |
+| 4 | **Removed (owner decision, 2026-10-23).** The `crates/providers/vertex` adapter, its 21-fixture wire battery and 10 unit tests, the `test_connection_vertex` bridge lane, the Vertex family in `crates/config` (form fields, `validate_vertex_model_id`, egress/export keys, `ProviderKind::Vertex`), and the renderer unlock were deleted. Root cause named by the owner: the wire-test build (reqwest + tokio + mock SSE server, debug-linked) crashed the laptop. Pre-removal snapshot: `7b84886`. |
 
 Durable traps and decisions worth not rediscovering:
 
@@ -260,17 +245,10 @@ Durable traps and decisions worth not rediscovering:
   `test_connection_claude_api` as inherent `ConfigBackend` methods): a `match` arm lives
   in the trait impl, everything else must be inherent — extra fns inside a trait impl
   fail with E0407, not a borrow error.
-- **Slice 4 (Vertex) decisions recorded in `docs/14` §9 item 28, summarized:** the
-  body drops BOTH `model` and `anthropic_version` (the path carries the model;
-  inventing a version declaration is the `AI-ADAPTER-10` shape); the credentials-file
-  field is draft metadata only (no identity-file parsing — service-account JWT
-  signing is an invented surface); the probe credential kind must be *named* — the
-  lane refuses a kindless draft — and only `helper-script` resolves; the probe model
-  gate runs before the credential so a refused draft never executes the helper;
-  streaming is data-only SSE (a `data: [DONE]` sentinel completes the turn only when
-  the message already named a stop reason; otherwise it is contract-incomplete and
-  the stream errors). The bridge tests never point the region-derived host at the
-  internet — the stub always rides the `inferenceVertexBaseUrl` override.
+- **Slice 4 (Vertex): withdrawn with the family on 2026-10-23.** The decisions that
+  slice had recorded lived in `docs/14` §9 item 28, which is retained as the
+  unknown/research record with a removal annotation; the code, fixtures, and the
+  on-disk doc rows they produced sit at `7b84886` on the `phase-3` lane.
 - **The two ad-hoc local SSE mock servers (gateway wire.rs, anthropic wire.rs, bridge
   StubGateway) share a design, not code** — deliberately: adapters must not grow common
   transport plumbing that could drift into a shared gateway-shaped client.

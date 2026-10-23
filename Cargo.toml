@@ -26,7 +26,6 @@ members = [
   "crates/providers/bedrock-mantle",
   "crates/providers/foundry",
   "crates/providers/gateway",
-  "crates/providers/vertex",
 ]
 
 [workspace.package]

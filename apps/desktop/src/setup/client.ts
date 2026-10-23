@@ -23,12 +23,12 @@ export type SetupTab =
   | "egress"
   | "source";
 
-/** The provider families (docs/12 §1). */
+/** The provider families (docs/12 §1; the rebuilt set excludes the shipped Vertex
+ * family — removed from rebuild scope, owner decision 2026-10-23, docs/04 §3.1). */
 export type ProviderKind =
   | "anthropic"
   | "bedrock"
   | "mantle"
-  | "vertex"
   | "foundry"
   | "gateway";
 
