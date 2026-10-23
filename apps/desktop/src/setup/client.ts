@@ -24,13 +24,18 @@ export type SetupTab =
   | "source";
 
 /** The provider families (docs/12 §1; the rebuilt set excludes the shipped Vertex
- * family — removed from rebuild scope, owner decision 2026-10-23, docs/04 §3.1). */
+ * family — removed from rebuild scope, owner decision 2026-10-23, docs/04 §3.1).
+ * The open model layer adds the two OpenAI-compatible families (owner decision
+ * recorded 2026-10-23, docs/14 §9): first-party `openai` and the user-defined
+ * `custom` OpenAI-compatible endpoint (base URL required, key optional). */
 export type ProviderKind =
   | "anthropic"
   | "bedrock"
   | "mantle"
   | "foundry"
-  | "gateway";
+  | "gateway"
+  | "openai"
+  | "custom";
 
 /** A profile as the renderer sees it — never a document. */
 export interface ProfileSummary {
@@ -248,6 +253,43 @@ export async function discoverModels(request: {
         code: "PROVIDER_UNREACHABLE",
         message:
           typeof error === "string" ? error : "The gateway could not be reached.",
+        retryable: true,
+      },
+    };
+  }
+}
+
+/**
+ * Run model discovery against an OpenAI-compatible endpoint — the open
+ * model layer's families (`docs/13` §C): first-party `openai` (base URL
+ * optional, defaulting to the first-party host) and the user-defined
+ * `custom` endpoint, whose credential is optional (`docs/14` §9 owner
+ * decision).
+ *
+ * The credential travels on the request — the user typed it — and is never
+ * stored by the probe.
+ */
+export async function discoverOpenAiModels(request: {
+  kind: "openai" | "custom";
+  baseUrl: string;
+  apiKey?: string;
+  customHeaders?: Record<string, string>;
+}): Promise<DiscoveryOutcome | { error: BridgeError }> {
+  try {
+    return await invoke<DiscoveryOutcome>("setup_discover_openai_models", {
+      request: {
+        kind: request.kind,
+        baseUrl: request.baseUrl,
+        apiKey: request.apiKey ?? null,
+        customHeaders: Object.entries(request.customHeaders ?? {}),
+      },
+    });
+  } catch (error) {
+    return {
+      error: {
+        code: "PROVIDER_UNREACHABLE",
+        message:
+          typeof error === "string" ? error : "The provider could not be reached.",
         retryable: true,
       },
     };

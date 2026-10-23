@@ -28,6 +28,7 @@ use std::collections::BTreeMap;
 
 use myharness_provider_anthropic::AnthropicAdapter;
 use myharness_provider_gateway::{GatewayAdapter, GatewayClientConfig, ProbeStatus};
+use myharness_provider_openai::{AdapterKind, OpenAiClientConfig, OpenAiCompatAdapter};
 use myharness_provider_sdk::{AuthContext, ErrorClass, ProviderAdapter, ProviderError};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -328,13 +329,22 @@ impl SetupBackend for ConfigBackend {
             // (roadmap order — `docs/13` Phase 3). The Vertex family was
             // removed from rebuild scope entirely (owner decision,
             // 2026-10-23 — `docs/04` §3.1).
-            ProviderKind::BedrockMantle
-            | ProviderKind::Foundry
-            // The open model layer's lanes land with the OpenAI-compat
-            // adapter (`docs/13` §C); until then they stay here rather than
-            // being faked.
-            | ProviderKind::OpenAi
-            | ProviderKind::Custom => {
+            // The open model layer's families probe through ONE shared lane:
+            // both speak the OpenAI Chat Completions wire through the
+            // `crates/providers/openai` wall (`docs/13` §C; `docs/14` §9
+            // owner decision, 2026-10-23). The family only decides the
+            // base-URL defaulting, the credential's requiredness, and the
+            // offered helper kind.
+            ProviderKind::OpenAi => self
+                .test_connection_openai_compat(document, typed, OpenAiCompatFamily::first_party()),
+            ProviderKind::Custom => self
+                .test_connection_openai_compat(document, typed, OpenAiCompatFamily::custom()),
+            // The remaining families have no native adapter in this slice;
+            // their probe lanes arrive with their own adapters (roadmap
+            // order — `docs/13` Phase 3). The Vertex family was removed
+            // from rebuild scope entirely (owner decision, 2026-10-23 —
+            // `docs/04` §3.1).
+            ProviderKind::BedrockMantle | ProviderKind::Foundry => {
                 Err(BridgeError::new(
                     "CONFIG_VALIDATION",
                     "this probe verifies the gateway, Claude API, and Bedrock families with native adapters; the other families' probe lanes land with their adapters",
@@ -692,6 +702,110 @@ impl ConfigBackend {
                 .map(bedrock_probe_status_to_renderer)
         })
     }
+
+    /// The open model layer's shared probe lane (`docs/13` §C; the owner
+    /// decision recorded 2026-10-23 in `docs/14` §9): a real one-token chat
+    /// completion against the family's wire — `openai` at its first-party
+    /// endpoint by default, `custom` at the user's base URL, with a
+    /// keyless pass-through for servers that serve without a credential.
+    /// The draft's first model id runs the probe (any id the user named is
+    /// probeable since the open model layer — no predicate); an empty list
+    /// falls back to the endpoint's own listing. Nothing the probe learns
+    /// is persisted.
+    fn test_connection_openai_compat(
+        &self,
+        document: &ProfileDocument,
+        typed: &BTreeMap<String, String>,
+        family: OpenAiCompatFamily,
+    ) -> Result<ProbeStatus, BridgeError> {
+        let connection = &document.connection.0;
+        let base = connection
+            .get(family.base_key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or("")
+            .to_string();
+        if base.is_empty() && matches!(family.kind, AdapterKind::Custom) {
+            return Err(BridgeError::new(
+                "CONFIG_VALIDATION",
+                "the custom base URL is required for the connection probe",
+            ));
+        }
+        let idle = connection
+            .get("inferenceStreamIdleTimeoutSec")
+            .and_then(Value::as_u64)
+            .map(std::time::Duration::from_secs)
+            .unwrap_or(myharness_provider_openai::DEFAULT_IDLE_TIMEOUT);
+        let custom_headers = custom_headers_for_probe(connection)?;
+
+        // The credential source: static slots (typed value first, the
+        // draft's own value second, the stored keychain handle next) or the
+        // family's helper script. The `custom` family's credential is
+        // OPTIONAL (`docs/14` §9 owner decision): an absent slot is a
+        // keyless send, not a refusal.
+        let credential = resolve_optional_probe_credential(
+            connection,
+            typed,
+            self.secrets.as_ref(),
+            family.slot_key,
+            family.allow_helper,
+        )?;
+        let secret = match credential {
+            Some(ProbeCredential::Value(secret)) => secret,
+            Some(ProbeCredential::Helper(config)) => {
+                myharness_secrets::helper::run_helper(&config, cfg!(windows))
+                    .map_err(bridge_secret_error)?
+            }
+            None => secrecy::SecretString::from(String::new()),
+        };
+
+        let config = OpenAiClientConfig {
+            kind: family.kind,
+            base_url: base,
+            idle_timeout: idle,
+            custom_headers,
+        };
+        let adapter = OpenAiCompatAdapter::new(config, reqwest::Client::new());let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| {
+                BridgeError::new(
+                    "CONFIG_IO",
+                    format!("the probe runtime could not start: {error}"),
+                )
+            })?;
+        runtime.block_on(async {
+            let auth_label = "setup test connection";
+            // Two calls, one probe session, one credential: discovery picks
+            // the target when the draft lists none, then the probe infers
+            // against it — a one-token request whose answer must echo the
+            // requested model (prefix-legal).
+            let model_id = match first_probe_model(connection) {
+                Some(model) => model,
+                None => {
+                    let models = adapter
+                        .list_models(&AuthContext::new(secret.clone(), auth_label))
+                        .await
+                        .map_err(bridge_provider_error)?;
+                    models
+                        .iter()
+                        .map(|model| model.key.model_id.clone())
+                        .next()
+                        .ok_or_else(|| {
+                            BridgeError::new(
+                                "PROVIDER_ERROR",
+                                "the endpoint advertised no model for a probe",
+                            )
+                        })?
+                }
+            };
+            adapter
+                .probe_inference(&AuthContext::new(secret.clone(), auth_label), &model_id)
+                .await
+                .map_err(bridge_provider_error)
+                .map(openai_probe_status_to_renderer)
+        })
+    }
 }
 
 /// Map the Bedrock adapter's probe verdict onto the setup response's probe
@@ -720,6 +834,95 @@ fn probe_status_to_renderer(status: myharness_provider_anthropic::ProbeStatus) -
         output_tokens: status.output_tokens,
         latency_ms: status.latency_ms,
     }
+}
+
+/// Map the OpenAI-compat adapter's probe verdict onto the setup response's
+/// probe type (`Probe { probe }`): identical fields, one typed seam.
+fn openai_probe_status_to_renderer(status: myharness_provider_openai::ProbeStatus) -> ProbeStatus {
+    ProbeStatus {
+        ok: status.ok,
+        model: status.model,
+        stop_reason: status.stop_reason,
+        input_tokens: status.input_tokens,
+        output_tokens: status.output_tokens,
+        latency_ms: status.latency_ms,
+    }
+}
+
+/// The open model layer's two wire families — the `openai`-vs-`custom`
+/// spelling of the SAME native wire (`docs/14` §9 owner decision,
+/// 2026-10-23). One probe lane serves both; the family decides the base URL
+/// defaulting, the credential's requiredness, and the offered helper kind.
+struct OpenAiCompatFamily {
+    kind: AdapterKind,
+    /// The connection section's base-URL field for this family.
+    base_key: &'static str,
+    /// The connection section's credential slot for this family.
+    slot_key: &'static str,
+    /// `custom` offers the helper-script credential kind; `openai` is
+    /// static-key only (the forms' offered sets).
+    allow_helper: bool,
+}
+
+impl OpenAiCompatFamily {
+    /// The first-party family: a static key is the only offered credential;
+    /// an empty base URL falls to the adapter's first-party default.
+    fn first_party() -> Self {
+        Self {
+            kind: AdapterKind::OpenAi,
+            base_key: "inferenceOpenAiBaseUrl",
+            slot_key: "inferenceOpenAiApiKey",
+            allow_helper: false,
+        }
+    }
+
+    /// The user-defined family: a base URL is required (the lane refuses
+    /// its absence), the credential is optional, and a company gateway can
+    /// resolve its key through the helper script.
+    fn custom() -> Self {
+        Self {
+            kind: AdapterKind::Custom,
+            base_key: "inferenceCustomBaseUrl",
+            slot_key: "inferenceCustomApiKey",
+            allow_helper: true,
+        }
+    }
+}
+
+/// The open model layer's optional-credential variant (`docs/14` §9 owner
+/// decision): when the family's credential is optional, an absent or blank
+/// slot anywhere — user-typed, draft, or stored — resolves to `None`, which
+/// the lane turns into a keyless send. A credential-required family (the
+/// first-party `openai` one) keeps no flag here: its adapter's
+/// `authenticate` refuses an empty credential before any bytes.
+/// A malformed stored handle and a stored handle missing its value remain
+/// errors on every family.
+fn resolve_optional_probe_credential(
+    connection: &Value,
+    typed: &BTreeMap<String, String>,
+    store: &dyn SecretStore,
+    slot_key: &'static str,
+    allow_helper: bool,
+) -> Result<Option<ProbeCredential>, BridgeError> {
+    let typed_key = format!("connection/{slot_key}");
+    let typed_present = typed
+        .get(&typed_key)
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    let slot_present = match connection.get(slot_key) {
+        Some(Value::String(value)) => !value.trim().is_empty(),
+        Some(Value::Object(_)) => true,
+        _ => false,
+    };
+    if !typed_present && !slot_present {
+        // No credential material anywhere for this family: the default is
+        // the documented keyless send — never a substituted guess.
+        return Ok(None);
+    }
+    // Life is then the strict resolver's; its refusals are real ones.
+    Ok(Some(resolve_probe_credential(
+        connection, typed, store, slot_key, allow_helper,
+    )?))
 }
 
 /// The probe's credential source. `Helper` carries the configured helper; its
@@ -2302,6 +2505,177 @@ mod tests {
         };
         assert!(probe.ok);
         assert_eq!(stub.hits(), 1, "one-token inference, no discovery");
+    }
+
+    // -------------------------------------------------------------------
+    // The open model layer's probe lanes (`docs/13` §C) — openai + custom
+    // -------------------------------------------------------------------
+
+    /// An OpenAI-compat completion the stub answers with (the adapter's
+    /// probe shape: one text part, exact usage, `stop`).
+    fn openai_completion() -> serde_json::Value {
+        json!({
+            "id": "chatcmpl-9",
+            "object": "chat.completion",
+            "model": "gpt-4o",
+            "choices": [ { "index": 0,
+                "message": { "role": "assistant", "content": "pong" },
+                "finish_reason": "stop" } ],
+            "usage": { "prompt_tokens": 3, "completion_tokens": 1 }
+        })
+    }
+
+    /// A first-party OpenAI draft over the live stub (the family's own
+    /// field spellings; the shared model-list key).
+    fn openai_document(stub: &str) -> ProfileDocument {
+        let (backend, id) = backend();
+        let mut document = backend.library().read(&id).unwrap();
+        document.provider = Some(ProviderKind::OpenAi);
+        document.connection = myharness_config::Section(json!({
+            "inferenceOpenAiBaseUrl": stub,
+            "inferenceOpenAiApiKey": "sk-EXAMPLE-FAMILY",
+            "inferenceModels": ["gpt-4o"],
+        }));
+        document
+    }
+
+    /// `docs/13` §C — the openai family's probe is a real one-token
+    /// completion through the shared OpenAI-compat lane; the draft's first
+    /// id runs it, and nothing the probe learns is persisted.
+    #[test]
+    fn test_connection_probes_the_openai_family() {
+        let stub = StubGateway::serve(vec![canned(
+            200,
+            "application/json",
+            &response_bytes(&openai_completion()),
+        )]);
+        let document = openai_document(&stub.base);
+        let (backend, id) = backend();
+        let response = dispatch(
+            &backend,
+            SetupCommand::TestConnection {
+                document: serde_json::to_value(document).unwrap(),
+                secrets: BTreeMap::new(),
+            },
+        );
+        let SetupResponse::Probe { probe } = response else {
+            panic!("expected a probe response");
+        };
+        assert!(probe.ok);
+        assert_eq!(probe.model, "gpt-4o");
+        assert_eq!(stub.hits(), 1);
+        let reread = backend.library().read(&id).unwrap();
+        assert!(
+            reread.connection.0.get("inferenceModels").is_none(),
+            "the probe must not have persisted the draft"
+        );
+    }
+
+    /// The renderer's typed secret (keyed `connection/<fieldKey>`) sits in
+    /// the family's slot for the openai family too, and is never persisted.
+    #[test]
+    fn test_connection_uses_the_typed_secret_for_the_openai_family() {
+        let stub = StubGateway::serve(vec![canned(
+            200,
+            "application/json",
+            &response_bytes(&openai_completion()),
+        )]);
+        let (backend, id) = backend();
+        let mut document = openai_document(&stub.base);
+        document
+            .connection
+            .0
+            .as_object_mut()
+            .unwrap()
+            .remove("inferenceOpenAiApiKey");
+        let mut secrets = BTreeMap::new();
+        secrets.insert(
+            "connection/inferenceOpenAiApiKey".to_string(),
+            "sk-TYPED-EXAMPLE".to_string(),
+        );
+        let response = dispatch(
+            &backend,
+            SetupCommand::TestConnection {
+                document: serde_json::to_value(document).unwrap(),
+                secrets,
+            },
+        );
+        let SetupResponse::Probe { probe } = response else {
+            panic!("expected a probe response");
+        };
+        assert!(probe.ok);
+        assert_eq!(stub.hits(), 1);
+        let reread = backend.library().read(&id).unwrap();
+        assert!(
+            reread.connection.0.get("inferenceOpenAiApiKey").is_none(),
+            "the typed secret must not have been persisted"
+        );
+    }
+
+    /// The `custom` family's keyless case: no credential material anywhere,
+    /// and the probe still runs — the keyless send is the family's rule
+    /// (`docs/14` §9 owner decision). The header rule itself is the wire
+    /// battery's (`crates/providers/openai/tests/wire.rs`).
+    #[test]
+    fn test_connection_runs_the_custom_family_keyless() {
+        let stub = StubGateway::serve(vec![canned(
+            200,
+            "application/json",
+            &response_bytes(&openai_completion()),
+        )]);
+        let (backend, id) = backend();
+        let mut document = backend.library().read(&id).unwrap();
+        document.provider = Some(ProviderKind::Custom);
+        document.connection = myharness_config::Section(json!({
+            "inferenceCustomBaseUrl": &stub.base,
+            "inferenceModels": ["gpt-4o"],
+        }));
+        let response = dispatch(
+            &backend,
+            SetupCommand::TestConnection {
+                document: serde_json::to_value(document).unwrap(),
+                secrets: BTreeMap::new(),
+            },
+        );
+        let SetupResponse::Probe { probe } = response else {
+            panic!("expected a probe response");
+        };
+        assert!(probe.ok);
+        assert_eq!(stub.hits(), 1);
+        let reread = backend.library().read(&id).unwrap();
+        assert!(
+            reread.connection.0.get("inferenceCustomBaseUrl").is_none(),
+            "the probe must not have persisted the draft"
+        );
+    }
+
+    /// The first-party family's empty credential refuses at the lane before
+    /// anything sends (`AI-PROVIDER-03`: the adapter's `authenticate`,
+    /// no invented credential). The `custom` family never takes this path.
+    #[test]
+    fn test_connection_blocks_an_openai_send_without_a_credential() {
+        let stub = StubGateway::serve(Vec::new());
+        let (backend, _id) = backend();
+        let mut document = openai_document(&stub.base);
+        document
+            .connection
+            .0
+            .as_object_mut()
+            .unwrap()
+            .remove("inferenceOpenAiApiKey");
+        let response = dispatch(
+            &backend,
+            SetupCommand::TestConnection {
+                document: serde_json::to_value(document).unwrap(),
+                secrets: BTreeMap::new(),
+            },
+        );
+        let SetupResponse::Error { error } = response else {
+            panic!("expected an error response");
+        };
+        assert_eq!(error.code, "PROVIDER_ERROR");
+        assert!(error.message.contains("credential is empty"));
+        assert_eq!(stub.hits(), 0, "zero requests must have travelled");
     }
 
 }

@@ -43,6 +43,12 @@ pub use myharness_provider_gateway::discovery::{
     ANTHROPIC_VERSION, DISCOVERY_MAX_PAGES, DISCOVERY_PAGE_TIMEOUT,
 };
 
+pub use myharness_provider_openai::discovery::{
+    discover_models as openai_adapter_discover_models,
+    DiscoveryOutcome as OpenAiDiscoveryOutcome,
+    DiscoveryRequest as OpenAiDiscoveryRequest,
+};
+
 /// Run model discovery against an Anthropic-compatible gateway (the setup
 /// probe path).
 ///
@@ -62,6 +68,24 @@ pub async fn discover_models(
     // The mapping is the setup bridge's one mapper: the provider's message
     // verbatim, the codes the setup window matches on (`docs/18` §11).
     adapter_discover_models(request, client)
+        .await
+        .map_err(crate::setup::bridge_provider_error)
+}
+
+/// Run model discovery against an OpenAI-compatible endpoint — the open
+/// model layer's families (`docs/13` §C: first-party `openai` and the
+/// user-defined `custom` endpoint, key optional).
+///
+/// The same wrapper posture as the gateway probe: the adapter's classes map
+/// onto the setup bridge's codes with the provider's message verbatim
+/// (`docs/18` §11); a keyless `custom` request sends no `authorization`
+/// header (`docs/14` §9 owner decision), and no error envelope ever carries
+/// a raw response body.
+pub async fn discover_openai_models(
+    request: &OpenAiDiscoveryRequest,
+    client: &reqwest::Client,
+) -> Result<OpenAiDiscoveryOutcome, BridgeError> {
+    openai_adapter_discover_models(request, client)
         .await
         .map_err(crate::setup::bridge_provider_error)
 }

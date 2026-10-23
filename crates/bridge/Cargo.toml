@@ -8,6 +8,7 @@ myharness-config = { path = "../config" }
 myharness-provider-anthropic = { path = "../providers/anthropic" }
 myharness-provider-bedrock = { path = "../providers/bedrock" }
 myharness-provider-gateway = { path = "../providers/gateway" }
+myharness-provider-openai = { path = "../providers/openai" }
 myharness-provider-sdk = { path = "../provider-sdk" }
 myharness-secrets = { path = "../secrets" }
 reqwest = { workspace = true }
