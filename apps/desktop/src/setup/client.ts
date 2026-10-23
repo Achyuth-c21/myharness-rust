@@ -23,14 +23,19 @@ export type SetupTab =
   | "egress"
   | "source";
 
-/** The provider families (docs/12 §1). */
+/** The provider families (docs/12 §1; the rebuilt set excludes the shipped Vertex
+ * family — removed from rebuild scope, owner decision 2026-10-23, docs/04 §3.1).
+ * The open model layer adds the two OpenAI-compatible families (owner decision
+ * recorded 2026-10-23, docs/14 §9): first-party `openai` and the user-defined
+ * `custom` OpenAI-compatible endpoint (base URL required, key optional). */
 export type ProviderKind =
   | "anthropic"
   | "bedrock"
   | "mantle"
-  | "vertex"
   | "foundry"
-  | "gateway";
+  | "gateway"
+  | "openai"
+  | "custom";
 
 /** A profile as the renderer sees it — never a document. */
 export interface ProfileSummary {
@@ -140,7 +145,8 @@ export type SetupResponse =
   | { type: "egress"; allowlist: EgressAllowlist }
   | { type: "schema"; schema: Schema }
   | { type: "issues"; issues: FormIssue[] }
-  | { type: "error"; error: BridgeError };
+  | { type: "error"; error: BridgeError }
+  | { type: "probe"; probe: ProbeStatus };
 
 export type SetupCommand =
   | { type: "listProfiles" }
@@ -156,7 +162,31 @@ export type SetupCommand =
   | { type: "egress" }
   | { type: "tabSchema"; tab: SetupTab }
   | { type: "connectionSchema"; provider: ProviderKind }
-  | { type: "validate"; document: ProfileDocument };
+  | { type: "validate"; document: ProfileDocument }
+  | {
+      type: "testConnection";
+      document: ProfileDocument;
+      secrets: Record<string, string>;
+    };
+
+/**
+ * The *Test connection* verdict: a real probe inference (docs/13 Phase 3).
+ * `ok` means the provider answered for the requested model; exact usage,
+ * latency, and the native stop reason ride along. The shape is shared by
+ * every probe-capable family, so the setup window stays family-agnostic.
+ */
+export interface ProbeStatus {
+  ok: boolean;
+  /** The model the provider says it ran (== the requested id). */
+  model: string;
+  /** The native stop reason, preserved. */
+  stopReason: string | null;
+  /** Exact tokens as the provider reported. */
+  inputTokens: number;
+  outputTokens: number;
+  /** Wall time around the native request, in milliseconds. */
+  latencyMs: number;
+}
 
 /**
  * Send one command. The bridge rejects an unknown command and validates every
@@ -205,7 +235,7 @@ export interface DiscoveryOutcome {
 export async function discoverModels(request: {
   baseUrl: string;
   apiKey?: string;
-  authScheme?: "bearer" | "xApiKey";
+  authScheme?: "bearer" | "x-api-key";
   customHeaders?: Record<string, string>;
 }): Promise<DiscoveryOutcome | { error: BridgeError }> {
   try {
@@ -227,6 +257,57 @@ export async function discoverModels(request: {
       },
     };
   }
+}
+
+/**
+ * Run model discovery against an OpenAI-compatible endpoint — the open
+ * model layer's families (`docs/13` §C): first-party `openai` (base URL
+ * optional, defaulting to the first-party host) and the user-defined
+ * `custom` endpoint, whose credential is optional (`docs/14` §9 owner
+ * decision).
+ *
+ * The credential travels on the request — the user typed it — and is never
+ * stored by the probe.
+ */
+export async function discoverOpenAiModels(request: {
+  kind: "openai" | "custom";
+  baseUrl: string;
+  apiKey?: string;
+  customHeaders?: Record<string, string>;
+}): Promise<DiscoveryOutcome | { error: BridgeError }> {
+  try {
+    return await invoke<DiscoveryOutcome>("setup_discover_openai_models", {
+      request: {
+        kind: request.kind,
+        baseUrl: request.baseUrl,
+        apiKey: request.apiKey ?? null,
+        customHeaders: Object.entries(request.customHeaders ?? {}),
+      },
+    });
+  } catch (error) {
+    return {
+      error: {
+        code: "PROVIDER_UNREACHABLE",
+        message:
+          typeof error === "string" ? error : "The provider could not be reached.",
+        retryable: true,
+      },
+    };
+  }
+}
+
+/**
+ * Run the Connection tab's *Test connection* (docs/13 Phase 3): a real
+ * one-token inference against the gateway through the native adapter. The
+ * typed credential rides `secrets` exactly like the write path; the draft is
+ * never persisted, and a stored credential is never substituted for a typed
+ * one or vice versa.
+ */
+export function testConnection(
+  document: ProfileDocument,
+  secrets: Record<string, string>,
+): Promise<SetupResponse> {
+  return setup({ type: "testConnection", document, secrets });
 }
 
 /** Open the separate setup window (docs/09 §2.1). */

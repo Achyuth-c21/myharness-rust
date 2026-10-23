@@ -1,0 +1,19 @@
+[package]
+name = "myharness-provider-openai"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+myharness-config = { path = "../../config" }
+myharness-provider-sdk = { path = "../../provider-sdk" }
+async-trait = { workspace = true }
+futures = { workspace = true }
+reqwest = { workspace = true }
+secrecy = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+bytes = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

@@ -41,11 +41,14 @@
 //! Those slots stay `declared, pending` in `docs/17` §4.8.
 //!
 //! Wire-format spelling: `ProviderKind` values follow `docs/12` §1 ("anthropic","bedrock",
-//! "mantle","vertex","foundry","gateway" — the documented provider IDs); `CredentialKind`
-//! follows the `docs/09` §2.2 kind table in kebab-case ("static", "helper-script",
-//! "vendor-profile", ...). Per-provider *offered subsets* and exact on-wire renderer
-//! strings beyond these docs were not captured (`docs/20` records classes, not values) —
-//! covered as an unknown in `docs/14` §9; the `claudeAiImport` mapping translates freely.
+//! "mantle","foundry","gateway"; the shipped "vertex" family is outside rebuild scope,
+//! owner decision 2026-10-23 — `docs/04` §3.1) plus the open-model-layer families the
+//! owner added the same day ("openai", "custom" — `docs/13` §C, `docs/14` §9);
+//! `CredentialKind` follows the `docs/09` §2.2 kind table in kebab-case ("static",
+//! "helper-script", "vendor-profile", ...). Per-provider *offered subsets* and exact
+//! on-wire renderer strings beyond these docs were not captured (`docs/20` records
+//! classes, not values) — covered as an unknown in `docs/14` §9; the `claudeAiImport`
+//! mapping translates freely.
 
 use std::fs;
 use std::io::Write as _;
@@ -83,14 +86,23 @@ pub enum ProviderKind {
     /// Anthropic-compatible gateway (`docs/12` §1: `/v1/messages` + `/v1/models`).
     #[serde(rename = "gateway")]
     Gateway,
-    #[serde(rename = "vertex")]
-    Vertex,
+    /// First-party OpenAI (owner decision 2026-10-23, the open model layer —
+    /// `docs/13` §C, `docs/14` §9): the OpenAI Chat Completions wire, first-party
+    /// endpoint by default and overridable.
+    #[serde(rename = "openai")]
+    OpenAi,
+    /// A user-defined OpenAI-compatible endpoint — any base URL that speaks the
+    /// OpenAI Chat Completions surface (`/models` + `/chat/completions`). The
+    /// owner-defined families' spellings are recorded like every other
+    /// rebuild-defined key (`docs/14` §9).
+    #[serde(rename = "custom")]
+    Custom,
 }
 
 /// Credential source for a provider. Singular by construction: a profile holds at
 /// most one, so "when set, only that source is used (no fallback)" is not a runtime
-/// check but a type invariant (`REQ-SETUP-05`, docs/09 §2.2). The six families follow
-/// the `docs/09` §2.2 credential-kind table (`static`, `helper-script`,
+/// check but a type invariant (`REQ-SETUP-05`, docs/09 §2.2). The supported families
+/// follow the `docs/09` §2.2 credential-kind table (`static`, `helper-script`,
 /// `interactive`, `vendor-profile`, `workforce`, `external-idp`); which subset is
 /// *offered* per provider belongs to the form schemas (`docs/12` §1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -722,17 +734,19 @@ mod tests {
                 "inferenceBedrockMantleRegion": "us-east-1",
                 "inferenceBedrockMantleApiKey": "placeholder-credential",
             }),
-            ProviderKind::Vertex => json!({
-                "inferenceCredentialKind": "static",
-                "inferenceVertexProjectId": "project",
-                "inferenceVertexRegion": "us-central1",
-                "inferenceVertexCredentialsFile": "/tmp/gcp-credentials.json",
-            }),
             ProviderKind::Foundry => json!({
                 "inferenceCredentialKind": "static",
                 "inferenceFoundryResource": "resource",
                 "inferenceFoundryApiKey": "placeholder-credential",
                 "inferenceFoundryDeploymentName": "claude-opus-4-1",
+            }),
+            ProviderKind::OpenAi => json!({
+                "inferenceCredentialKind": "static",
+                "inferenceOpenAiApiKey": "placeholder-credential",
+            }),
+            ProviderKind::Custom => json!({
+                "inferenceCredentialKind": "static",
+                "inferenceCustomBaseUrl": "https://gateway.selfhosted.example/v1",
             }),
         }
     }
@@ -842,20 +856,21 @@ mod tests {
             "the previously applied profile must stay active"
         );
 
-        // A profile with a non-Anthropic model id is refused too (docs/12 §2.2).
-        let mut bad_model = create_ready(&lib, "Bad model", ProviderKind::Gateway);
-        bad_model.connection = Section(json!({
+        // A non-Anthropic model id is accepted since the open model layer
+        // (owner decision 2026-10-23, `docs/14` §9): the shipped `docs/12`
+        // §2.2 Anthropic-policy refusal no longer governs the rebuild. The
+        // profile applies; whatever the endpoint then does with the id is the
+        // endpoint's own error surface.
+        let mut open_model = create_ready(&lib, "Open model", ProviderKind::Gateway);
+        open_model.connection = Section(json!({
             "inferenceCredentialKind": "static",
             "inferenceGatewayBaseUrl": "https://gateway.example",
             "inferenceGatewayApiKey": "placeholder-credential",
             "inferenceModels": ["gpt-4o"],
         }));
-        lib.write(&bad_model).unwrap();
-        error_contains(
-            lib.apply(bad_model.id.as_ref().unwrap()).unwrap_err(),
-            "CONFIG_VALIDATION",
-        );
-        assert_eq!(lib.active().unwrap().map(|e| e.id.clone()), good.id);
+        lib.write(&open_model).unwrap();
+        lib.apply(open_model.id.as_ref().unwrap()).unwrap();
+        assert_eq!(lib.active().unwrap().map(|e| e.id.clone()), open_model.id, "the open-model profile applied");
     }
 
     /// TEST-CFG-005 (docs/18 §10): a disk-level write failure refuses the operation
@@ -932,7 +947,7 @@ mod tests {
     #[test]
     fn rename_updates_doc_and_entry_and_rejects_duplicates() {
         let lib = scratch();
-        let a = lib.create("Alpha", ProviderKind::Vertex).unwrap();
+        let a = lib.create("Alpha", ProviderKind::BedrockMantle).unwrap();
         let b = lib.create("Beta", ProviderKind::Foundry).unwrap();
         lib.rename(a.id.as_ref().unwrap(), "Alpha 2").unwrap();
         assert_eq!(lib.read(a.id.as_ref().unwrap()).unwrap().name.clone(), Some("Alpha 2".into()));

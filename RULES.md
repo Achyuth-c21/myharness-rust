@@ -29,7 +29,8 @@ that requires a stated reason to deviate.
 
 ## 2. Provider and agent layer — the sharpest prohibitions
 
-Source: `docs/12` (§2–§8), `docs/13` (non-goals), `README.md` (conventions).
+Source: `docs/12` (§2–§8), `docs/13` (non-goals, §C open model layer), `docs/14` §9
+(the recorded owner decisions), `README.md` (conventions).
 
 - **[HARD]** **No global `fetch` monkey-patching.** No provider adapter may patch, wrap, or
   replace global network primitives. Phase 0 exit criterion includes a lint rule / test that
@@ -40,10 +41,22 @@ Source: `docs/12` (§2–§8), `docs/13` (non-goals), `README.md` (conventions).
 - **[HARD]** **No silent model substitution.** Never resolve a requested model to a different
   model. Model identity is provider + native model id + variant + profile/config revision
   (`docs/12` §4).
-- **[HARD]** **No policy bypass.** Never implement "allow anything" escapes. The model-ID
-  policy is per-provider, with per-provider validators (`docs/12` §2.2); `docs/19` IMP-02
-  states plainly: *no `return true` escape hatch*.
-- **[HARD]** **No bypassing provider model policy** in any form (`docs/13` non-goals).
+- **[HARD]** **No invented model policy.** The open model layer (owner decision
+  recorded 2026-10-23, `docs/13` §C; `docs/14` §9) applies no model-ID family
+  filters: the harness takes any model id any provider serves, and every id
+  travels to the provider verbatim. A nonconforming id is the provider's own
+  error to reject, and the adapter surfaces that wire error verbatim — never a
+  locally invented refusal. This supersedes the earlier per-provider family
+  gates; resurrecting one requires an owner decision. (What this prohibition
+  forbids is the negative fixture's mode, `AI-ADAPTER-01..14` (`docs/12` §7):
+  a locally coded stand-in for provider behavior, such as that adapter's
+  `So → true`. The pivot removed policy; it did not license lying about a
+  wire.)
+- **[HARD]** **No fake validators.** The `docs/19` IMP-02 prohibition stands
+  unchanged for any validation that remains: a validator checks exactly what
+  it documents or does not exist — no `return true` escape hatch. Shape checks
+  that survive the pivot (e.g. `validate_open_model_id`'s non-empty-id check)
+  validate shape only.
 - **[HARD]** **Unknown capability = unsupported.** If a capability cannot be detected, it is
   disabled — never assumed present (`docs/12` §8; `docs/14` §9).
 - **[HARD]** **Never silently drop reasoning blocks, tool-result images, or any multimodal

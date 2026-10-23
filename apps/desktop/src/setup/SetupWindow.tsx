@@ -16,8 +16,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Field } from "./fields";
 import {
   discoverModels,
+  discoverOpenAiModels,
+  testConnection,
   setup,
   type ConfigHealth,
+  type DiscoveryOutcome,
   type EgressAllowlist,
   type ExportBundle,
   type FieldDef,
@@ -26,6 +29,7 @@ import {
   type ProfileSummary,
   type Schema,
   type SetupTab,
+  type ProviderKind,
 } from "./client";
 import "./setup.css";
 
@@ -54,6 +58,22 @@ const EGRESS_GROUP_LABELS: Record<string, string> = {
   "user-mcp-runtime": "User MCP & Python runtime",
   "ssh-identity-endpoints": "SSH & identity endpoints",
 };
+
+/** The provider families the family picker offers (`docs/12` §1's rebuilt
+ * set plus the open model layer's `docs/13` §C families; the shipped Vertex
+ * family was removed from rebuild scope, owner decision 2026-10-23,
+ * `docs/04` §3.1). The two pending-at-the-back families have no native
+ * adapter yet (`docs/13` Phase 3): their forms exist but their probe and
+ * send stay locked rather than faked. */
+const FAMILY_OPTIONS: { value: ProviderKind; label: string }[] = [
+  { value: "anthropic", label: "Claude API (first-party)" },
+  { value: "gateway", label: "Anthropic-compatible gateway" },
+  { value: "bedrock", label: "Amazon Bedrock" },
+  { value: "openai", label: "OpenAI (Chat Completions)" },
+  { value: "custom", label: "Custom OpenAI-compatible endpoint" },
+  { value: "mantle", label: "Bedrock Mantle (adapter pending)" },
+  { value: "foundry", label: "Foundry (adapter pending)" },
+];
 
 /** The nine profile sections (docs/18 §10). */
 const SECTIONS = [
@@ -100,6 +120,8 @@ export default function SetupWindow() {
   const [exportOpen, setExportOpen] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [discoveryNote, setDiscoveryNote] = useState<string | null>(null);
+  const [probing, setProbing] = useState(false);
+  const [probeNote, setProbeNote] = useState<string | null>(null);
 
   const loadProfiles = useCallback(async () => {
     const response = await setup({ type: "listProfiles" });
@@ -125,7 +147,7 @@ export default function SetupWindow() {
     setIssues([]);
   }, []);
 
-  const loadSchemas = useCallback(async (provider: string | null) => {
+  const loadSchemas = useCallback(async (provider: ProviderKind | null) => {
     const tabs = await Promise.all(
       TABS.map(async (entry) => {
         const response = await setup({ type: "tabSchema", tab: entry.id });
@@ -139,7 +161,7 @@ export default function SetupWindow() {
     if (provider) {
       const response = await setup({
         type: "connectionSchema",
-        provider: provider as "gateway",
+        provider,
       });
       if (response.type === "schema") next.connection = response.schema;
     }
@@ -201,6 +223,16 @@ export default function SetupWindow() {
 
   const hasError = issues.some((issue) => issue.severity === "error");
 
+  // The probe runs only where a native adapter exists (`docs/13` Phase 3
+  // gate, plus the open model layer's `docs/13` §C families); others keep
+  // the button disabled until their adapters land rather than faked.
+  const probeSupported =
+    draft?.provider === "gateway" ||
+    draft?.provider === "anthropic" ||
+    draft?.provider === "bedrock" ||
+    draft?.provider === "openai" ||
+    draft?.provider === "custom";
+
   const section = draft ? ((draft[sectionOf(tab)] as Record<string, unknown>) ?? {}) : {};
   const schema = schemas[tab];
   const visibleFields: FieldDef[] = useMemo(() => {
@@ -230,23 +262,85 @@ export default function SetupWindow() {
   };
 
   /**
-   * Discover the gateway's model list (docs/12 §3.1) and offer it as the
-   * explicit model list. The discovered ids are de-duplicated by the core; the
-   * first entry is the default (docs/12 §3.2).
+   * The family picker (docs/13 §C open model layer; owner decision recorded
+   * 2026-10-23, docs/14 §9): the draft's family decides the connection
+   * schema, the probe lane, and the applied wire. Switching it keeps the
+   * shared fields (model list, idle window, custom headers, credential-kind
+   * selection — the resolver re-checks the kind against the new family's
+   * offered set) and resets the family-specific ones, so nothing stale
+   * leaks across a wire. Nothing applies until Apply.
+   */
+  const changeFamily = async (provider: string) => {
+    if (!draft) return;
+    const next = clone(draft) as ProfileDocument;
+    next.provider = provider as ProviderKind;
+    const shared = new Set([
+      "inferenceModels",
+      "inferenceStreamIdleTimeoutSec",
+      "inferenceCustomHeaders",
+      "inferenceCredentialKind",
+      "inferenceCredentialHelper",
+      "inferenceCredentialHelperArgs",
+    ]);
+    next.connection = Object.fromEntries(
+      Object.entries(next.connection ?? {}).filter(([key]) => shared.has(key)),
+    );
+    setDraft(next);
+    setIssues([]);
+    await loadSchemas(next.provider ?? null);
+  };
+
+  /**
+   * Discover the endpoint's model list and offer it as the explicit model
+   * list. Family-aware (`docs/12` §3.1 the Gateway family; `docs/13` §C the
+   * open model layer): the gateway family walks its cursor-paginated
+   * `/v1/models`, the OpenAI-compatible families read the endpoint's own
+   * `/models` listing — the `custom` one keyless when no credential
+   * exists (`docs/14` §9 owner decision). The discovered ids are
+   * de-duplicated by the core; the first entry is the default
+   * (`docs/12` §3.2).
    */
   const runDiscovery = async () => {
+    const provider = draft?.provider ?? null;
+    const headers = (section["inferenceCustomHeaders"] ?? {}) as Record<string, string>;
+    setDiscovering(true);
+    setDiscoveryNote(null);
+    if (provider === "openai" || provider === "custom") {
+      const baseKey =
+        provider === "openai" ? "inferenceOpenAiBaseUrl" : "inferenceCustomBaseUrl";
+      const slotKey = provider === "openai" ? "inferenceOpenAiApiKey" : "inferenceCustomApiKey";
+      const baseUrl = section[baseKey];
+      // The openai family's base URL is optional (empty = the first-party
+      // host); the custom family's base URL is required.
+      if (provider === "custom" && (typeof baseUrl !== "string" || !baseUrl.trim())) {
+        setDiscovering(false);
+        setDiscoveryNote("A base URL is required before models can be discovered.");
+        return;
+      }
+      const response = await discoverOpenAiModels({
+        kind: provider,
+        baseUrl: typeof baseUrl === "string" ? baseUrl : "",
+        apiKey: pendingSecrets[`connection/${slotKey}`],
+        customHeaders: headers,
+      });
+      setDiscovering(false);
+      if ("error" in response) {
+        setDiscoveryNote(response.error.message);
+        return;
+      }
+      offerDiscoveredModels(response);
+      return;
+    }
     const baseUrl = section["inferenceGatewayBaseUrl"];
     if (typeof baseUrl !== "string" || !baseUrl.trim()) {
+      setDiscovering(false);
       setDiscoveryNote("A gateway base URL is required before models can be discovered.");
       return;
     }
-    setDiscovering(true);
-    setDiscoveryNote(null);
-    const headers = (section["inferenceCustomHeaders"] ?? {}) as Record<string, string>;
     const response = await discoverModels({
       baseUrl,
       apiKey: pendingSecrets["connection/inferenceGatewayApiKey"],
-      authScheme: section["inferenceGatewayAuthScheme"] === "x-api-key" ? "xApiKey" : "bearer",
+      authScheme: section["inferenceGatewayAuthScheme"] === "x-api-key" ? "x-api-key" : "bearer",
       customHeaders: headers,
     });
     setDiscovering(false);
@@ -254,9 +348,16 @@ export default function SetupWindow() {
       setDiscoveryNote(response.error.message);
       return;
     }
+    offerDiscoveredModels(response);
+  };
+
+  /** The shared discovery tail: offer the ids as the draft's model list
+   * (`docs/12` §3.2 — first entry the default; every family shares one
+   * freeform list under the open model layer). */
+  const offerDiscoveredModels = (response: DiscoveryOutcome) => {
     const ids = response.models.map((model) => model.id);
     if (!ids.length) {
-      setDiscoveryNote("The gateway advertised no models.");
+      setDiscoveryNote("The provider advertised no models.");
       return;
     }
     setValue("inferenceModels", ids);
@@ -264,6 +365,48 @@ export default function SetupWindow() {
       response.partial
         ? `Discovered ${ids.length} models; the list is partial${response.warning ? ` (${response.warning})` : ""}.`
         : `Discovered ${ids.length} models.`,
+    );
+  };
+
+  /**
+   * The *Test connection*: a real one-token inference through the native
+   * adapter of the draft's family (docs/13 Phase 3 — gateway, the Claude API
+   * family, then Bedrock). The typed credential rides the
+   * secrets map exactly like the apply path; nothing here persists. The
+   * adapter owns every header the family's contract defines.
+   */
+  const runProbe = async () => {
+    if (!draft) return;
+    setProbing(true);
+    setProbeNote(null);
+    const response = await testConnection(draft, pendingSecrets);
+    setProbing(false);
+    if (response.type === "error") {
+      setProbeNote(response.error.message);
+      return;
+    }
+    if (response.type !== "probe") return;
+    const { probe } = response;
+    // The note names the family whose adapter ran this probe; the verdict
+    // itself is the shared typed shape.
+    const familyLabel =
+      draft.provider === "anthropic"
+        ? "Claude API"
+        : draft.provider === "bedrock"
+          ? "Bedrock"
+          : draft.provider === "gateway"
+            ? "Gateway"
+            : draft.provider === "openai"
+              ? "OpenAI"
+              : draft.provider === "custom"
+                ? "OpenAI-compatible endpoint"
+                : /* family-agnostic for anything else */ "provider";
+    setProbeNote(
+      probe.ok
+        ? `Connected. The ${familyLabel} adapter ran ${probe.model} (${probe.latencyMs} ms, ` +
+          `${probe.inputTokens} in / ${probe.outputTokens} out` +
+          `${probe.stopReason ? `, stop ${probe.stopReason}` : ""}).`
+        : `The ${familyLabel} adapter answered but the probe did not complete.`,
     );
   };
 
@@ -423,15 +566,24 @@ export default function SetupWindow() {
                 </h2>
                 {tab === "connection" ? (
                   <div className="setup-section-actions">
-                    {/* The inference probe belongs to the provider adapters of
-                        Phase 3; it is shown disabled rather than faked. */}
+                    {/* A real one-token inference through the native adapter
+                        of the selected family (docs/13 Phase 3, slice per
+                        adapter: gateway, the Claude API family, then
+                        Bedrock; docs/13 §C the open model layer's families).
+                        Other families keep the button disabled until their
+                        adapters land rather than faked. */}
                     <button
                       type="button"
                       className="setup-secondary-button"
-                      disabled
-                      title="Not implemented yet"
+                      disabled={probing || !probeSupported}
+                      onClick={() => void runProbe()}
+                      title={
+                        probeSupported
+                          ? undefined
+                          : "The probe verifies the gateway, Claude API, Bedrock, and OpenAI-compatible families; other families unlock with their adapters"
+                      }
                     >
-                      Test connection
+                      {probing ? "Testing…" : "Test connection"}
                     </button>
                     <button
                       type="button"
@@ -444,9 +596,44 @@ export default function SetupWindow() {
                   </div>
                 ) : null}
               </div>
+              {tab === "connection" ? (
+                <div className="setup-field">
+                  <label className="setup-label" htmlFor="family-picker">
+                    <span className="setup-label-text">Provider family</span>
+                    <span className="setup-help-text">
+                      Decides the wire this profile speaks (docs/12 §1;
+                      docs/13 §C open model layer). Mantle and Foundry keep
+                      their probe and send locked until their adapters land
+                      (docs/13 Phase 3).
+                    </span>
+                  </label>
+                  <div className="setup-control">
+                    <select
+                      id="family-picker"
+                      className="setup-select"
+                      value={(draft?.provider as string | undefined) ?? ""}
+                      onChange={(event) => void changeFamily(event.target.value)}
+                    >
+                      {/* Blank stays the unset state, exactly like the schema
+                          fields' blank option (docs/09 §3.4). */}
+                      <option value=""></option>
+                      {FAMILY_OPTIONS.map((family) => (
+                        <option key={family.value} value={family.value}>
+                          {family.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              ) : null}
               {discoveryNote ? (
                 <p className="setup-note" role="status">
                   {discoveryNote}
+                </p>
+              ) : null}
+              {probeNote ? (
+                <p className="setup-note" role="status">
+                  {probeNote}
                 </p>
               ) : null}
               {visibleFields.map((field) => {

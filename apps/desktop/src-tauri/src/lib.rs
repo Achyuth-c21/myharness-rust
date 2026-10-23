@@ -257,6 +257,23 @@ async fn setup_discover_models(
     myharness_bridge::helper::discover_models(&request, &client).await
 }
 
+/// Model discovery against an OpenAI-compatible endpoint — the open model
+/// layer's families (`docs/13` §C; owner decision recorded 2026-10-23,
+/// `docs/14` §9): first-party `openai` and a user-defined `custom` base
+/// URL, key optional. A setup-time probe of the endpoint's own `/models`
+/// contract, the same namespace posture as the gateway discovery — not a
+/// translation layer.
+#[tauri::command]
+async fn setup_discover_openai_models(
+    request: myharness_bridge::helper::OpenAiDiscoveryRequest,
+) -> Result<
+    myharness_bridge::helper::OpenAiDiscoveryOutcome,
+    myharness_bridge::setup::BridgeError,
+> {
+    let client = reqwest::Client::new();
+    myharness_bridge::helper::discover_openai_models(&request, &client).await
+}
+
 /// Open (or focus) the separate setup window (`docs/09` §2.1: "This is a
 /// separate Electron window, not a modal in the main renderer";
 /// `docs/screens/setup-desktop-3p.md`: `app://localhost/setup-desktop-3p`).
@@ -328,6 +345,7 @@ pub fn run() {
             ping,
             setup_command,
             setup_discover_models,
+            setup_discover_openai_models,
             open_setup_window
         ])
         .setup(move |app| {

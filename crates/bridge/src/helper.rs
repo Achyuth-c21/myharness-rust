@@ -1,14 +1,16 @@
 //! The `settings.Custom3pHelperRun` namespace — roadmap Phase 2 (docs/13 §4
 //! Phase 2; docs/18 §3.4; docs/12 §3.1–§3.3; docs/09 §3.4).
 //!
-//! Two setup-time probes live here:
+//! Two setup-time probes pass through here:
 //!
 //! - **Model discovery** against an Anthropic-compatible gateway: the shipped
 //!   protocol is `GET <gateway-base>/v1/models?limit=1000`, following
 //!   `after_id` for at most three pages, with a 10-second timeout per page
 //!   (`docs/12` §3.1). A later-page failure keeps the rows already read and
-//!   warns; a first-page failure is an error. Trailing slashes are normalized,
-//!   and models are de-duplicated by their stable id.
+//!   warns; a first-page failure is an error. The implementation lives in the
+//!   native provider adapter (`docs/10` §9); this module re-exports its wire
+//!   types unchanged and maps the adapter's error classes onto the setup
+//!   bridge's codes with the exact provider messages.
 //! - **The published model catalog**: a signed document stored as a base64
 //!   payload plus a sidecar (`docs/11` §14). On any failure the app must use a
 //!   bundled catalog and show a non-blocking staleness warning (`docs/12` §3.3).
@@ -29,273 +31,63 @@
 //! a translation layer: it speaks the gateway's own `/v1/models` contract and
 //! nothing else (`RULES.md` §2, `docs/13` non-goals).
 
-use std::collections::BTreeSet;
-use std::time::Duration;
-
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::setup::BridgeError;
 
-/// The per-page timeout (`docs/12` §3.1: "Per-page timeout: 10 seconds").
-pub const DISCOVERY_PAGE_TIMEOUT: Duration = Duration::from_secs(10);
+pub use myharness_provider_gateway::discovery::{
+    discover_models as adapter_discover_models, AuthScheme, DiscoveredModel, DiscoveryOutcome,
+    DiscoveryRequest,
+};
+pub use myharness_provider_gateway::discovery::{
+    ANTHROPIC_VERSION, DISCOVERY_MAX_PAGES, DISCOVERY_PAGE_TIMEOUT,
+};
 
-/// The maximum number of pages (`docs/12` §3.1: "maximum 3 pages").
-pub const DISCOVERY_MAX_PAGES: usize = 3;
+pub use myharness_provider_openai::discovery::{
+    discover_models as openai_adapter_discover_models,
+    DiscoveryOutcome as OpenAiDiscoveryOutcome,
+    DiscoveryRequest as OpenAiDiscoveryRequest,
+};
 
-/// The `anthropic-version` header the gateway contract sends
-/// (`docs/09` §2.2: "`/v1/models` is called with `anthropic-version: 2023-06-01`").
-pub const ANTHROPIC_VERSION: &str = "2023-06-01";
-
-/// How the gateway consumes the credential (`docs/09` §2.2 auth scheme).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum AuthScheme {
-    Bearer,
-    XApiKey,
-}
-
-/// A model discovery request. This is a wire type: the setup window sends it
-/// across the bridge.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DiscoveryRequest {
-    /// The gateway base URL. Trailing slashes are normalized.
-    pub base_url: String,
-    /// The credential, if the gateway needs one. The user typed it; it is never
-    /// logged and never stored by the probe.
-    #[serde(default)]
-    pub api_key: Option<String>,
-    /// How the credential is presented.
-    #[serde(default = "default_auth_scheme")]
-    pub auth_scheme: AuthScheme,
-    /// Routing/tenant headers (`docs/09` §2.2: custom inference headers).
-    #[serde(default)]
-    pub custom_headers: Vec<(String, String)>,
-    /// The per-page timeout, in seconds. The documented value is 10.
-    #[serde(default = "default_timeout_secs")]
-    pub timeout_secs: u64,
-    /// The maximum number of pages. The documented value is 3.
-    #[serde(default = "default_max_pages")]
-    pub max_pages: usize,
-}
-
-fn default_auth_scheme() -> AuthScheme {
-    AuthScheme::Bearer
-}
-
-fn default_timeout_secs() -> u64 {
-    DISCOVERY_PAGE_TIMEOUT.as_secs()
-}
-
-fn default_max_pages() -> usize {
-    DISCOVERY_MAX_PAGES
-}
-
-/// One discovered model.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DiscoveredModel {
-    /// The stable id — the deduplication key (`docs/12` §3.1).
-    pub id: String,
-    /// The raw row, kept so the catalog metadata can be joined onto it later.
-    pub raw: Value,
-}
-
-/// The outcome of a discovery run.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DiscoveryOutcome {
-    /// The models, de-duplicated by id.
-    pub models: Vec<DiscoveredModel>,
-    /// How many pages were read.
-    pub pages: usize,
-    /// True when a later page failed and the rows already read were kept
-    /// (`docs/12` §3.1).
-    pub partial: bool,
-    /// The warning to show, if any.
-    pub warning: Option<String>,
-}
-
-/// Run model discovery against an Anthropic-compatible gateway.
+/// Run model discovery against an Anthropic-compatible gateway (the setup
+/// probe path).
 ///
-/// The protocol is the shipped one (`docs/12` §3.1): `GET <base>/v1/models?limit=1000`,
-/// following the cursor for at most three pages, ten seconds per page. A
-/// first-page failure is an error; a later-page failure keeps the rows already
-/// read and warns.
+/// The behavior is the adapter's own discovery (`docs/12` §3.1, `docs/10` §9):
+/// `GET <base>/v1/models?limit=1000`, cursor pagination capped at three
+/// pages, ten seconds per page, first-page failure fatal, later-page failure
+/// retaining the rows already read. This wrapper exists so the setup window's
+/// probe path keeps its wire types and error codes: the adapter's error
+/// classes map onto `CONFIG_VALIDATION` / `PROVIDER_UNREACHABLE` /
+/// `PROVIDER_ERROR` with the provider's message verbatim — the same code
+/// strings the setup window matches on. No error envelope ever carries a raw
+/// response body (`docs/18` §11).
 pub async fn discover_models(
     request: &DiscoveryRequest,
     client: &reqwest::Client,
 ) -> Result<DiscoveryOutcome, BridgeError> {
-    let base = request.base_url.trim().trim_end_matches('/');
-    if base.is_empty() {
-        return Err(BridgeError::new(
-            "CONFIG_VALIDATION",
-            "the gateway base URL is required for model discovery",
-        ));
-    }
-    let url = format!("{base}/v1/models?limit=1000");
-    let timeout = if request.timeout_secs == 0 {
-        DISCOVERY_PAGE_TIMEOUT
-    } else {
-        Duration::from_secs(request.timeout_secs)
-    };
-    let max_pages = if request.max_pages == 0 {
-        DISCOVERY_MAX_PAGES
-    } else {
-        request.max_pages
-    };
-
-    let mut models: Vec<DiscoveredModel> = Vec::new();
-    let mut seen: BTreeSet<String> = BTreeSet::new();
-    let mut cursor: Option<String> = None;
-    let mut pages = 0usize;
-    let mut partial = false;
-    let mut warning: Option<String> = None;
-
-    loop {
-        let page_url = match &cursor {
-            Some(cursor) => format!("{url}&after_id={}", encode(cursor)),
-            None => url.clone(),
-        };
-        let page = fetch_page(client, request, &page_url, timeout).await;
-        let body = match page {
-            Ok(body) => body,
-            Err(error) => {
-                if pages == 0 {
-                    // The first page failing is an error (docs/12 §3.1).
-                    return Err(error);
-                }
-                // A later page failing keeps what was read and warns.
-                partial = true;
-                warning = Some(error.message);
-                break;
-            }
-        };
-        pages += 1;
-
-        let (rows, next) = parse_page(&body);
-        for row in rows {
-            let id = match model_id(&row) {
-                Some(id) => id,
-                None => continue,
-            };
-            if seen.insert(id.clone()) {
-                models.push(DiscoveredModel { id, raw: row });
-            }
-        }
-
-        match next {
-            Some(next) if pages < max_pages => cursor = Some(next),
-            Some(_) => {
-                // The page cap was reached: the list is partial by contract, and the
-                // docs say the app keeps what it read.
-                partial = true;
-                warning = Some(format!(
-                    "the gateway advertised more models than the {}-page discovery limit",
-                    max_pages
-                ));
-                break;
-            }
-            None => break,
-        }
-    }
-
-    Ok(DiscoveryOutcome {
-        models,
-        pages,
-        partial,
-        warning,
-    })
+    // The mapping is the setup bridge's one mapper: the provider's message
+    // verbatim, the codes the setup window matches on (`docs/18` §11).
+    adapter_discover_models(request, client)
+        .await
+        .map_err(crate::setup::bridge_provider_error)
 }
 
-async fn fetch_page(
-    client: &reqwest::Client,
-    request: &DiscoveryRequest,
-    url: &str,
-    timeout: Duration,
-) -> Result<Value, BridgeError> {
-    let mut builder = client
-        .get(url)
-        .header("anthropic-version", ANTHROPIC_VERSION);
-    if let Some(key) = &request.api_key {
-        builder = match request.auth_scheme {
-            AuthScheme::Bearer => builder.header("authorization", format!("Bearer {key}")),
-            AuthScheme::XApiKey => builder.header("x-api-key", key.clone()),
-        };
-    }
-    for (name, value) in &request.custom_headers {
-        builder = builder.header(name, value);
-    }
-    let response = builder.timeout(timeout).send().await.map_err(|error| {
-        BridgeError::new(
-            "PROVIDER_UNREACHABLE",
-            format!("the gateway could not be reached: {error}"),
-        )
-    })?;
-    let status = response.status();
-    if !status.is_success() {
-        // The status is reported; the body is not — it can carry a token, and the
-        // error envelope carries no raw body (docs/18 §11).
-        return Err(BridgeError::new(
-            "PROVIDER_ERROR",
-            format!("the gateway answered with status {status}"),
-        ));
-    }
-    response.json::<Value>().await.map_err(|error| {
-        BridgeError::new(
-            "PROVIDER_ERROR",
-            format!("the gateway answer could not be read: {error}"),
-        )
-    })
-}
-
-/// The model rows of a page, and the cursor of the next page.
+/// Run model discovery against an OpenAI-compatible endpoint — the open
+/// model layer's families (`docs/13` §C: first-party `openai` and the
+/// user-defined `custom` endpoint, key optional).
 ///
-/// The response shape was not captured (`docs/20` records classes, not values),
-/// so the parse is shape-tolerant: a `data` or `models` array of objects, an
-/// `id` / `model` / `name` string on each row, and a cursor under `after_id` /
-/// `next_cursor` / `last_id`. Nothing is invented.
-fn parse_page(body: &Value) -> (Vec<Value>, Option<String>) {
-    let rows = body
-        .get("data")
-        .or_else(|| body.get("models"))
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let cursor = ["after_id", "next_cursor", "last_id"]
-        .iter()
-        .find_map(|key| {
-            body.get(*key)
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string)
-        })
-        .filter(|_| body.get("has_more").and_then(Value::as_bool) != Some(false));
-    (rows, cursor)
-}
-
-fn model_id(row: &Value) -> Option<String> {
-    ["id", "model", "name"]
-        .iter()
-        .find_map(|key| row.get(*key).and_then(Value::as_str))
-        .map(|id| id.trim().to_string())
-        .filter(|id| !id.is_empty())
-}
-
-/// Percent-encode a cursor value for a query string.
-fn encode(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(byte as char)
-            }
-            other => out.push_str(&format!("%{other:02X}")),
-        }
-    }
-    out
+/// The same wrapper posture as the gateway probe: the adapter's classes map
+/// onto the setup bridge's codes with the provider's message verbatim
+/// (`docs/18` §11); a keyless `custom` request sends no `authorization`
+/// header (`docs/14` §9 owner decision), and no error envelope ever carries
+/// a raw response body.
+pub async fn discover_openai_models(
+    request: &OpenAiDiscoveryRequest,
+    client: &reqwest::Client,
+) -> Result<OpenAiDiscoveryOutcome, BridgeError> {
+    openai_adapter_discover_models(request, client)
+        .await
+        .map_err(crate::setup::bridge_provider_error)
 }
 
 // ---------------------------------------------------------------------------

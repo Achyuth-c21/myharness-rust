@@ -83,7 +83,7 @@ If an item cannot be satisfied, **stop and report it** — do not tick it optimi
 - [ ] I did **not** push to `main`, checkout `main` for edits, merge into `main`, or force-push.
 - [ ] Dependencies, if any, were added to the root `Cargo.toml` `workspace.dependencies` and
       referenced from there.
-- [ ] The crate layout still matches `docs/21` (26 members); if I changed it, `docs/21` was updated.
+- [ ] The crate layout still matches `docs/21` (25 members); if I changed it, `docs/21` was updated.
 - [ ] `git status` shows only intended files.
 
 ## H. Report

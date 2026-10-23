@@ -2,7 +2,9 @@
 //! docs/09 §2.2; docs/12 §2.2; docs/features/third-party-setup.md "Validation and
 //! error states").
 //!
-//! One schema per provider family (`docs/12` §1 six-provider table), built from the
+//! One schema per supported provider family (the shipped set is six — `docs/12` §1 —
+//! the rebuild carries five; the Vertex family was removed from rebuild scope, owner
+//! decision 2026-10-23, `docs/04` §3.1), built from the
 //! observed flat `inference*` / per-provider key names (`docs/20` §2.1 — the key
 //! index is the naming ground truth). Each [`FieldDef`] carries the metadata the setup
 //! window's renderer needs (label, kind, required marker, options, help text), and
@@ -10,18 +12,21 @@
 //!
 //! - **Required fields block Apply** with `*` markers (`docs/screens` "Required fields
 //!   marked `*`; Apply blocks/shows errors").
-//! - **Model-ID policy per family** (`docs/12` §2.2): the Anthropic predicate (family
-//!   accept list + non-Anthropic family denylist) for Claude API, Gateway and Foundry;
-//!   Bedrock accepts `anthropic.*` or Bedrock inference ARNs and warns the underlying
-//!   model is unverified (observed UI warning); Vertex enforces the `claude-` prefix
-//!   and rejects `/ \ ? # %` and whitespace.
+//! - **Model ids are freeform** (owner decision 2026-10-23 — `docs/14` §9, "Open
+//!   harness pivot"): every family accepts any model id the user names. The
+//!   per-family Anthropic/Bedrock policies of `docs/12` §2.2 (the shipped app's
+//!   gatekeeping) were withdrawn for the rebuild; the validator keeps only the
+//!   structural gates — a non-empty id, and `docs/12`'s shape warnings where a
+//!   family's listing quality is unknown. The shipped-app policy text in
+//!   `docs/12` §2.2 stays as the preserved baseline; it no longer governs the
+//!   rebuild (`docs/13` §C, "Open model layer").
 //! - **Custom headers are routing/tenant only** — credential-shaped names and values
 //!   are rejected (`TEST-SEC-004`; `docs/09` §2.2 / §4; `docs/08` "Authorization is
 //!   treated as a credential").
 //! - **Credential kinds are exclusive** (`REQ-SETUP-05`) — the kind enum is singular
 //!   by construction; per-provider offered subsets validated here.
-//! - **Discovery gating**: disabled for mantle static/helper, vertex
-//!   interactive/workforce/helper/vendor (`docs/09` §2.2 provider bullets); Foundry's
+//! - **Discovery gating**: disabled for mantle static/helper (`docs/09` §2.2
+//!   provider bullets); Foundry's
 //!   exact disabled combinations were not captured (`docs/14` §9) and are not
 //!   enforced here.
 //!
@@ -181,6 +186,13 @@ fn schema_kinds(provider: ProviderKind) -> &'static [(&'static str, CredentialKi
             ("Interactive sign-in", CredentialKind::Interactive),
             ("Helper script", CredentialKind::HelperScript),
         ],
+        ProviderKind::OpenAi => &[("Static API key", CredentialKind::Static)],
+        ProviderKind::Custom => &[
+            ("Static API key", CredentialKind::Static),
+            // A company gateway resolves its key through the family's helper
+            // script — the same offered-kind set the Gateway family carries.
+            ("Helper script", CredentialKind::HelperScript),
+        ],
         ProviderKind::Bedrock => &[
             ("Static bearer token", CredentialKind::Static),
             ("AWS profile / SSO", CredentialKind::Sso),
@@ -193,12 +205,6 @@ fn schema_kinds(provider: ProviderKind) -> &'static [(&'static str, CredentialKi
             ("Helper script", CredentialKind::HelperScript),
             ("Vendor profile", CredentialKind::VendorProfile),
         ],
-        ProviderKind::Vertex => &[
-            ("Google sign-in", CredentialKind::Interactive),
-            ("Workforce identity", CredentialKind::Workforce),
-            ("Helper script", CredentialKind::HelperScript),
-            ("Vendor profile", CredentialKind::VendorProfile),
-        ],
         ProviderKind::Foundry => &[
             ("Static API key", CredentialKind::Static),
             ("Interactive sign-in", CredentialKind::Interactive),
@@ -208,171 +214,21 @@ fn schema_kinds(provider: ProviderKind) -> &'static [(&'static str, CredentialKi
 }
 
 // ---------------------------------------------------------------------------
-// Model-ID policy (docs/12 §2.2)
+// Model-ID policy (open model layer — owner decision 2026-10-23, `docs/14` §9)
 // ---------------------------------------------------------------------------
 
-/// Non-Anthropic family prefixes the shipped predicate rejects (docs/12 §2.2 —
-/// "reject if the lowercased id matches the non-Anthropic family list"). The list
-/// is transcribed from the doc verbatim; a match is a *prefix* match, so `gpt-…`
-/// and `gpt4` are both rejected.
-const NON_ANTHROPIC_FAMILIES: [&str; 47] = [
-    "ark-code",
-    "astron",
-    "command-r",
-    "deepseek",
-    "doubao",
-    "gemini",
-    "gemma",
-    "glm",
-    "gpt",
-    "grok",
-    "hermes",
-    "hy3",
-    "kimi",
-    "lfm",
-    "ling",
-    "llama",
-    "longcat",
-    "mimo",
-    "minimax",
-    "mistral",
-    "mixtral",
-    "moonshot",
-    "nemotron",
-    "openai",
-    "phi-",
-    "qianfan",
-    "qwen",
-    "tc-code",
-    "unic",
-    "yi-",
-    "stepfun",
-    "step-3",
-    "seed-",
-    "bytedance",
-    "hunyuan",
-    "granite",
-    "amazon.nova",
-    "nova-",
-    "devstral",
-    "ministral",
-    "ernie",
-    "codex",
-    "arcee",
-    "trinity",
-    "abab",
-    "ds-",
-    "dpsk",
-];
-
-/// Anthropic family tiers the shipped predicate accepts (docs/12 §2.2 — "otherwise
-/// accept if it matches an Anthropic family tier (sonnet, opus, haiku, fable, mythos),
-/// optionally with a numeric version, or contains claude/anthropic").
-const ANTHROPIC_FAMILIES: [&str; 5] = ["sonnet", "opus", "haiku", "fable", "mythos"];
-
-/// The shipped Anthropic model-ID predicate (docs/12 §2.2).
-///
-/// Order matters and is the doc's order: the non-Anthropic family denylist is
-/// checked first, then the Anthropic family accept list. A model that is both
-/// (e.g. a future `gpt-sonnet`) is rejected — the denylist wins.
-pub fn validate_anthropic_model_id(id: &str) -> Result<(), String> {
+/// The open model-ID rule. The shipped app's per-family predicates
+/// (`docs/12` §2.2: the Anthropic denylist/accept-list and the Bedrock
+/// ARN shape) gated which models a user could name; the owner withdrew that
+/// gatekeeping for the rebuild (the "open harness" decision, recorded in
+/// `docs/14` §9 and mirrored in `docs/13` §C). What remains is the structural
+/// minimum both policies shared: an id must exist after trimming. Family ids
+/// travel verbatim (`AI-ADAPTER-11`) — OpenAI-compat tags (`llama3:70b`),
+/// Bedrock ARNs, deployment names, and Claude ids are all just ids now.
+pub fn validate_open_model_id(id: &str) -> Result<(), String> {
     let id = id.trim();
     if id.is_empty() {
         return Err("model id must be non-empty".to_string());
-    }
-    let lower = id.to_ascii_lowercase();
-    if NON_ANTHROPIC_FAMILIES
-        .iter()
-        .any(|family| lower.starts_with(family))
-    {
-        return Err(format!(
-            "model id {id:?} belongs to a non-Anthropic family, which the Anthropic model policy rejects"
-        ));
-    }
-    let accepted = lower.contains("claude")
-        || lower.contains("anthropic")
-        || ANTHROPIC_FAMILIES
-            .iter()
-            .any(|family| family_appears(&lower, family));
-    if !accepted {
-        return Err(format!(
-            "model id {id:?} is not an Anthropic model (expected a Claude/Anthropic family id)"
-        ));
-    }
-    Ok(())
-}
-
-/// A family tier may appear on its own or with a numeric version (`sonnet`,
-/// `sonnet-4`, `claude-sonnet-4`). The doc says "optionally with a numeric version",
-/// so the tier token is matched on a non-alphanumeric boundary.
-fn family_appears(lower: &str, family: &str) -> bool {
-    let bytes = lower.as_bytes();
-    let mut start = 0usize;
-    while let Some(pos) = lower[start..].find(family) {
-        let at = start + pos;
-        let before_ok = at == 0 || !is_alnum(bytes[at - 1]);
-        let after = at + family.len();
-        let after_ok = after >= bytes.len() || !is_alnum(bytes[after]);
-        if before_ok && after_ok {
-            return true;
-        }
-        start = at + 1;
-        if start >= lower.len() {
-            break;
-        }
-    }
-    false
-}
-
-fn is_alnum(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric()
-}
-
-/// Bedrock model-ID shape (`docs/09` §2.2): `anthropic.*` IDs or Bedrock language-
-/// model inference / provisioned ARNs. The UI additionally warns that profile/ARN
-/// models are unverified — callers append that warning themselves (see
-/// [`validate_connection`]).
-fn validate_bedrock_model_id(id: &str) -> Result<(), String> {
-    let id = id.trim();
-    if id.is_empty() {
-        return Err("model id must be non-empty".to_string());
-    }
-    if id.starts_with("anthropic.") {
-        return Ok(());
-    }
-    // Inference/provisioned ARN: arn:<partition>:bedrock:<region>::<residual> with a
-    // non-empty residual (exact substring grammar per AWS is outside the captured
-    // evidence; the family shape is what the docs record).
-    if id.starts_with("arn:") && id.split(':').nth(2) == Some("bedrock") {
-        let residual = id.splitn(6, ':').nth(5).unwrap_or("");
-        if !residual.trim().is_empty() {
-            return Ok(());
-        }
-    }
-    Err(format!(
-        "model id {id:?} is not a Bedrock Anthropic model or inference ARN"
-    ))
-}
-
-/// Vertex model-ID shape (`docs/09` §2.2): starts with `claude-` and contains no
-/// `/`, `\`, `?`, `#`, `%`, or whitespace.
-fn validate_vertex_model_id(id: &str) -> Result<(), String> {
-    let id = id.trim();
-    if id.is_empty() {
-        return Err("model id must be non-empty".to_string());
-    }
-    if !id.starts_with("claude-") {
-        return Err(format!(
-            "model id {id:?} must start with \"claude-\" for Vertex AI"
-        ));
-    }
-    if id
-        .chars()
-        .any(|c| c.is_whitespace() || "/\\?#%".contains(c))
-    {
-        return Err(format!(
-            "model id {id:?} contains forbidden characters (/ \\ ? # % or whitespace)"
-        ));
     }
     Ok(())
 }
@@ -486,10 +342,6 @@ pub fn validate_connection(provider: ProviderKind, connection: &Value) -> Vec<Fo
     let kind = parsed_kind.unwrap_or(CredentialKind::Static);
     let static_like = kind == CredentialKind::Static;
     let helper_kind = kind == CredentialKind::HelperScript;
-    let interactive_kind = matches!(
-        kind,
-        CredentialKind::Interactive | CredentialKind::Workforce
-    );
 
     // -- helper-script fields (any family that offers the helper kind) ------------
     if helper_kind {
@@ -566,16 +418,7 @@ pub fn validate_connection(provider: ProviderKind, connection: &Value) -> Vec<Fo
                 _ => {}
             }
             // Stream idle timeout: default 300 s, positive integer
-            if let Some(t) = get("inferenceStreamIdleTimeoutSec") {
-                if !t.as_u64().is_some_and(|secs| secs > 0) {
-                    issues.push(error(
-                        "inferenceStreamIdleTimeoutSec",
-                        format!(
-                            "stream idle timeout must be a positive number of seconds, found {t:?}"
-                        ),
-                    ));
-                }
-            }
+            idle_timeout_check(&conn, &mut issues);
         }
         ProviderKind::ClaudeApi => {
             if static_like
@@ -610,17 +453,14 @@ pub fn validate_connection(provider: ProviderKind, connection: &Value) -> Vec<Fo
             if let Some(u) = url_value(get("inferenceBedrockBaseUrl")).err() {
                 issues.push(error("inferenceBedrockBaseUrl", u));
             }
-            // Model list validation (docs/09: bedrock Anthropic IDs/ARNs + UI warning)
-            validate_model_list(
-                get("inferenceModels"),
-                validate_bedrock_model_id,
-                &mut issues,
-            );
+            // Open model layer: the list is freeform (`docs/14` §9 owner
+            // decision). The AWS-availability warning is user guidance, not policy.
+            validate_model_list(get("inferenceModels"), &mut issues);
             let has_models = get("inferenceModels").is_some_and(model_list_present);
             if has_models {
                 issues.push(warning(
                     "inferenceModels",
-                    "model IDs/ARNs are not verified as profile-supported; verify availability with your AWS account".to_string(),
+                    "model names are not verified as available with your AWS account; verify with the AWS console".to_string(),
                 ));
             }
         }
@@ -653,42 +493,6 @@ pub fn validate_connection(provider: ProviderKind, connection: &Value) -> Vec<Fo
                 ));
             }
         }
-        ProviderKind::Vertex => {
-            if !text_present(get("inferenceVertexProjectId")) {
-                issues.push(error(
-                    "inferenceVertexProjectId",
-                    "GCP project ID is required".to_string(),
-                ));
-            }
-            if !text_present(get("inferenceVertexRegion")) {
-                issues.push(error(
-                    "inferenceVertexRegion",
-                    "GCP region is required".to_string(),
-                ));
-            }
-            if !text_present(get("inferenceVertexCredentialsFile")) {
-                issues.push(error(
-                    "inferenceVertexCredentialsFile",
-                    "GCP credentials file is required".to_string(),
-                ));
-            }
-            if let Some(u) = url_value(get("inferenceVertexBaseUrl")).err() {
-                issues.push(error("inferenceVertexBaseUrl", u));
-            }
-            // Vertex models: claude- prefix, no / \ ? # % or whitespace.
-            validate_model_list(
-                get("inferenceModels"),
-                validate_vertex_model_id,
-                &mut issues,
-            );
-            if discovery_enabled(get("modelDiscoveryEnabled")) && (interactive_kind || helper_kind)
-            {
-                issues.push(warning(
-                    "modelDiscoveryEnabled",
-                    "model discovery is unavailable for interactive/workforce/helper/vendor credential kinds".to_string(),
-                ));
-            }
-        }
         ProviderKind::Foundry => {
             if !text_present(get("inferenceFoundryResource")) {
                 issues.push(error(
@@ -707,15 +511,17 @@ pub fn validate_connection(provider: ProviderKind, connection: &Value) -> Vec<Fo
                     "API key is required for static credential kind".to_string(),
                 ));
             }
-            // Deployment names follow the same Anthropic model policy. The key name
-            // is not in the captured key index — see `docs/14` §9.
+            // Deployment names follow the open model rule (`docs/14` §9 owner
+            // decision): any non-empty deployment id is accepted and travels
+            // verbatim. The key name is not in the captured key index — see
+            // `docs/14` §9.
             match get(UNVERIFIED_FOUNDRY_DEPLOYMENT)
                 .and_then(Value::as_str)
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
             {
                 Some(name) => {
-                    if let Err(e) = validate_anthropic_model_id(name) {
+                    if let Err(e) = validate_open_model_id(name) {
                         issues.push(error(UNVERIFIED_FOUNDRY_DEPLOYMENT, e));
                     }
                 }
@@ -725,16 +531,58 @@ pub fn validate_connection(provider: ProviderKind, connection: &Value) -> Vec<Fo
                 )),
             }
         }
+        ProviderKind::OpenAi => {
+            // First-party OpenAI: a static key is the family's only offered
+            // credential kind; the base URL is optional (empty = first-party
+            // host; the field's spelling is owner-defined, `docs/14` §9).
+            if static_like
+                && !secret_slot_present(get("inferenceOpenAiApiKey").unwrap_or(&Value::Null))
+            {
+                issues.push(error(
+                    "inferenceOpenAiApiKey",
+                    "OpenAI API key is required for static credential kind".to_string(),
+                ));
+            }
+            match url_value(get("inferenceOpenAiBaseUrl")) {
+                Err(e) => issues.push(error("inferenceOpenAiBaseUrl", e)),
+                Ok(Some(u)) => {
+                    if !u.starts_with("https://") && !u.starts_with("http://") {
+                        issues.push(error(
+                            "inferenceOpenAiBaseUrl",
+                            "base URL must start with http:// or https://".to_string(),
+                        ));
+                    }
+                }
+                Ok(None) => {}
+            }
+            idle_timeout_check(&conn, &mut issues);
+        }
+        ProviderKind::Custom => {
+            // An OpenAI-compatible endpoint the user defines. The base URL is
+            // required; the key is optional — self-hosted servers often serve
+            // without one (`docs/13` §C open model layer).
+            match url_value(get("inferenceCustomBaseUrl")) {
+                Ok(None) => issues.push(error(
+                    "inferenceCustomBaseUrl",
+                    "custom base URL is required".to_string(),
+                )),
+                Err(e) => issues.push(error("inferenceCustomBaseUrl", e)),
+                Ok(Some(u)) => {
+                    if !u.starts_with("https://") && !u.starts_with("http://") {
+                        issues.push(error(
+                            "inferenceCustomBaseUrl",
+                            "base URL must start with http:// or https://".to_string(),
+                        ));
+                    }
+                }
+            }
+            idle_timeout_check(&conn, &mut issues);
+        }
     }
 
-    // -- shared model-list policy for anthropic/gateway ---------------------------
-    if matches!(provider, ProviderKind::Gateway | ProviderKind::ClaudeApi) {
-        validate_model_list(
-            get("inferenceModels"),
-            validate_anthropic_model_id,
-            &mut issues,
-        );
-    }
+    // -- shared model-list rule: freeform ids for every family ---------------------
+    // (`docs/14` §9 owner decision: the model policy gatekeeping was withdrawn;
+    // only empty entries are structural errors.)
 
     // -- custom headers: routing/tenant only; credential-shaped values rejected ---
     if let Some(headers) = get("inferenceCustomHeaders").and_then(Value::as_object) {
@@ -789,11 +637,9 @@ fn discovery_enabled(value: Option<&Value>) -> bool {
 
 /// Validate every entry of `inferenceModels` (array; legacy {"name":…} objects pass
 /// through untouched — `docs/20` records "array/object" without the object grammar).
-fn validate_model_list(
-    list: Option<&Value>,
-    rule: fn(&str) -> Result<(), String>,
-    issues: &mut Vec<FormIssue>,
-) {
+/// The open model rule (`validate_open_model_id`) applies to every family since the
+/// owner decision (`docs/14` §9).
+fn validate_model_list(list: Option<&Value>, issues: &mut Vec<FormIssue>) {
     match list {
         Some(Value::Array(entries)) => {
             if entries.is_empty() {
@@ -810,7 +656,7 @@ fn validate_model_list(
                     ));
                     continue;
                 };
-                if let Err(e) = rule(id) {
+                if let Err(e) = validate_open_model_id(id) {
                     issues.push(error("inferenceModels", format!("model {index}: {e}")));
                 }
             }
@@ -826,6 +672,24 @@ fn validate_model_list(
             format!("model list must be an array, found {other:?}"),
         )),
         None => {}
+    }
+}
+
+/// The stream idle-timeout field's shared shape check (`docs/20`
+/// `inferenceStreamIdleTimeoutSec`): present ⇒ a positive integer of seconds.
+fn idle_timeout_check(
+    conn: &serde_json::Map<String, Value>,
+    issues: &mut Vec<FormIssue>,
+) {
+    if let Some(t) = conn.get("inferenceStreamIdleTimeoutSec") {
+        if !t.as_u64().is_some_and(|secs| secs > 0) {
+            issues.push(error(
+                "inferenceStreamIdleTimeoutSec",
+                format!(
+                    "stream idle timeout must be a positive number of seconds, found {t:?}"
+                ),
+            ));
+        }
     }
 }
 
@@ -964,6 +828,68 @@ pub fn connection_schema(provider: ProviderKind) -> FormSchema {
                 FieldGroup::Advanced,
             ));
         }
+        ProviderKind::OpenAi => {
+            // First-party OpenAI: the family's credential is a static key and
+            // the endpoint is first-party unless overridden. The field spellings
+            // are owner-defined for the open model layer (`docs/13` §C; recorded
+            // in `docs/14` §9 like every other rebuild-defined key).
+            fields.push(required_for(
+                field(
+                    "inferenceOpenAiApiKey",
+                    "OpenAI API key",
+                    FieldKind::Secret,
+                    FieldGroup::Credentials,
+                ),
+                &[CredentialKind::Static],
+            ));
+            fields.push(with_help(
+                field(
+                    "inferenceOpenAiBaseUrl",
+                    "OpenAI base URL",
+                    FieldKind::Url,
+                    FieldGroup::Endpoint,
+                ),
+                "Leave empty for the first-party endpoint (https://api.openai.com/v1).",
+            ));
+            fields.push(with_help(
+                field(
+                    "inferenceStreamIdleTimeoutSec",
+                    "Stream idle timeout",
+                    FieldKind::Number,
+                    FieldGroup::Advanced,
+                ),
+                "Default 300 s.",
+            ));
+        }
+        ProviderKind::Custom => {
+            // The user-defined OpenAI-compatible endpoint (the owner's "custom
+            // provider"): base URL required, credential optional — self-hosted
+            // servers often serve without one (`docs/13` §C).
+            fields.push(with_help(
+                field(
+                    "inferenceCustomApiKey",
+                    "API key",
+                    FieldKind::Secret,
+                    FieldGroup::Credentials,
+                ),
+                "Optional: self-hosted servers may serve without a credential.",
+            ));
+            fields.push(required(field(
+                "inferenceCustomBaseUrl",
+                "Custom base URL",
+                FieldKind::Url,
+                FieldGroup::Endpoint,
+            )));
+            fields.push(with_help(
+                field(
+                    "inferenceStreamIdleTimeoutSec",
+                    "Stream idle timeout",
+                    FieldKind::Number,
+                    FieldGroup::Advanced,
+                ),
+                "Default 300 s.",
+            ));
+        }
         ProviderKind::ClaudeApi => {
             fields.push(required_for(
                 field(
@@ -1079,74 +1005,6 @@ pub fn connection_schema(provider: ProviderKind) -> FormSchema {
                 "Base URL",
                 FieldKind::Url,
                 FieldGroup::Endpoint,
-            ));
-        }
-        ProviderKind::Vertex => {
-            fields.push(required(field(
-                "inferenceVertexProjectId",
-                "GCP project ID",
-                FieldKind::Text,
-                FieldGroup::Endpoint,
-            )));
-            fields.push(required(field(
-                "inferenceVertexRegion",
-                "GCP region",
-                FieldKind::Text,
-                FieldGroup::Endpoint,
-            )));
-            fields.push(required(field(
-                "inferenceVertexCredentialsFile",
-                "GCP credentials file",
-                FieldKind::Text,
-                FieldGroup::Credentials,
-            )));
-            fields.push(field(
-                "inferenceVertexBaseUrl",
-                "Vertex base URL",
-                FieldKind::Url,
-                FieldGroup::Endpoint,
-            ));
-            fields.push(field(
-                "inferenceVertexOAuthClientId",
-                "OAuth client ID",
-                FieldKind::Text,
-                FieldGroup::Credentials,
-            ));
-            fields.push(field(
-                "inferenceVertexOAuthClientSecret",
-                "OAuth client secret",
-                FieldKind::Secret,
-                FieldGroup::Credentials,
-            ));
-            fields.push(field(
-                "inferenceVertexOAuthLoginHint",
-                "OAuth login hint",
-                FieldKind::Text,
-                FieldGroup::Credentials,
-            ));
-            fields.push(field(
-                "inferenceVertexOAuthScopes",
-                "OAuth scopes",
-                FieldKind::TagList,
-                FieldGroup::Credentials,
-            ));
-            fields.push(field(
-                "inferenceVertexWorkforceAudience",
-                "Workforce audience",
-                FieldKind::Text,
-                FieldGroup::Credentials,
-            ));
-            fields.push(field(
-                "inferenceVertexWorkforceUserProject",
-                "Workforce billing project",
-                FieldKind::Text,
-                FieldGroup::Credentials,
-            ));
-            fields.push(field(
-                "inferenceVertexWorkforceOidc",
-                "Workforce IdP (OIDC)",
-                FieldKind::KeyValue,
-                FieldGroup::Credentials,
             ));
         }
         ProviderKind::Foundry => {
@@ -1391,8 +1249,9 @@ mod tests {
             ProviderKind::ClaudeApi,
             ProviderKind::Bedrock,
             ProviderKind::BedrockMantle,
-            ProviderKind::Vertex,
             ProviderKind::Foundry,
+            ProviderKind::OpenAi,
+            ProviderKind::Custom,
         ] {
             let issues = connection(provider, json!({}));
             let fields = errors(&issues);
@@ -1410,13 +1269,12 @@ mod tests {
         }
     }
 
-    /// The six families must not share a key set: the earlier draft emitted the
+    /// The five supported families must not share a key set: the earlier draft emitted the
     /// Gateway keys for every provider, which contradicted `docs/20` §2.1.
     #[test]
     fn connection_schemas_are_provider_specific() {
         let gateway = connection_schema(ProviderKind::Gateway);
         let bedrock = connection_schema(ProviderKind::Bedrock);
-        let vertex = connection_schema(ProviderKind::Vertex);
         let foundry = connection_schema(ProviderKind::Foundry);
 
         assert!(gateway
@@ -1424,10 +1282,6 @@ mod tests {
             .iter()
             .any(|f| f.key == "inferenceGatewayApiKey"));
         assert!(!bedrock
-            .fields
-            .iter()
-            .any(|f| f.key == "inferenceGatewayApiKey"));
-        assert!(!vertex
             .fields
             .iter()
             .any(|f| f.key == "inferenceGatewayApiKey"));
@@ -1445,14 +1299,31 @@ mod tests {
             .iter()
             .any(|f| f.key == "inferenceBedrockRegion"));
 
-        assert!(vertex
-            .fields
-            .iter()
-            .any(|f| f.key == "inferenceVertexProjectId"));
         assert!(foundry
             .fields
             .iter()
             .any(|f| f.key == "inferenceFoundryResource"));
+
+        // The open families (`docs/13` §C): one endpoint/key shape per family,
+        // no leakage from the shipped five or from each other.
+        let openai = connection_schema(ProviderKind::OpenAi);
+        let custom = connection_schema(ProviderKind::Custom);
+        assert!(openai
+            .fields
+            .iter()
+            .any(|f| f.key == "inferenceOpenAiApiKey"));
+        assert!(custom
+            .fields
+            .iter()
+            .any(|f| f.key == "inferenceCustomBaseUrl"));
+        assert!(!openai
+            .fields
+            .iter()
+            .any(|f| f.key == "inferenceGatewayApiKey"));
+        assert!(!custom
+            .fields
+            .iter()
+            .any(|f| f.key == "inferenceOpenAiApiKey"));
     }
 
     /// TEST-CFG-005 (credential kind is exclusive, no fallback): a kind the family
@@ -1466,38 +1337,75 @@ mod tests {
         assert!(errors(&issues).contains(&"inferenceCredentialKind"));
     }
 
-    /// docs/12 §2.2 — the Anthropic predicate: denylist wins over the accept list.
+    // docs/12 §2.2 — the Anthropic predicate: denylist wins over the accept list.
+    // docs/09 §2.2 — Bedrock accepts the Anthropic vendor prefix or an ARN.
+    //
+    // The shipped predicates were withdrawn for the rebuild (owner decision
+    // 2026-10-23 — the open model layer, `docs/14` §9): every family accepts
+    // every id the user names, and only empty ids are structural errors. The
+    // shipped policy tests above were replaced by the open rule's own tests.
     #[test]
-    fn anthropic_model_id_policy() {
-        assert!(validate_anthropic_model_id("claude-opus-4-1").is_ok());
-        assert!(validate_anthropic_model_id("claude-3-5-haiku-20241022").is_ok());
-        assert!(validate_anthropic_model_id("sonnet").is_ok());
-        assert!(validate_anthropic_model_id("claude-sonnet-4").is_ok());
-        assert!(validate_anthropic_model_id("gpt-4o").is_err());
-        assert!(validate_anthropic_model_id("gemini-2.0-flash").is_err());
-        assert!(validate_anthropic_model_id("llama3-70b").is_err());
-        assert!(validate_anthropic_model_id("minimax-m2").is_err());
-        assert!(validate_anthropic_model_id("").is_err());
-    }
-
-    /// docs/09 §2.2 — Vertex accepts only `claude-` ids without the forbidden set.
-    #[test]
-    fn vertex_model_id_policy() {
-        assert!(validate_vertex_model_id("claude-sonnet-4@20250514").is_ok());
-        assert!(validate_vertex_model_id("sonnet-4").is_err());
-        assert!(validate_vertex_model_id("claude/sonnet").is_err());
-        assert!(validate_vertex_model_id("claude sonnet").is_err());
-    }
-
-    /// docs/09 §2.2 — Bedrock accepts the Anthropic vendor prefix or an ARN.
-    #[test]
-    fn bedrock_model_id_policy() {
-        assert!(validate_bedrock_model_id("anthropic.claude-3-5-sonnet").is_ok());
-        assert!(validate_bedrock_model_id(
+    fn open_model_id_rule() {
+        assert!(validate_open_model_id("claude-opus-4-1").is_ok());
+        assert!(validate_open_model_id("gpt-4o").is_ok());
+        assert!(validate_open_model_id("gemini-2.0-flash").is_ok());
+        assert!(validate_open_model_id("llama3:70b").is_ok());
+        assert!(validate_open_model_id("minimax-m2").is_ok());
+        assert!(validate_open_model_id(
             "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-3-5-sonnet-20241022-v2:0"
         )
         .is_ok());
-        assert!(validate_bedrock_model_id("gpt-4o").is_err());
+        assert!(validate_open_model_id("").is_err());
+        assert!(validate_open_model_id("   ").is_err());
+    }
+
+    /// The OpenAI family: the key is required for static, the base URL optional
+    /// (empty = first-party), and the form carries no scheme select.
+    #[test]
+    fn openai_family_validation() {
+        // Missing key on the static kind is the error.
+        let issues = connection(ProviderKind::OpenAi, json!({}));
+        assert!(errors(&issues).contains(&"inferenceOpenAiApiKey"));
+
+        // Key + nothing else validates clean (first-party endpoint).
+        let issues = connection(
+            ProviderKind::OpenAi,
+            json!({ "inferenceOpenAiApiKey": "placeholder-credential" }),
+        );
+        assert!(errors(&issues).is_empty(), "{issues:?}");
+
+        // A nonsense host is an error.
+        let issues = connection(
+            ProviderKind::OpenAi,
+            json!({
+                "inferenceOpenAiApiKey": "placeholder-credential",
+                "inferenceOpenAiBaseUrl": "not-a-url",
+            }),
+        );
+        assert!(errors(&issues).contains(&"inferenceOpenAiBaseUrl"));
+    }
+
+    /// The Custom family: base URL required, credential optional (self-hosted
+    /// servers may serve without one), and a nonsense host is refused.
+    #[test]
+    fn custom_family_validation() {
+        // Missing base URL is the error; the credential is NOT required.
+        let issues = connection(ProviderKind::Custom, json!({}));
+        assert!(errors(&issues).contains(&"inferenceCustomBaseUrl"));
+        assert!(!errors(&issues).contains(&"inferenceCustomApiKey"));
+
+        // Base URL alone validates clean.
+        let issues = connection(
+            ProviderKind::Custom,
+            json!({ "inferenceCustomBaseUrl": "https://llm.selfhosted.example/v1" }),
+        );
+        assert!(errors(&issues).is_empty(), "{issues:?}");
+
+        let issues = connection(
+            ProviderKind::Custom,
+            json!({ "inferenceCustomBaseUrl": "ftp://llm.selfhosted.example" }),
+        );
+        assert!(errors(&issues).contains(&"inferenceCustomBaseUrl"));
     }
 
     /// TEST-SEC-004 — custom headers carry routing metadata, not credentials.

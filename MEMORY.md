@@ -111,7 +111,8 @@ The live install contains `native-adapter.cjs`: an **in-process Anthropic→Open
 - **Phase 0** — foundations; exit criterion includes a lint rule/test that forbids global
   `fetch` monkey-patching and arbitrary provider URL translation.
 - **Phase 1** — app shell + bridge (this is what exists today).
-- **Phase 3** — adapter order: **gateway → anthropic → bedrock → vertex → mantle → foundry**.
+- **Phase 3** — adapter order: **gateway → anthropic → bedrock → mantle → foundry**. (The
+  Vertex family was **removed from rebuild scope** at the owner's direction, 2026-10-23 — §7c.)
 - `docs/19` priorities: IMP-01 native adapters (P0), IMP-02 per-provider model policy (P0),
   IMP-03 capability-first UI (P0), IMP-04 signed lazy extension packages (P0), IMP-05 native
   protocol families (P1), IMP-06 MiniMax M3.1 Flash as transparent reconstruction default (P1).
@@ -177,6 +178,184 @@ Setup-window deep-link grammar for manual runs: second launch
 `target/debug/myharness-desktop myharness://setup-desktop-3p` (needs `MYHARNESS_DIST`).
 An untracked stray `apps/desktop/src/components/Untitled-1` (a C file, editor artifact)
 sits in the tree, referenced by nothing - owner decision pending; do not delete on my own.
+
+## 7c. Phase 3 state (2026-10-23)
+
+Phase 3 ("Provider adapters", `docs/13` §5) is implemented on the `phase-3` lane
+(cut from `dev` @ `2d2a840`), stacked commits, not merged and not pushed. Slices 1–3
+(gateway, Claude API, Bedrock) are done. **The Vertex slice (4) was removed from the
+rebuild on 2026-10-23 at the owner's direction** — crate, wire battery, bridge probe
+lane, config form family/keys, egress/export keys, and renderer unlock were deleted
+outright; the Vertex family is out of rebuild scope (the shipped app keeps it,
+`docs/09` §2.2 stays). The pre-removal state is preserved at commit `7b84886` on the
+lane. `docs/17` (§4.10–§4.13 rows) and `docs/14` §9 items 21–28 are updated on disk
+per the standing policy, never committed.
+
+| Slice | Shipped |
+|---|---|
+| 1 | `crates/provider-sdk` (§8 adapter contract), `crates/providers/gateway` (native adapter:
+      discovery + `/v1/messages` SSE + probe + count_tokens), the `TEST-AI` wire battery
+      (23 fixtures), `crates/bridge::helper` discovery delegation, `settings.Custom3pSetup`
+      `testConnection` command + renderer wiring (Test connection performs a real inference) |
+| 2 | `crates/providers/anthropic` — the Claude API family's native adapter (own crate, no
+      shared code with the gateway crate beyond the sdk contract): first-party
+      `api.anthropic.com/v1/messages` + `/v1/models` discovery + native
+      `/v1/messages/count_tokens`, `x-api-key` auth with no scheme field, 21-fixture wire
+      battery + 10 unit tests. Setup probe lane widened to `ProviderKind::ClaudeApi`
+      (family-aware credential slot `inferenceAnthropicApiKey`; helper kind refused — the
+      family offers static/interactive only). Renderer Test connection unlocked for
+      `"gateway" | "anthropic"`. |
+| 3 | `crates/providers/bedrock` — the Bedrock Runtime surface's native adapter (own crate):
+      `POST /model/{id-or-arn}/invoke[-with-response-stream]` with the Anthropic Messages
+      grammar minus the `model` field plus `"anthropic_version": "bedrock-2023-05-31"`,
+      AWS EventStream binary framing (CRC-32C Castagnoli, encode + incremental decoder;
+      1 MiB / <16-byte frame refusals), `nextToken` control-plane discovery on
+      `/foundation-models` with no invented parameters, no native token count (explicit
+      refusal, never an estimate), conditional model echo (an answer without a `model`
+      field is not a refusal), 22 wire fixtures + 12 unit tests (published CRC-32C
+      vector + hand-assembled frames). Setup lane `test_connection_bedrock`
+      (`inferenceBedrockBearerToken` slot, helper kind allowed, `sso`/`external-idp`/
+      `vendor-profile` refused fail-closed; region required; one base override answers
+      both surfaces). `validate_bedrock_model_id` became `pub` (the family policy gate).
+      Renderer Test connection unlocked for `"gateway" | "anthropic" | "bedrock"`. |
+| 4 | **Removed (owner decision, 2026-10-23).** The `crates/providers/vertex` adapter, its 21-fixture wire battery and 10 unit tests, the `test_connection_vertex` bridge lane, the Vertex family in `crates/config` (form fields, `validate_vertex_model_id`, egress/export keys, `ProviderKind::Vertex`), and the renderer unlock were deleted. Root cause named by the owner: the wire-test build (reqwest + tokio + mock SSE server, debug-linked) crashed the laptop. Pre-removal snapshot: `7b84886`. |
+
+Durable traps and decisions worth not rediscovering:
+
+- **Serde wire spellings are the contract's:** the adapter `AuthScheme` is
+  `"bearer"` / `"x-api-key"` (kebab). A renderer or core literal `xApiKey` is dead on
+  arrival — the earlier draft used it and the discovery probe silently broke. Test
+  both spellings whenever a scheme resolves across the bridge.
+- **The probe is two calls when the draft names no usable model** (discovery then a
+  one-token `POST /v1/messages`), one call when it does (`docs/14` §9 item 21). The
+  draft's model target comes from the first `inferenceModels` entry the Anthropic model
+  policy accepts — `validate_anthropic_model_id` only rejects *non-Anthropic families*
+  (`gpt-…`, `gemini-…`), not arbitrary words; a made-up benign word passes it and the
+  adapter's model-echo check is what actually surfaces the mismatch.
+- **`ConfigBackend::test_connection` is synchronous** and runs its own current-thread
+  tokio runtime per call (the setup dispatch stays sync; the probe blocks the tauri
+  command thread for its duration).
+- **The helper credential path must use `run_helper`, not `HelperResolver`** for probe
+  paths: the resolver writes fetched credentials to the keychain, and a probe must not
+  persist anything.
+- **`ProviderKind::ClaudeApi` serializes as `"anthropic"`** (docs/12 §1's family id), not
+  `"claude-api"` — the renderer draft `provider` field and every serde round-trip key on
+  that spelling.
+- **The probe lane functions split per family** (`test_connection_gateway` /
+  `test_connection_claude_api` as inherent `ConfigBackend` methods): a `match` arm lives
+  in the trait impl, everything else must be inherent — extra fns inside a trait impl
+  fail with E0407, not a borrow error.
+- **Slice 4 (Vertex): withdrawn with the family on 2026-10-23.** The decisions that
+  slice had recorded lived in `docs/14` §9 item 28, which is retained as the
+  unknown/research record with a removal annotation; the code, fixtures, and the
+  on-disk doc rows they produced sit at `7b84886` on the `phase-3` lane.
+- **The two ad-hoc local SSE mock servers (gateway wire.rs, anthropic wire.rs, bridge
+  StubGateway) share a design, not code** — deliberately: adapters must not grow common
+  transport plumbing that could drift into a shared gateway-shaped client.
+- **Slice 2 decisions recorded in `docs/14` §9 items 24–26, summarized:** first-party
+  discovery sends **no `limit` param** (the gateway's `limit=1000` is the gateway
+  section's URL shape; the family's page size was never captured — a shape-tolerant page
+  parse covers `data`/`models` + `id`/`model`/`name` + a cursor under
+  `after_id`/`next_cursor`/`last_id`); the Claude API idle default applies the app's
+  300-second reading (the family's own shipped default was not separately captured);
+  health_check uses the plain first listing page (no injected `?limit=1` — a
+  gateway-crate convenience reading not carried into the newer crate).
+- **Slice 3 (Bedrock) decisions recorded in `docs/14` §9 item 27, summarized:** the
+  family's wire was never observed, so the adapter's contract is one pinned reading —
+  runtime host `bedrock-runtime.{region}.amazonaws.com` + control host
+  `bedrock.{region}.amazonaws.com` (the single `inferenceBedrockBaseUrl` override
+  replaces both); the body is the Anthropic grammar **without `model`** (the path
+  carries the model or ARN, `/` pct-encoded, `:` kept); auth is a plain
+  `Authorization: Bearer`; streaming is AWS EventStream binary frames (CRC-32C) whose
+  payloads are Anthropic event JSON; empty-payload frames are keep-alives that never
+  reset the idle window; exception envelopes map by name under
+  `__type`/`reason`/wrapped `Output`; **a beta-carrying request is refused visibly**
+  (no recorded beta transport — dropping silently would be the `AI-ADAPTER-07` mode in
+  reverse). `NativeStopReason::parse("guardrail_intervened")`-class unknown stop
+  spellings stay `Other` verbatim — preserving the native wording beats reclassifying.
+- **rustfmt drift is pre-existing and repo-wide (~61 files at `e37e08a`):** the
+  2026-10-13 stable toolchain formats committed code differently than the toolchain the
+  earlier gates ran on (config/secrets/app-shell/src-tauri all diff; verified via a HEAD
+  worktree). Slices 2–3 formatted only their own files; reconciling the repo is a
+  separate, explicit task — do not run bare `cargo fmt --check` as a slice gate until
+  it happens. (`bridge/src/lib.rs` and `config/src/lib.rs` still diff under
+  `cargo fmt --check`; their slice-3 edits were kept format-clean by hand.)
+
+## 7d. The open model layer (owner pivot, 2026-10-23)
+
+On 2026-10-23 the owner approved widening the rebuild from an Anthropic-first
+product into an **open multi-provider harness**: any model, any provider, plus a
+user-defined OpenAI-compatible endpoint (design reference: the DeepSeek
+harness). This rides alongside the in-flight Phase 3 work (§7c), not instead of
+it. The decision record lives in `docs/14` §9 and `docs/13` §C on disk (docs are
+never agent-committed).
+
+What changed, and why it is not the negative fixture's mode:
+
+- **All model-ID policy gates are removed by owner decision.**
+  `validate_open_model_id` (`crates/config`) checks shape (a non-empty id),
+  never family; the per-family validators no longer reject foreign families.
+  Every id travels verbatim; a rejection is the provider's own wire error,
+  mapped to `PROVIDER_ERROR` with the provider's message. This is a uniform
+  policy change with honest error surfacing — the opposite of
+  `AI-ADAPTER-01..14`'s per-call circumvention. The five families' test flips
+  prove it: `a_non_anthropic_id_travels_verbatim` (gateway + anthropic) and
+  `a_non_bedrock_id_travels_verbatim` (bedrock, which posts
+  `/model/{id}/invoke-with-response-stream`, not converse-stream).
+- **Wire families, not per-vendor crates.** The app-internal format stays
+  Anthropic Messages; each provider ships its own adapter translating to its
+  native wire. `crates/providers/openai` (`myharness-provider-openai`) is one
+  native wall for the whole OpenAI Chat Completions wire: the first-party
+  `openai` family (base optional, default `https://api.openai.com/v1`, static
+  key required — empty credential refuses before send) and the `custom` family
+  (base required at lane level, credential OPTIONAL → a keyless send with no
+  `authorization` header, `docs/14` §9 owner decision). `AdapterKind`
+  kebab-spells `"openai"` / `"custom"`.
+- **The OpenAI wire's shapes, locked by the 21-fixture battery**
+  (`crates/providers/openai/tests/wire.rs`): system blocks join `\n\n` into one
+  `role:"system"` message; `max_tokens` (not `max_completion_tokens`); no
+  `stream_options`; `top_k`/thinking/betas/`cache_control` dropped; images →
+  `image_url` data URI; documents and tool-result media → explicit
+  `UnsupportedModality` (never silently dropped); assistant Reasoning /
+  RedactedThinking omitted from replay; reasoning streamed via
+  `delta.reasoning_content` (fallback `delta.reasoning`); tool args stream via
+  `delta.tool_calls` with synthesized id `chunk.id-{index}` (`call-{index}`
+  when the chunk carries no completion id); close-assembling happens on
+  `finish_reason`; stop map stop→end_turn, length→max_tokens,
+  tool_calls/function_call→tool_use, content_filter→ContentFilter, unknown→
+  `Other` verbatim; echo = **prefix match** (`gpt-4o-2024-11-20` is legal for
+  `gpt-4o`; real substitution → `ModelNotFound`); usage
+  prompt/completion_tokens + `prompt_tokens_details.cached_tokens`; a
+  `data: {}` empty-object frame is a keep-alive Ping; `data: [DONE]` sentinel
+  required else error; **count_tokens → explicit refusal** (never an estimate).
+- **Bridge:** one shared lane `test_connection_openai_compat` with
+  `OpenAiCompatFamily::{first_party, custom}`; `resolve_optional_probe_credential`
+  returns `Ok(None)` for an absent/blank slot so the keyless send can exist
+  (strict resolvers of the three original lanes unchanged). Probe target:
+  the draft's first `inferenceModels` id, falling back to the endpoint's own
+  `/models` listing first row. Transitional arm reduced to
+  `BedrockMantle | Foundry` (message unchanged, tests updated).
+- **Discovery:** `setup_discover_openai_models` is an ADDITIVE Tauri command —
+  do not touch `setup_discover_models` (`apps/desktop/src-tauri/src/lib.rs`
+  ~line 253; e2e fixtures reference it). Single page, 10 s, tolerant parse of
+  three listing shapes (data array / bare top-level array / keyed `models`
+  object; bare-string rows; id from `id` / `model` / `name`).
+- **Renderer:** `ProviderKind` gained `"openai" | "custom"`
+  (`apps/desktop/src/setup/client.ts`); net-new provider-family picker on the
+  connection tab (blank stays unset; family switch keeps the shared keys —
+  models, idle window, custom headers, credential-kind trio — and resets the
+  family-specific ones); Test connection and discovery unlocked for
+  `openai`/`custom`; `pendingSecrets` keyed `connection/<fieldKey>` as always.
+- **State of the batteries at `8a3d1b8`:** gateway 23, anthropic 21 + 10 unit,
+  bedrock 34, openai 21, bridge 40. `cargo metadata` green; renderer gates and
+  the E2E spec green on this slice.
+- **`mantle` / `foundry` stay stubbed:** their forms exist, but the probe lane
+  refuses with the transitional message until their native adapters land —
+  locked, not faked.
+
+Traps: crate names are `myharness-provider-<family>`; `ProtocolFamily::OpenAiChat`
+is the sdk's id for the wire; reqwest lowercases header names in mock
+recordings (the openai tests' `Recorded::header` is case-insensitive).
 
 ## 8. Status vocabulary (`docs/17`)
 

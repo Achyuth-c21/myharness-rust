@@ -43,12 +43,11 @@ pub const REDACTED_HOST: &str = "<private-host>";
 /// Keys whose whole value is a credential (`docs/20` §2.1 marks them "secret
 /// string"). Their values never appear in an export, and the setup window
 /// preserves them across a renderer write (`docs/18` §10).
-pub const SECRET_KEYS: [&str; 6] = [
+pub const SECRET_KEYS: [&str; 5] = [
     "inferenceGatewayApiKey",
     "inferenceAnthropicApiKey",
     "inferenceBedrockBearerToken",
     "inferenceFoundryApiKey",
-    "inferenceVertexOAuthClientSecret",
     "otlpHeaders",
 ];
 
@@ -389,8 +388,10 @@ pub fn provider_label(profile: &ProfileDocument) -> &'static str {
         Some(ProviderKind::Gateway) => "gateway",
         Some(ProviderKind::Bedrock) => "bedrock",
         Some(ProviderKind::BedrockMantle) => "bedrock-mantle",
-        Some(ProviderKind::Vertex) => "vertex",
         Some(ProviderKind::Foundry) => "foundry",
+        // The open model layer's families (`docs/13` §C).
+        Some(ProviderKind::OpenAi) => "openai",
+        Some(ProviderKind::Custom) => "custom",
         None => "unknown",
     }
 }
