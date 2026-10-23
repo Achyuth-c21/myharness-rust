@@ -281,6 +281,82 @@ Durable traps and decisions worth not rediscovering:
   it happens. (`bridge/src/lib.rs` and `config/src/lib.rs` still diff under
   `cargo fmt --check`; their slice-3 edits were kept format-clean by hand.)
 
+## 7d. The open model layer (owner pivot, 2026-10-23)
+
+On 2026-10-23 the owner approved widening the rebuild from an Anthropic-first
+product into an **open multi-provider harness**: any model, any provider, plus a
+user-defined OpenAI-compatible endpoint (design reference: the DeepSeek
+harness). This rides alongside the in-flight Phase 3 work (§7c), not instead of
+it. The decision record lives in `docs/14` §9 and `docs/13` §C on disk (docs are
+never agent-committed).
+
+What changed, and why it is not the negative fixture's mode:
+
+- **All model-ID policy gates are removed by owner decision.**
+  `validate_open_model_id` (`crates/config`) checks shape (a non-empty id),
+  never family; the per-family validators no longer reject foreign families.
+  Every id travels verbatim; a rejection is the provider's own wire error,
+  mapped to `PROVIDER_ERROR` with the provider's message. This is a uniform
+  policy change with honest error surfacing — the opposite of
+  `AI-ADAPTER-01..14`'s per-call circumvention. The five families' test flips
+  prove it: `a_non_anthropic_id_travels_verbatim` (gateway + anthropic) and
+  `a_non_bedrock_id_travels_verbatim` (bedrock, which posts
+  `/model/{id}/invoke-with-response-stream`, not converse-stream).
+- **Wire families, not per-vendor crates.** The app-internal format stays
+  Anthropic Messages; each provider ships its own adapter translating to its
+  native wire. `crates/providers/openai` (`myharness-provider-openai`) is one
+  native wall for the whole OpenAI Chat Completions wire: the first-party
+  `openai` family (base optional, default `https://api.openai.com/v1`, static
+  key required — empty credential refuses before send) and the `custom` family
+  (base required at lane level, credential OPTIONAL → a keyless send with no
+  `authorization` header, `docs/14` §9 owner decision). `AdapterKind`
+  kebab-spells `"openai"` / `"custom"`.
+- **The OpenAI wire's shapes, locked by the 21-fixture battery**
+  (`crates/providers/openai/tests/wire.rs`): system blocks join `\n\n` into one
+  `role:"system"` message; `max_tokens` (not `max_completion_tokens`); no
+  `stream_options`; `top_k`/thinking/betas/`cache_control` dropped; images →
+  `image_url` data URI; documents and tool-result media → explicit
+  `UnsupportedModality` (never silently dropped); assistant Reasoning /
+  RedactedThinking omitted from replay; reasoning streamed via
+  `delta.reasoning_content` (fallback `delta.reasoning`); tool args stream via
+  `delta.tool_calls` with synthesized id `chunk.id-{index}` (`call-{index}`
+  when the chunk carries no completion id); close-assembling happens on
+  `finish_reason`; stop map stop→end_turn, length→max_tokens,
+  tool_calls/function_call→tool_use, content_filter→ContentFilter, unknown→
+  `Other` verbatim; echo = **prefix match** (`gpt-4o-2024-11-20` is legal for
+  `gpt-4o`; real substitution → `ModelNotFound`); usage
+  prompt/completion_tokens + `prompt_tokens_details.cached_tokens`; a
+  `data: {}` empty-object frame is a keep-alive Ping; `data: [DONE]` sentinel
+  required else error; **count_tokens → explicit refusal** (never an estimate).
+- **Bridge:** one shared lane `test_connection_openai_compat` with
+  `OpenAiCompatFamily::{first_party, custom}`; `resolve_optional_probe_credential`
+  returns `Ok(None)` for an absent/blank slot so the keyless send can exist
+  (strict resolvers of the three original lanes unchanged). Probe target:
+  the draft's first `inferenceModels` id, falling back to the endpoint's own
+  `/models` listing first row. Transitional arm reduced to
+  `BedrockMantle | Foundry` (message unchanged, tests updated).
+- **Discovery:** `setup_discover_openai_models` is an ADDITIVE Tauri command —
+  do not touch `setup_discover_models` (`apps/desktop/src-tauri/src/lib.rs`
+  ~line 253; e2e fixtures reference it). Single page, 10 s, tolerant parse of
+  three listing shapes (data array / bare top-level array / keyed `models`
+  object; bare-string rows; id from `id` / `model` / `name`).
+- **Renderer:** `ProviderKind` gained `"openai" | "custom"`
+  (`apps/desktop/src/setup/client.ts`); net-new provider-family picker on the
+  connection tab (blank stays unset; family switch keeps the shared keys —
+  models, idle window, custom headers, credential-kind trio — and resets the
+  family-specific ones); Test connection and discovery unlocked for
+  `openai`/`custom`; `pendingSecrets` keyed `connection/<fieldKey>` as always.
+- **State of the batteries at `8a3d1b8`:** gateway 23, anthropic 21 + 10 unit,
+  bedrock 34, openai 21, bridge 40. `cargo metadata` green; renderer gates and
+  the E2E spec green on this slice.
+- **`mantle` / `foundry` stay stubbed:** their forms exist, but the probe lane
+  refuses with the transitional message until their native adapters land —
+  locked, not faked.
+
+Traps: crate names are `myharness-provider-<family>`; `ProtocolFamily::OpenAiChat`
+is the sdk's id for the wire; reqwest lowercases header names in mock
+recordings (the openai tests' `Recorded::header` is case-insensitive).
+
 ## 8. Status vocabulary (`docs/17`)
 
 `Available` · `Available, unexercised` · `Partial` · `Policy-disabled` · `Unavailable` ·
