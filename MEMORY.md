@@ -178,6 +178,38 @@ Setup-window deep-link grammar for manual runs: second launch
 An untracked stray `apps/desktop/src/components/Untitled-1` (a C file, editor artifact)
 sits in the tree, referenced by nothing - owner decision pending; do not delete on my own.
 
+## 7c. Phase 3 state (2026-10-23)
+
+Phase 3 ("Provider adapters", `docs/13` §5) slice 1 is implemented on the `phase-3` lane
+(cut from `dev` @ `2d2a840`), not yet committed at review time and not merged. `docs/17`
+(§4.10 rows) and `docs/14` §9 items 21–23 were updated on disk, never committed.
+
+| Slice | Shipped |
+|---|---|
+| 1 | `crates/provider-sdk` (§8 adapter contract), `crates/providers/gateway` (native adapter:
+      discovery + `/v1/messages` SSE + probe + count_tokens), the `TEST-AI` wire battery
+      (23 fixtures), `crates/bridge::helper` discovery delegation, `settings.Custom3pSetup`
+      `testConnection` command + renderer wiring (Test connection performs a real inference) |
+
+Durable traps and decisions worth not rediscovering:
+
+- **Serde wire spellings are the contract's:** the adapter `AuthScheme` is
+  `"bearer"` / `"x-api-key"` (kebab). A renderer or core literal `xApiKey` is dead on
+  arrival — the earlier draft used it and the discovery probe silently broke. Test
+  both spellings whenever a scheme resolves across the bridge.
+- **The probe is two calls when the draft names no usable model** (discovery then a
+  one-token `POST /v1/messages`), one call when it does (`docs/14` §9 item 21). The
+  draft's model target comes from the first `inferenceModels` entry the Anthropic model
+  policy accepts — `validate_anthropic_model_id` only rejects *non-Anthropic families*
+  (`gpt-…`, `gemini-…`), not arbitrary words; a made-up benign word passes it and the
+  adapter's model-echo check is what actually surfaces the mismatch.
+- **`ConfigBackend::test_connection` is synchronous** and runs its own current-thread
+  tokio runtime per call (the setup dispatch stays sync; the probe blocks the tauri
+  command thread for its duration).
+- **The helper credential path must use `run_helper`, not `HelperResolver`** for probe
+  paths: the resolver writes fetched credentials to the keychain, and a probe must not
+  persist anything.
+
 ## 8. Status vocabulary (`docs/17`)
 
 `Available` · `Available, unexercised` · `Partial` · `Policy-disabled` · `Unavailable` ·

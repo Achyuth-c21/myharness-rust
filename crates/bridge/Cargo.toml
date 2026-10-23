@@ -5,6 +5,8 @@ edition.workspace = true
 
 [dependencies]
 myharness-config = { path = "../config" }
+myharness-provider-gateway = { path = "../providers/gateway" }
+myharness-provider-sdk = { path = "../provider-sdk" }
 myharness-secrets = { path = "../secrets" }
 reqwest = { workspace = true }
 secrecy = { workspace = true }

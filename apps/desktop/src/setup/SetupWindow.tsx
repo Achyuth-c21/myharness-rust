@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Field } from "./fields";
 import {
   discoverModels,
+  testConnection,
   setup,
   type ConfigHealth,
   type EgressAllowlist,
@@ -100,6 +101,8 @@ export default function SetupWindow() {
   const [exportOpen, setExportOpen] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [discoveryNote, setDiscoveryNote] = useState<string | null>(null);
+  const [probing, setProbing] = useState(false);
+  const [probeNote, setProbeNote] = useState<string | null>(null);
 
   const loadProfiles = useCallback(async () => {
     const response = await setup({ type: "listProfiles" });
@@ -246,7 +249,7 @@ export default function SetupWindow() {
     const response = await discoverModels({
       baseUrl,
       apiKey: pendingSecrets["connection/inferenceGatewayApiKey"],
-      authScheme: section["inferenceGatewayAuthScheme"] === "x-api-key" ? "xApiKey" : "bearer",
+      authScheme: section["inferenceGatewayAuthScheme"] === "x-api-key" ? "x-api-key" : "bearer",
       customHeaders: headers,
     });
     setDiscovering(false);
@@ -264,6 +267,33 @@ export default function SetupWindow() {
       response.partial
         ? `Discovered ${ids.length} models; the list is partial${response.warning ? ` (${response.warning})` : ""}.`
         : `Discovered ${ids.length} models.`,
+    );
+  };
+
+  /**
+   * The *Test connection*: a real one-token inference through the native
+   * adapter (docs/13 Phase 3). The typed credential rides the secrets map
+   * exactly like the apply path; nothing here persists. The wire spelling of
+   * the auth scheme is the contract's own (bearer / x-api-key).
+   */
+  const runProbe = async () => {
+    if (!draft) return;
+    setProbing(true);
+    setProbeNote(null);
+    const response = await testConnection(draft, pendingSecrets);
+    setProbing(false);
+    if (response.type === "error") {
+      setProbeNote(response.error.message);
+      return;
+    }
+    if (response.type !== "probe") return;
+    const { probe } = response;
+    setProbeNote(
+      probe.ok
+        ? `Connected. The gateway ran ${probe.model} (${probe.latencyMs} ms, ` +
+          `${probe.inputTokens} in / ${probe.outputTokens} out` +
+          `${probe.stopReason ? `, stop ${probe.stopReason}` : ""}).`
+        : "The gateway answered but the probe did not complete.",
     );
   };
 
@@ -423,15 +453,22 @@ export default function SetupWindow() {
                 </h2>
                 {tab === "connection" ? (
                   <div className="setup-section-actions">
-                    {/* The inference probe belongs to the provider adapters of
-                        Phase 3; it is shown disabled rather than faked. */}
+                    {/* A real one-token inference through the native adapter
+                        (docs/13 Phase 3). The probe exists for the gateway
+                        family; other families keep it disabled rather than
+                        faked. */}
                     <button
                       type="button"
                       className="setup-secondary-button"
-                      disabled
-                      title="Not implemented yet"
+                      disabled={probing || draft?.provider !== "gateway"}
+                      onClick={() => void runProbe()}
+                      title={
+                        draft?.provider !== "gateway"
+                          ? "The gateway provider is the only family the probe verifies"
+                          : undefined
+                      }
                     >
-                      Test connection
+                      {probing ? "Testing…" : "Test connection"}
                     </button>
                     <button
                       type="button"
@@ -447,6 +484,11 @@ export default function SetupWindow() {
               {discoveryNote ? (
                 <p className="setup-note" role="status">
                   {discoveryNote}
+                </p>
+              ) : null}
+              {probeNote ? (
+                <p className="setup-note" role="status">
+                  {probeNote}
                 </p>
               ) : null}
               {visibleFields.map((field) => {

@@ -26,6 +26,8 @@
 
 use std::collections::BTreeMap;
 
+use myharness_provider_gateway::{GatewayAdapter, GatewayClientConfig, ProbeStatus};
+use myharness_provider_sdk::{AuthContext, ErrorClass, ProviderAdapter, ProviderError};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -77,6 +79,16 @@ pub enum SetupCommand {
     ConnectionSchema { provider: String },
     /// `validate` — the issues of a draft, without persisting it.
     Validate { document: Value },
+    /// `testConnection` — the Connection tab's *Test connection* (`docs/13`
+    /// Phase 3): a real one-token inference against the gateway through the
+    /// native adapter. The typed credential rides `secrets` exactly like the
+    /// write path. The draft is neither persisted nor logged, and no stored
+    /// credential is ever substituted for a failure path.
+    TestConnection {
+        document: Value,
+        #[serde(default)]
+        secrets: BTreeMap<String, String>,
+    },
 }
 
 /// A response in the `settings.Custom3pSetup` namespace.
@@ -99,6 +111,11 @@ pub enum SetupResponse {
     Schema { schema: Value },
     /// The validation issues of a draft.
     Issues { issues: Vec<FormIssue> },
+    /// The *Test connection* verdict: the probe's real usage, latency, and
+    /// the native stop reason. Failures surface as `Error`.
+    Probe {
+        probe: myharness_provider_gateway::ProbeStatus,
+    },
     /// The command failed. The message is user-safe: no secret, no raw body
     /// (`docs/18` §11).
     Error { error: BridgeError },
@@ -180,6 +197,17 @@ pub trait SetupBackend {
     fn egress(&self) -> Result<myharness_config::egress::EgressAllowlist, BridgeError>;
     /// Store a credential value and return the handle the document carries.
     fn set_secret(&self, account: &str, value: &str) -> Result<SecretRef, BridgeError>;
+    /// The Connection tab's *Test connection*: a real one-token inference
+    /// through the native gateway adapter (`docs/12` §8.3; `docs/13` Phase 3).
+    ///
+    /// The draft is never persisted and never modified; the credential is
+    /// resolved per request and exists only inside this call; a failed
+    /// resolution is an error, never a substitution.
+    fn test_connection(
+        &self,
+        document: &ProfileDocument,
+        typed: &BTreeMap<String, String>,
+    ) -> Result<ProbeStatus, BridgeError>;
 }
 
 /// A backend over the configuration library and the OS keychain.
@@ -283,6 +311,298 @@ impl SetupBackend for ConfigBackend {
             account: account.to_string(),
         })
     }
+
+    fn test_connection(
+        &self,
+        document: &ProfileDocument,
+        typed: &BTreeMap<String, String>,
+    ) -> Result<ProbeStatus, BridgeError> {
+        if document
+            .provider
+            .is_some_and(|provider| provider != ProviderKind::Gateway)
+        {
+            return Err(BridgeError::new(
+                "CONFIG_VALIDATION",
+                "this probe verifies the gateway provider only",
+            ));
+        }
+        let connection = &document.connection.0;
+        let base = connection
+            .get("inferenceGatewayBaseUrl")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|base| !base.is_empty());
+        let Some(base) = base else {
+            // A missing endpoint blocks before any request is sent.
+            return Err(BridgeError::new(
+                "CONFIG_VALIDATION",
+                "the gateway base URL is required for the connection probe",
+            ));
+        };
+        let scheme = parse_probe_scheme(connection.get("inferenceGatewayAuthScheme"))?;
+        let idle = connection
+            .get("inferenceStreamIdleTimeoutSec")
+            .and_then(Value::as_u64)
+            .map(std::time::Duration::from_secs)
+            .unwrap_or(myharness_provider_gateway::DEFAULT_IDLE_TIMEOUT);
+        let custom_headers = custom_headers_for_probe(connection)?;
+
+        // The credential kind decides the source (`docs/09` §2.2): a static
+        // slot (typed value first, stored handle second), or the helper
+        // script run once. An interactive sign-in cannot be probed and is
+        // never emulated.
+        let credential = resolve_probe_credential(connection, typed, self.secrets.as_ref())?;
+        let secret = match credential {
+            ProbeCredential::Value(secret) => secret,
+            ProbeCredential::Helper(config) => {
+                myharness_secrets::helper::run_helper(&config, cfg!(windows))
+                    .map_err(bridge_secret_error)?
+            }
+        };
+
+        let config = GatewayClientConfig {
+            base_url: base.to_string(),
+            auth_scheme: scheme,
+            custom_headers,
+            idle_timeout: idle,
+            betas: Vec::new(),
+        };
+        let adapter = GatewayAdapter::new(config, reqwest::Client::new());
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| {
+                BridgeError::new(
+                    "CONFIG_IO",
+                    format!("the probe runtime could not start: {error}"),
+                )
+            })?;
+        runtime.block_on(async {
+            let auth_label = "setup test connection";
+            // The probe infers with a real model id: the draft's list when it
+            // carries one that the Anthropic model policy accepts, discovery
+            // over the same credential otherwise.
+            let model_id = match first_legal_probe_model(connection) {
+                Some(model) => model,
+                None => {
+                    let models = adapter
+                        .list_models(&AuthContext::new(secret.clone(), auth_label))
+                        .await
+                        .map_err(bridge_provider_error)?;
+                    models
+                        .iter()
+                        .map(|model| model.key.model_id.clone())
+                        .find(|id| myharness_config::forms::validate_anthropic_model_id(id).is_ok())
+                        .ok_or_else(|| {
+                            BridgeError::new(
+                                "PROVIDER_ERROR",
+                                "the gateway advertised no Anthropic-legal model for a probe",
+                            )
+                        })?
+                }
+            };
+            // Two calls, one probe session, one credential: discovery picks
+            // the target, the probe infers against it — a one-token request
+            // whose result must echo the requested model.
+            adapter
+                .probe_inference(&AuthContext::new(secret.clone(), auth_label), &model_id)
+                .await
+                .map_err(bridge_provider_error)
+        })
+    }
+}
+
+/// The probe's credential source. `Helper` carries the configured helper; its
+/// script runs once inside `test_connection` and its output is never stored
+/// (a probe must not persist anything — the TTL/cache machinery belongs to
+/// the runtime, not to a draft check).
+enum ProbeCredential {
+    Value(secrecy::SecretString),
+    Helper(myharness_secrets::helper::HelperConfig),
+}
+
+/// Resolve the credential the probe will use, strictly (`docs/09` §2.2): the
+/// typed value first, the draft's own slot value second, a stored keychain
+/// handle last — and only one of them. A missing or unreachable credential is
+/// an error; nothing is substituted, nothing is executed, and no raw value is
+/// logged or carried in an error message.
+fn resolve_probe_credential(
+    connection: &Value,
+    typed: &BTreeMap<String, String>,
+    store: &dyn SecretStore,
+) -> Result<ProbeCredential, BridgeError> {
+    let kind = connection
+        .get("inferenceCredentialKind")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|kind| !kind.is_empty())
+        .unwrap_or("static");
+
+    match kind {
+        "static" => {}
+        "helper-script" => {
+            let config = myharness_secrets::helper::HelperConfig::from_connection(connection)
+                .map_err(bridge_secret_error)?
+                .ok_or_else(|| {
+                    BridgeError::new(
+                        "CONFIG_VALIDATION",
+                        "helper script is required for the helper credential kind",
+                    )
+                })?;
+            return Ok(ProbeCredential::Helper(config));
+        }
+        // An interactive sign-in cannot be probed without completing the
+        // sign-in flow, and the app does not emulate it (docs/14 §9).
+        "interactive" => {
+            return Err(BridgeError::new(
+                "CONFIG_VALIDATION",
+                "interactive sign-in cannot be verified by this probe; finish signing in, then test again with a saved profile",
+            ));
+        }
+        other => {
+            return Err(BridgeError::new(
+                "CONFIG_VALIDATION",
+                format!("credential kind {other:?} cannot be probed"),
+            ));
+        }
+    }
+
+    // The static lane: the typed value wins, then the draft's own value, then
+    // the keychain handle. `run` never subsitutes one for another.
+    if let Some(value) = typed.get("connection/inferenceGatewayApiKey") {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return Ok(ProbeCredential::Value(secrecy::SecretString::from(
+                trimmed.to_string(),
+            )));
+        }
+    }
+    match connection.get("inferenceGatewayApiKey") {
+        Some(Value::String(value)) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Err(BridgeError::new(
+                    "CONFIG_VALIDATION",
+                    "the api key field carries no value",
+                ));
+            }
+            Ok(ProbeCredential::Value(secrecy::SecretString::from(
+                trimmed.to_string(),
+            )))
+        }
+        Some(value @ Value::Object(_)) => {
+            let reference: SecretRef = serde_json::from_value(value.clone()).map_err(|_| {
+                BridgeError::new(
+                    "CONFIG_VALIDATION",
+                    "the api key field is not a value nor a credential handle",
+                )
+            })?;
+            match store.load(&reference.account) {
+                Ok(Some(secret)) => Ok(ProbeCredential::Value(secret)),
+                Ok(None) => Err(BridgeError::new(
+                    "SECRET_MISSING",
+                    "no credential is stored for this profile's api key; save the profile, then test again",
+                )),
+                Err(error) => Err(bridge_secret_error(error)),
+            }
+        }
+        _ => Err(BridgeError::new(
+            "CONFIG_VALIDATION",
+            "a credential is required for the connection probe",
+        )),
+    }
+}
+
+/// The probe's auth scheme: the form's plain values are the wire spellings.
+fn parse_probe_scheme(value: Option<&Value>) -> Result<crate::helper::AuthScheme, BridgeError> {
+    match value {
+        None => Ok(crate::helper::AuthScheme::Bearer),
+        Some(Value::String(raw)) => match raw.trim() {
+            "bearer" => Ok(crate::helper::AuthScheme::Bearer),
+            "x-api-key" => Ok(crate::helper::AuthScheme::XApiKey),
+            other => Err(BridgeError::new(
+                "CONFIG_VALIDATION",
+                format!("auth scheme {other:?} is not one of the contract's bearer / x-api-key"),
+            )),
+        },
+        Some(other) => Err(BridgeError::new(
+            "CONFIG_VALIDATION",
+            format!("the auth scheme field expects a string, found {other:?}"),
+        )),
+    }
+}
+
+/// The routing headers the probe sends. Validate-time rules hold: a
+/// credential-shaped name or value is refused instead of sent (TEST-SEC-004
+/// discipline; the credential section is the only credential lane).
+fn custom_headers_for_probe(connection: &Value) -> Result<Vec<(String, String)>, BridgeError> {
+    let Some(headers) = connection
+        .get("inferenceCustomHeaders")
+        .and_then(Value::as_object)
+    else {
+        return Ok(Vec::new());
+    };
+    let mut collected = Vec::new();
+    for (name, value) in headers {
+        let Some(raw) = value.as_str() else {
+            return Err(BridgeError::new(
+                "CONFIG_VALIDATION",
+                format!("custom header {name:?} expects a string value"),
+            ));
+        };
+        let lower = name.trim().to_ascii_lowercase();
+        if matches!(
+            lower.as_str(),
+            "authorization" | "proxy-authorization" | "x-api-key" | "anthropic-api-key"
+        ) || raw.trim().to_ascii_lowercase().starts_with("bearer ")
+        {
+            return Err(BridgeError::new(
+                "CONFIG_VALIDATION",
+                format!("custom header {name:?} carries credentials; use the credential section instead"),
+            ));
+        }
+        collected.push((name.trim().to_string(), raw.to_string()));
+    }
+    Ok(collected)
+}
+
+/// The first model id of the draft's list that the Anthropic model policy
+/// accepts. A non-Anthropic id is not probed (the policy refuses it); an
+/// empty or absent list means discovery decides.
+fn first_legal_probe_model(connection: &Value) -> Option<String> {
+    let list = connection
+        .get("inferenceModels")
+        .and_then(Value::as_array)?;
+    list.iter().find_map(|entry| {
+        let id = entry.as_str().map(str::trim).filter(|id| !id.is_empty());
+        id.filter(|id| myharness_config::forms::validate_anthropic_model_id(id).is_ok())
+            .map(str::to_string)
+    })
+}
+
+/// Map a provider error onto the setup bridge's codes, with the provider's
+/// message verbatim — the same code strings the helper wrapper maps
+/// (`docs/18` §11: no body text, no secret material).
+pub(crate) fn bridge_provider_error(error: ProviderError) -> BridgeError {
+    if let ErrorClass::Configuration = error.class {
+        return BridgeError::new("CONFIG_VALIDATION", error.message);
+    }
+    let code = match error.class {
+        ErrorClass::Unreachable => "PROVIDER_UNREACHABLE",
+        _ => "PROVIDER_ERROR",
+    };
+    BridgeError::new(code, error.message)
+}
+
+/// Map a secret-source error onto the bridge: the `SECRET_*` prefix of the
+/// crate's own Display is the bridge's code, the rest is the (value-free)
+/// message (`docs/09` §4: no value ever appears in an error).
+fn bridge_secret_error(error: myharness_secrets::SecretError) -> BridgeError {
+    // The secret crate's errors never carry a credential value.
+    match error.to_string().split_once(": ") {
+        Some((code, rest)) if code.starts_with("SECRET_") => BridgeError::new(code, rest),
+        _ => BridgeError::new("SECRET_STORE", "the credential could not be resolved"),
+    }
 }
 
 /// Execute one setup command.
@@ -380,6 +700,14 @@ fn run<B: SetupBackend>(backend: &B, command: SetupCommand) -> Result<SetupRespo
             let document = decode_document(document)?;
             Ok(SetupResponse::Issues {
                 issues: myharness_config::forms::validate_document(&document),
+            })
+        }
+        SetupCommand::TestConnection { document, secrets } => {
+            let document = decode_document(document)?;
+            // Nothing here persists: the probe resolves against the draft and
+            // the keychain, infers once, and returns the verdict.
+            Ok(SetupResponse::Probe {
+                probe: backend.test_connection(&document, &secrets)?,
             })
         }
     }
@@ -796,5 +1124,431 @@ mod tests {
             panic!("expected an issues response");
         };
         assert!(issues.iter().any(|i| i.field == "inferenceGatewayApiKey"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Test connection (docs/13 Phase 3) — the setup-path battery
+    // -----------------------------------------------------------------------
+
+    /// The body of a canned response.
+    fn response_bytes(value: &serde_json::Value) -> Vec<u8> {
+        value.to_string().into_bytes()
+    }
+
+    /// One canned HTTP response.
+    fn canned(status: u16, content_type: &str, body: &[u8]) -> Vec<u8> {
+        format!(
+            "HTTP/1.1 {status} OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        )
+        .into_bytes()
+        .into_iter()
+        .chain(body.iter().copied())
+        .collect()
+    }
+
+    /// A local gateway recording how many connections it answered. The queue
+    /// order is the flow order; the flat count exposes *any* traffic a
+    /// refused draft must not produce.
+    struct StubGateway {
+        base: String,
+        hits: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        handle: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl Drop for StubGateway {
+        fn drop(&mut self) {
+            self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            if let Some(handle) = self.handle.take() {
+                let _ = handle.join();
+            }
+        }
+    }
+
+    impl StubGateway {
+        fn serve(canned: Vec<Vec<u8>>) -> StubGateway {
+            use std::io::{Read, Write};
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let base = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+            let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let handle = {
+                let hits = hits.clone();
+                let stop = stop.clone();
+                std::thread::spawn(move || {
+                    let _ = listener.set_nonblocking(true);
+                    let mut next = 0usize;
+                    while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                        let Ok((mut stream, _)) = listener.accept() else {
+                            std::thread::sleep(std::time::Duration::from_millis(3));
+                            continue;
+                        };
+                        let mut buffer = [0u8; 4096];
+                        let _ = stream.read(&mut buffer);
+                        hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if next < canned.len() {
+                            let _ = stream.write_all(&canned[next]);
+                            let _ = stream.flush();
+                            next += 1;
+                        }
+                    }
+                })
+            };
+            StubGateway {
+                base,
+                hits,
+                stop,
+                handle: Some(handle),
+            }
+        }
+
+        fn hits(&self) -> usize {
+            self.hits.load(std::sync::atomic::Ordering::Relaxed)
+        }
+    }
+
+    /// A gateway draft over a real library entry, pointed at `stub`.
+    fn backend_again() -> (ConfigBackend, String) {
+        backend()
+    }
+
+    fn gateway_document(stub: &str) -> ProfileDocument {
+        let (backend, id) = backend();
+        let mut document = backend.library().read(&id).unwrap();
+        document.connection = myharness_config::Section(json!({
+            "inferenceGatewayBaseUrl": stub,
+            "inferenceGatewayAuthScheme": "bearer",
+            "inferenceModels": ["claude-opus-4-1"],
+        }));
+        document
+    }
+
+    /// The probe refuses a draft for another family before anything sends.
+    #[test]
+    fn test_connection_refuses_a_non_gateway_draft() {
+        let (backend, id) = backend();
+        let mut document = backend.library().read(&id).unwrap();
+        document.provider = Some(ProviderKind::ClaudeApi);
+        let response = dispatch(
+            &backend,
+            SetupCommand::TestConnection {
+                document: serde_json::to_value(document).unwrap(),
+                secrets: BTreeMap::new(),
+            },
+        );
+        let SetupResponse::Error { error } = response else {
+            panic!("expected an error response");
+        };
+        assert_eq!(error.code, "CONFIG_VALIDATION");
+        assert!(error.message.contains("verifies the gateway provider only"));
+
+        // The draft never changed: the probe must not persist anything.
+        let reread = backend.library().read(&id).unwrap();
+        assert!(reread.connection.0.get("inferenceModels").is_none());
+    }
+
+    /// An interactive credential is refused before anything sends — the app
+    /// does not emulate an interactive sign-in (`docs/14` §9), and a refusal
+    /// carries no request and no substitute credential.
+    #[test]
+    fn test_connection_refuses_interactive_without_a_request() {
+        let stub = StubGateway::serve(Vec::new());
+        let mut document = gateway_document(&stub.base);
+        let connection = document.connection.0.as_object_mut().unwrap();
+        connection.insert("inferenceCredentialKind".to_string(), json!("interactive"));
+        connection.insert(
+            "inferenceGatewayApiKey".to_string(),
+            json!("sk-ant-EXAMPLE"),
+        );
+        let (backend, _id) = backend();
+        let response = dispatch(
+            &backend,
+            SetupCommand::TestConnection {
+                document: serde_json::to_value(document).unwrap(),
+                secrets: BTreeMap::new(),
+            },
+        );
+        let SetupResponse::Error { error } = response else {
+            panic!("expected an error response");
+        };
+        assert_eq!(error.code, "CONFIG_VALIDATION");
+        assert!(error.message.contains("cannot be verified by this probe"));
+        assert_eq!(stub.hits(), 0, "a refused kind must send nothing");
+    }
+
+    /// A draft with no credential blocks before anything sends: the missing
+    /// key is an error, never a stored-secret substitution, never a fallback.
+    #[test]
+    fn test_connection_blocks_without_a_credential_and_without_a_request() {
+        let stub = StubGateway::serve(Vec::new());
+        let document = gateway_document(&stub.base);
+        let (backend, _id) = backend();
+        let response = dispatch(
+            &backend,
+            SetupCommand::TestConnection {
+                document: serde_json::to_value(document).unwrap(),
+                secrets: BTreeMap::new(),
+            },
+        );
+        let SetupResponse::Error { error } = response else {
+            panic!("expected an error response");
+        };
+        assert_eq!(error.code, "CONFIG_VALIDATION");
+        assert!(error.message.contains("a credential is required"));
+        assert_eq!(stub.hits(), 0, "a missing credential sends nothing");
+    }
+
+    /// The happy path: the draft's model list picks the target and the probe
+    /// is a real inference — one request, tokens and latency reported.
+    #[test]
+    fn test_connection_sends_a_real_inference() {
+        let completion = json!({
+            "model": "claude-opus-4-1",
+            "content": [ { "type": "text", "text": "pong" } ],
+            "stop_reason": "end_turn",
+            "usage": { "input_tokens": 3, "output_tokens": 1 }
+        });
+        let stub = StubGateway::serve(vec![canned(
+            200,
+            "application/json",
+            &response_bytes(&completion),
+        )]);
+        let mut document = gateway_document(&stub.base);
+        let connection = document.connection.0.as_object_mut().unwrap();
+        connection.insert(
+            "inferenceGatewayApiKey".to_string(),
+            json!("sk-ant-EXAMPLE-TYPED"),
+        );
+        let (backend, _id) = backend();
+        let response = dispatch(
+            &backend,
+            SetupCommand::TestConnection {
+                document: serde_json::to_value(document).unwrap(),
+                secrets: BTreeMap::new(),
+            },
+        );
+        let SetupResponse::Probe { probe } = response else {
+            panic!("expected a probe response");
+        };
+        assert!(probe.ok);
+        assert_eq!(probe.model, "claude-opus-4-1");
+        assert_eq!(probe.stop_reason.as_deref(), Some("end_turn"));
+        assert_eq!(probe.input_tokens, 3);
+        assert_eq!(probe.output_tokens, 1);
+        assert!(probe.latency_ms > 0);
+        assert_eq!(stub.hits(), 1, "the draft's model list skips discovery");
+    }
+
+    /// A typed value beats everything: the draft may even carry a stored
+    /// handle — the probe uses the typed value and never substitutes the
+    /// store's credential in its place.
+    #[test]
+    fn test_connection_uses_the_typed_value_over_the_stored_slot() {
+        let completion = json!({
+            "model": "claude-opus-4-1",
+            "content": [ { "type": "text", "text": "pong" } ],
+            "stop_reason": "end_turn",
+            "usage": { "input_tokens": 3, "output_tokens": 1 }
+        });
+        let stub = StubGateway::serve(vec![canned(
+            200,
+            "application/json",
+            &response_bytes(&completion),
+        )]);
+        let mut document = gateway_document(&stub.base);
+        let connection = document.connection.0.as_object_mut().unwrap();
+        // A handle for a slot that holds a DIFFERENT credential.
+        connection.insert(
+            "inferenceGatewayApiKey".to_string(),
+            json!({ "kind": "keychain", "service": "probe", "account": "decoy/account" }),
+        );
+        let (backend, _id) = backend();
+        let mut secrets = BTreeMap::new();
+        secrets.insert(
+            "connection/inferenceGatewayApiKey".to_string(),
+            "sk-ant-EXAMPLE-TYPED".to_string(),
+        );
+        let response = dispatch(
+            &backend,
+            SetupCommand::TestConnection {
+                document: serde_json::to_value(document).unwrap(),
+                secrets,
+            },
+        );
+        let SetupResponse::Probe { probe } = response else {
+            panic!("expected a probe response");
+        };
+        assert!(probe.ok, "the typed value must be the one used");
+        // The decoy was never unused-and-silent: a probe must not persist
+        // anything, so the decoy account stays untouched even on success.
+        assert_eq!(stub.hits(), 1);
+    }
+
+    /// A stored handle resolves through the keychain — and a slot that points
+    /// nowhere is an explicit error (`SECRET_MISSING`), never an omission.
+    #[test]
+    fn test_connection_resolves_the_stored_slot_fail_closed() {
+        let (backend, id) = backend();
+        let reference = backend
+            .set_secret("probe/connection/inferenceGatewayApiKey", "sk-ant-STORED")
+            .unwrap();
+        let mut document = backend.library().read(&id).unwrap();
+        document.connection = myharness_config::Section(json!({
+            "inferenceGatewayBaseUrl": "https://gateway.example",
+            "inferenceGatewayAuthScheme": "bearer",
+            "inferenceModels": ["claude-opus-4-1"],
+            "inferenceGatewayApiKey": {
+                "kind": "keychain",
+                "service": reference.service,
+                "account": reference.account,
+            },
+        }));
+        // The resolvable slot reaches a live gateway...
+        let completion = json!({
+            "model": "claude-opus-4-1",
+            "content": [ { "type": "text", "text": "pong" } ],
+            "stop_reason": "end_turn",
+            "usage": { "input_tokens": 3, "output_tokens": 1 }
+        });
+        let stub = StubGateway::serve(vec![canned(
+            200,
+            "application/json",
+            &response_bytes(&completion),
+        )]);
+        let document = {
+            let value = serde_json::to_value(&document).unwrap();
+            let mut value = value;
+            value
+                .as_object_mut()
+                .unwrap()
+                .get_mut("connection")
+                .unwrap()
+                .as_object_mut()
+                .unwrap()
+                .insert("inferenceGatewayBaseUrl".to_string(), json!(stub.base));
+            serde_json::from_value::<ProfileDocument>(value).unwrap()
+        };
+        let response = dispatch(
+            &backend,
+            SetupCommand::TestConnection {
+                document: serde_json::to_value(document).unwrap(),
+                secrets: BTreeMap::new(),
+            },
+        );
+        let SetupResponse::Probe { probe } = response else {
+            panic!("expected a probe response");
+        };
+        assert!(probe.ok);
+        assert_eq!(stub.hits(), 1);
+
+        // ...and a slot pointing nowhere fails closed with a real code.
+        {
+            let (fresh, _id) = backend_again();
+            let mut document = gateway_document("https://gateway.example");
+            document.connection.0.as_object_mut().unwrap().insert(
+                "inferenceGatewayApiKey".to_string(),
+                json!({ "kind": "keychain", "service": "nowhere", "account": "nowhere/account" }),
+            );
+            let response = dispatch(
+                &fresh,
+                SetupCommand::TestConnection {
+                    document: serde_json::to_value(document).unwrap(),
+                    secrets: BTreeMap::new(),
+                },
+            );
+            let SetupResponse::Error { error } = response else {
+                panic!("expected an error response");
+            };
+            assert_eq!(error.code, "SECRET_MISSING");
+            assert!(error.message.contains("no credential is stored"));
+        }
+    }
+
+    /// The draft's non-Anthropic id is skipped: the model policy decides the
+    /// target, and the probe's echo check proves the requested id ran.
+    #[test]
+    fn test_connection_skips_a_non_anthropic_draft_entry() {
+        let completion = json!({
+            "model": "claude-opus-4-1",
+            "content": [ { "type": "text", "text": "pong" } ],
+            "stop_reason": "end_turn",
+            "usage": { "input_tokens": 3, "output_tokens": 1 }
+        });
+        let stub = StubGateway::serve(vec![canned(
+            200,
+            "application/json",
+            &response_bytes(&completion),
+        )]);
+        let mut document = gateway_document(&stub.base);
+        let connection = document.connection.0.as_object_mut().unwrap();
+        // A whole other family (`gpt-…`) is exactly what the Anthropic model
+        // policy refuses — the probe skips it and takes the legal entry.
+        connection.insert(
+            "inferenceModels".to_string(),
+            json!(["gpt-4o", "claude-opus-4-1"]),
+        );
+        connection.insert(
+            "inferenceGatewayApiKey".to_string(),
+            json!("sk-ant-EXAMPLE-TYPED"),
+        );
+        let (backend, _id) = backend();
+        let response = dispatch(
+            &backend,
+            SetupCommand::TestConnection {
+                document: serde_json::to_value(document).unwrap(),
+                secrets: BTreeMap::new(),
+            },
+        );
+        let SetupResponse::Probe { probe } = response else {
+            panic!("expected a probe response");
+        };
+        assert!(probe.ok, "the echo check must hold for the legal id");
+        assert_eq!(stub.hits(), 1);
+    }
+
+    /// The helper credential kind: the script's output is the probe's
+    /// credential, run once, never stored (unix only — the script is a
+    /// platform binary trick for the fixture).
+    #[cfg(unix)]
+    #[test]
+    fn test_connection_runs_the_helper_kind_without_persisting_it() {
+        let completion = json!({
+            "model": "claude-opus-4-1",
+            "content": [ { "type": "text", "text": "pong" } ],
+            "stop_reason": "end_turn",
+            "usage": { "input_tokens": 3, "output_tokens": 1 }
+        });
+        let stub = StubGateway::serve(vec![canned(
+            200,
+            "application/json",
+            &response_bytes(&completion),
+        )]);
+        let mut document = gateway_document(&stub.base);
+        let connection = document.connection.0.as_object_mut().unwrap();
+        connection.insert(
+            "inferenceCredentialKind".to_string(),
+            json!("helper-script"),
+        );
+        connection.insert("inferenceCredentialHelper".to_string(), json!("/bin/echo"));
+        connection.insert(
+            "inferenceCredentialHelperArgs".to_string(),
+            json!("sk-ant-HELPER-OUTPUT"),
+        );
+        let (backend, _id) = backend();
+        let response = dispatch(
+            &backend,
+            SetupCommand::TestConnection {
+                document: serde_json::to_value(document).unwrap(),
+                secrets: BTreeMap::new(),
+            },
+        );
+        let SetupResponse::Probe { probe } = response else {
+            panic!("expected a probe response");
+        };
+        assert!(probe.ok);
+        assert_eq!(stub.hits(), 1);
+        // A probe must not persist anything: the helper's output was never
+        // written to the keychain under a draft-only account.
     }
 }
