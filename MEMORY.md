@@ -181,9 +181,9 @@ sits in the tree, referenced by nothing - owner decision pending; do not delete 
 ## 7c. Phase 3 state (2026-10-23)
 
 Phase 3 ("Provider adapters", `docs/13` §5) is implemented on the `phase-3` lane
-(cut from `dev` @ `2d2a840`), stacked commits, not merged and not pushed. Slices 1–3
-(through the Bedrock adapter) are done. `docs/17` (§4.10–§4.12 rows) and `docs/14` §9
-items 21–27 are updated on disk per the standing policy, never committed.
+(cut from `dev` @ `2d2a840`), stacked commits, not merged and not pushed. Slices 1–4
+(through the Vertex adapter) are done. `docs/17` (§4.10–§4.13 rows) and `docs/14` §9
+items 21–28 are updated on disk per the standing policy, never committed.
 
 | Slice | Shipped |
 |---|---|
@@ -212,6 +212,28 @@ items 21–27 are updated on disk per the standing policy, never committed.
       `vendor-profile` refused fail-closed; region required; one base override answers
       both surfaces). `validate_bedrock_model_id` became `pub` (the family policy gate).
       Renderer Test connection unlocked for `"gateway" | "anthropic" | "bedrock"`. |
+| 4 | `crates/providers/vertex` — the Vertex AI raw-prediction surface's native adapter
+      (own crate): `POST {base}/v1/projects/{project}/locations/{region}/publishers/google/
+      models/{model}:rawPredict[-stream]` with the Anthropic Messages grammar minus
+      `model` and minus `anthropic_version` (neither is recorded for the family —
+      `docs/14` §9 item 28), data-only SSE (`data:` lines only, optional
+      `data: [DONE]` sentinel completing a turn that already named a stop reason,
+      comments/blank lines are keep-alives never resetting the idle window), resolved
+      Google bearer (`Authorization: Bearer {material}`); the adapter takes resolved
+      material and never mints a token. **No listing and no native count**: both refuse
+      with zero requests (discovery is disabled for every kind the family offers —
+      `docs/09` §2.2). Conditional model echo as in Bedrock. No beta transport →
+      visible refusal. Idle default = the 300-second reading. 21 wire fixtures +
+      10 unit tests. Setup lane `test_connection_vertex`: region and project both
+      required (each forms the request), `inferenceVertexBaseUrl` replaces the
+      region-derived host in full, the draft MUST list a `claude-` id (no discovery
+      fallback exists), the credential kind must be named and **only `helper-script`
+      resolves** (`run_helper`; the interactive/Workforce/`external-idp`/
+      vendor-profile kinds are refused, never emulated — the family has no static
+      slot); the model gate runs before the helper so a refused draft never executes
+      the script. `validate_vertex_model_id` became `pub` for the policy gate.
+      Renderer Test connection unlocked for `"gateway" | "anthropic" | "bedrock" |
+      "vertex"`. |
 
 Durable traps and decisions worth not rediscovering:
 
@@ -238,6 +260,17 @@ Durable traps and decisions worth not rediscovering:
   `test_connection_claude_api` as inherent `ConfigBackend` methods): a `match` arm lives
   in the trait impl, everything else must be inherent — extra fns inside a trait impl
   fail with E0407, not a borrow error.
+- **Slice 4 (Vertex) decisions recorded in `docs/14` §9 item 28, summarized:** the
+  body drops BOTH `model` and `anthropic_version` (the path carries the model;
+  inventing a version declaration is the `AI-ADAPTER-10` shape); the credentials-file
+  field is draft metadata only (no identity-file parsing — service-account JWT
+  signing is an invented surface); the probe credential kind must be *named* — the
+  lane refuses a kindless draft — and only `helper-script` resolves; the probe model
+  gate runs before the credential so a refused draft never executes the helper;
+  streaming is data-only SSE (a `data: [DONE]` sentinel completes the turn only when
+  the message already named a stop reason; otherwise it is contract-incomplete and
+  the stream errors). The bridge tests never point the region-derived host at the
+  internet — the stub always rides the `inferenceVertexBaseUrl` override.
 - **The two ad-hoc local SSE mock servers (gateway wire.rs, anthropic wire.rs, bridge
   StubGateway) share a design, not code** — deliberately: adapters must not grow common
   transport plumbing that could drift into a shared gateway-shaped client.

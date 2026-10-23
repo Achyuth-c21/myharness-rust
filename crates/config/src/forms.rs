@@ -357,8 +357,10 @@ pub fn validate_bedrock_model_id(id: &str) -> Result<(), String> {
 }
 
 /// Vertex model-ID shape (`docs/09` §2.2): starts with `claude-` and contains no
-/// `/`, `\`, `?`, `#`, `%`, or whitespace.
-fn validate_vertex_model_id(id: &str) -> Result<(), String> {
+/// `/`, `\`, `?`, `#`, `%`, or whitespace. `pub` so the family's own adapter can
+/// enforce the policy it cites (`docs/12` §2.2 `TEST-AI-003`; the Claude API
+/// predicate is `pub` for the same reason).
+pub fn validate_vertex_model_id(id: &str) -> Result<(), String> {
     let id = id.trim();
     if id.is_empty() {
         return Err("model id must be non-empty".to_string());
