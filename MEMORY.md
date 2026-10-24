@@ -473,6 +473,50 @@ What is durable about it, so a later agent does not re-derive or contradict it:
   re-export facade only if the agent layer wants an app-side name. Do not
   create a second truth for `TurnEvent`.
 
-Next slice (not started): the agent loop over `NativeTurnRequest`/`TurnEvent` —
-one turn, no tools (tools/approvals are MCP-phase work), cancellation, and
-`TEST-SESSION-001`'s send/stream/stop clauses plus `TEST-SESSION-002`.
+Next slice was the turn loop — recorded in §7f.
+
+## 7f. Phase 4 slice 2 — the turn loop (2026-10-24)
+
+`crates/agent` implements one turn end-to-end (`run_turn(TurnRun)`): replay → user turn →
+adapter `authenticate`/`create_turn` → typed-stream accumulation → assistant turn. It takes
+`&dyn ProviderAdapter`; **adapter construction stays outside** (the profile→adapter factory
+is slice-3 bridge work, not agent work).
+
+- **The transcript record shape is `TurnContent` JSON**: `{ parts: [ContentPart…],
+  citations: [...] }`. Citations are response-only and have no request-side home in the sdk
+  model; they stay in the record and are **excluded from replay** on purpose. Anything that
+  decodes transcript blobs must handle this shape (a bare `Vec<ContentPart>` will not read
+  back).
+- **Replay rules**: only `user`/`assistant` turns; empty turns skipped (an error turn that
+  never received content); **consecutive same-role turns merged** — a failed send leaves
+  `user, user`, which the Messages grammar rejects as separate messages. A missing/undecodable
+  blob fails the replay (`Transcript`), never a shortened send.
+- **Ordering**: validate (model-provider mismatch, empty model id, zero max_tokens, empty
+  user, non-empty tools) → pre-cancel check → replay → **persist the user turn** → auth →
+  send. Refusals write nothing and contact nobody; a pre-cancelled turn writes nothing.
+- **Terminal states**: complete (stop received) / partial (cancelled mid-stream, content
+  non-empty; no assistant row when nothing arrived) / error (provider error or stream ending
+  without a stop reason). A stop/cancel race resolves as **complete** (the model did finish).
+  Dropping the stream is the cancellation (`TEST-AI-015`).
+- **Ledger**: one `usage_events` row per attempt that contacted (or tried to contact) the
+  provider; failure rows carry the provider's message in `error`. Absent cache/web-search
+  channels land as `0` in the ledger (numbers for aggregation) while the turn's `usage_json`
+  keeps the exact `Option` shape. Counts are capped at `i64::MAX`, never wrapped.
+- **`ToolSpec` declarations are refused before contact** (`AgentError::Unsupported`) until
+  the MCP phase can execute them; the loop also refuses a model whose `provider_id` is not
+  the adapter's `id()`. No retries: retry policy is unobserved and must not be invented.
+- **Schema v2** (`migrate.rs` revision 2) adds `turns.stop_reason`; `Store::put_turn` and
+  `SessionService::append_turn` grew a trailing `stop_reason: Option<&str>` parameter, stored
+  as `NativeStopReason::wire()`. The v1→v2 upgrade runs as `ALTER TABLE` during fresh opens,
+  which exercises the migration sequence in every test.
+- **Tests at this slice**: agent 13 (`crates/agent/tests/turn.rs`, scripted adapter with
+  per-call error injection and a pending tail for cancellation), store 21 (+ stop-reason
+  reopen), sessions 8; clippy clean on the three crates. Pre-existing flake fixed: the store's
+  activity-order test touched a session in the same millisecond it created its neighbor, and
+  the `id ASC` tie-breaker made the assertion a coin flip.
+- **Docs (disk-only)**: `docs/17` §4.15 now covers slices 1–2 (`TEST-SESSION-001` →
+  Available (unit)); `docs/04` §3.1 has the slice-2 row.
+
+Next slice (not started): profile→adapter factory + bridge commands + renderer chat surface
+(`TEST-SESSION-002` app-restart check belongs there), then usage aggregation/drafts/retention
+(`TEST-SESSION-005/008/009`, `TEST-DATA-004/007`).
