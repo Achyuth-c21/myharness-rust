@@ -36,6 +36,7 @@ repository = "https://github.com/Achyuth-c21/myharness-rust"
 
 [workspace.dependencies]
 tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 futures = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

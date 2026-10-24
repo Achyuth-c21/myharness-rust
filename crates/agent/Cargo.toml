@@ -4,3 +4,17 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+myharness-provider-sdk = { path = "../provider-sdk" }
+myharness-sessions = { path = "../sessions" }
+myharness-store = { path = "../store" }
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+secrecy.workspace = true
+tempfile = "3"
