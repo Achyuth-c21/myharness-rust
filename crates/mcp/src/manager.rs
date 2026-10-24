@@ -17,6 +17,7 @@ use crate::config::{
     MAX_TOOLS_PER_SERVER, MAX_TOOL_SCHEMA_BYTES, ServerConfig, validate_server_name,
     validate_tool_name,
 };
+use crate::egress::EgressPolicy;
 use crate::error::{McpError, McpResult};
 use crate::session::{
     McpConnector, McpSession, RmcpConnector, ServerInfoSummary,
@@ -115,6 +116,7 @@ pub struct McpManager {
     connector: Arc<dyn McpConnector>,
     servers: BTreeMap<String, ServerEntry>,
     start_timeout: Option<Duration>,
+    egress: Option<EgressPolicy>,
 }
 
 impl Default for McpManager {
@@ -135,7 +137,18 @@ impl McpManager {
             connector,
             servers: BTreeMap::new(),
             start_timeout: None,
+            egress: None,
         }
+    }
+
+    /// Supply the egress allowlist checked before an HTTP/SSE connection.
+    ///
+    /// `None` (the default) means no policy was supplied by the host; a
+    /// supplied policy is fail-closed (`TEST-AI-020`). Stdio servers are not
+    /// inspected here — see [`crate::egress`].
+    pub fn with_egress(mut self, egress: EgressPolicy) -> Self {
+        self.egress = Some(egress);
+        self
     }
 
     /// Bound each connect/list-tools phase.
@@ -198,6 +211,7 @@ impl McpManager {
     pub async fn start(&mut self, server: &str) -> McpResult<()> {
         let connector = Arc::clone(&self.connector);
         let start_timeout = self.start_timeout;
+        let egress = self.egress.clone();
         let entry = self
             .servers
             .get_mut(server)
@@ -217,6 +231,12 @@ impl McpManager {
         entry.error = None;
         entry.tools.clear();
         let config = entry.config.clone();
+
+        if let Some(egress) = &egress {
+            if let Err(error) = egress.check_server(&config) {
+                return Err(record_failure(entry, server, &config, &error.to_string()));
+            }
+        }
 
         let connect = connector.connect(server, &config);
         let connected = match start_timeout {

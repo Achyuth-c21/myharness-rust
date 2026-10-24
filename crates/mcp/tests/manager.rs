@@ -11,8 +11,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use myharness_mcp::{
-    MAX_TOOL_SCHEMA_BYTES, McpConnector, McpError, McpManager, McpResult, McpSession,
-    ServerConfig, ServerInfoSummary, ToolCallResult, ToolContent, ToolDefinition,
+    EgressPolicy, MAX_TOOL_SCHEMA_BYTES, McpConnector, McpError, McpManager, McpResult,
+    McpSession, ServerConfig, ServerInfoSummary, ToolCallResult, ToolContent, ToolDefinition,
     namespaced_name,
 };
 use serde_json::{Value, json};
@@ -29,6 +29,7 @@ enum MockResult {
 struct MockConnector {
     results: Mutex<HashMap<String, MockResult>>,
     shutdowns: Arc<AtomicUsize>,
+    connects: Arc<AtomicUsize>,
     calls: Arc<AtomicUsize>,
     call_result: Mutex<ToolCallResult>,
     call_delay: Mutex<Option<Duration>>,
@@ -40,6 +41,7 @@ impl Default for MockConnector {
         Self {
             results: Mutex::new(HashMap::new()),
             shutdowns: Arc::new(AtomicUsize::new(0)),
+            connects: Arc::new(AtomicUsize::new(0)),
             calls: Arc::new(AtomicUsize::new(0)),
             call_result: Mutex::new(ToolCallResult::text("ok")),
             call_delay: Mutex::new(None),
@@ -73,6 +75,7 @@ impl McpConnector for MockConnector {
         server: &str,
         _config: &ServerConfig,
     ) -> McpResult<Box<dyn McpSession>> {
+        self.connects.fetch_add(1, Ordering::SeqCst);
         let delay = self
             .connect_delays
             .lock()
@@ -137,6 +140,13 @@ fn stdio_config() -> ServerConfig {
         command: "mock-server".to_string(),
         args: Vec::new(),
         env: BTreeMap::new(),
+    }
+}
+
+fn http_config(url: &str) -> ServerConfig {
+    ServerConfig::Http {
+        url: url.to_string(),
+        headers: BTreeMap::new(),
     }
 }
 
@@ -418,6 +428,52 @@ async fn legacy_sse_is_explicitly_unsupported() {
         manager.statuses()[0].status,
         myharness_mcp::ServerStatus::Failed { .. }
     ));
+}
+
+#[tokio::test]
+async fn egress_denies_an_unapproved_http_host_before_connect() {
+    let connector = Arc::new(MockConnector::default());
+    connector.add("blocked", connected(vec![tool("a")]));
+    let mut manager = McpManager::with_connector(connector.clone())
+        .with_egress(EgressPolicy::allow_hosts(["allowed.example"]));
+    manager
+        .add_server("blocked", http_config("https://blocked.example/mcp"))
+        .unwrap();
+
+    let error = manager.start("blocked").await.unwrap_err();
+    assert!(error.to_string().contains("egress allowlist"));
+    assert_eq!(connector.connects.load(Ordering::SeqCst), 0);
+    assert!(matches!(
+        manager.statuses()[0].status,
+        myharness_mcp::ServerStatus::Failed { .. }
+    ));
+}
+
+#[tokio::test]
+async fn egress_allows_an_approved_http_host() {
+    let connector = Arc::new(MockConnector::default());
+    connector.add("allowed", connected(vec![tool("a")]));
+    let mut manager = McpManager::with_connector(connector.clone())
+        .with_egress(EgressPolicy::allow_hosts(["allowed.example"]));
+    manager
+        .add_server("allowed", http_config("https://allowed.example/mcp"))
+        .unwrap();
+
+    manager.start("allowed").await.unwrap();
+    assert_eq!(connector.connects.load(Ordering::SeqCst), 1);
+    assert_eq!(manager.list_tools()[0].name, "allowed:a");
+}
+
+#[tokio::test]
+async fn egress_does_not_inspect_stdio() {
+    let connector = Arc::new(MockConnector::default());
+    connector.add("local", connected(vec![tool("a")]));
+    let mut manager = McpManager::with_connector(connector.clone())
+        .with_egress(EgressPolicy::deny_all());
+    manager.add_server("local", stdio_config()).unwrap();
+
+    manager.start("local").await.unwrap();
+    assert_eq!(connector.connects.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]

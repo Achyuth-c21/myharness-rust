@@ -28,6 +28,7 @@
 //! crate.
 
 mod config;
+mod egress;
 mod error;
 mod manager;
 mod session;
@@ -37,6 +38,7 @@ pub use config::{
     MAX_ERROR_MESSAGE_LEN, MAX_SERVER_NAME_LEN, MAX_TOOLS_PER_SERVER, MAX_TOOL_NAME_LEN,
     MAX_TOOL_SCHEMA_BYTES, ServerConfig, validate_server_name, validate_tool_name,
 };
+pub use egress::{EgressError, EgressPolicy};
 pub use error::{McpError, McpResult};
 pub use manager::{
     McpManager, ServerStatus, ServerView, ShutdownFailure, StartFailure, StartSummary,

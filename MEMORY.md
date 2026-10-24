@@ -644,6 +644,61 @@ lifecycle (`docs/13` Phase 5; `docs/12` §5.1; `TEST-MCP-001/002/009/010`):
   health probing beyond `is_closed`; legacy SSE. `TEST-AI-019/020` are not
   satisfied by this crate alone.
 
-Next: Phase 5 slice 2 (tool policy/approval engine), then egress, skills, and
-bridge/renderer wiring. The deferred retention timer/UI, retry, picker,
-attachments, and per-surface usage remain unknown/deferred, not invented.
+## 7i. Phase 5 slice 2 — policy, approvals, egress, execution gate (2026-10-24)
+
+The policy layer is now real, still **not wired into `run_turn`**. Tools are
+refused by `TurnInput::validate` until the loop slice exists.
+
+- **Policy (`crates/agent/src/tool_policy.rs`):** allow/ask/deny with
+  argument-scoped rules. The rule serialization, fail-closed precedence
+  (`deny > ask > allow > default`), subset argument match, default `Ask`, and
+  SHA-256 canonical argument fingerprint are **rebuild-defined** because the
+  shipped shapes were not captured (`docs/14` §9). Deny wins regardless of
+  rule order; an approval can turn `Ask` into `Allow` but can never override
+  `Deny`.
+- **Scopes:** `Once` is never stored; `Session` and `Persistent` are stored.
+  `Persistent` is refused when the context's `persistent_allowed` is false
+  (resolved from `mcpPersistentAlwaysAllowEnabled`). A scheduled task with
+  `scheduled_lifetime_days == 0` offers only `Once`; otherwise session and
+  persistent grants expire at `now + days*86_400`. `ApprovalStore` is
+  **in-memory** in this slice; durable persistence and the session-metadata
+  audit write are later.
+- **Visibility:** `ToolPolicy::hides_tool` / `visible_tool_names` remove only
+  **unconditional** denies. An argument-scoped deny leaves the tool declared
+  (otherwise the allowed argument sets would be unreachable) and is enforced
+  at execution. This is the `TEST-AI-019` provider-side filter primitive, but
+  the provider request is not wired yet.
+- **Execution gate (`crates/agent/src/tool_exec.rs`):**
+  `execute_tool_call(policy, store, context, call, executor, now)` returns
+  `Completed`, `Denied`, or `NeedsApproval { allowed_scopes }`. The executor
+  is policy-blind; a denied call never reaches it. An executor error becomes a
+  model-visible `ToolOutput { is_error: true }`, never an empty success.
+  `ToolOutput` uses the provider SDK's `ContentPart`, so text/images/documents
+  survive without a `myharness-mcp` dependency in the agent crate.
+- **Egress (`crates/mcp/src/egress.rs`):** fail-closed **when configured**;
+  exact case-insensitive host match; only `http`/`https`; empty allowlist
+  denies all; `allow_all` is explicit. `McpManager::with_egress` checks before
+  `connect`, so a denied HTTP/SSE host is recorded as a failure with **zero**
+  connector calls (`TEST-AI-020` at the manager boundary). **stdio is not
+  inspected** — a child can open its own sockets; that is an OS/proxy
+  boundary, not this layer. A denied host is not echoed in `Display`.
+- **Tests/gates:** agent 13 policy + 8 execution + 15 turn = 36;
+  mcp 8 unit + 18 manager + 2 stdio = 28; clippy `-D warnings` on both crates
+  with the fixture feature for mcp; `cargo check --workspace`.
+- **Traps:** `ToolPattern`/`ArgumentMatch` serialize as
+  `{"kind":"exact","value":...}` / `{"kind":"server","value":...}`; the
+  approval fingerprint is over **exact arguments**, so an approval for
+  `{"repo":"prod"}` does not cover `{"repo":"dev"}`; `ApprovalStore` never
+  sees policy, so a grant for a denied tool is possible but cannot unlock it
+  at the gate; `ToolOutput` has no audio variant (provider SDK gap) — an MCP
+  audio result must become an explicit error until the SDK carries it.
+- **Not done:** wiring the gate into `run_turn` (multi-round tool loop and
+  tool-row replay), renderer approval prompt/events, durable approvals and
+  audit-chain records, tool-search/on-demand schemas, OAuth, skills, plugins,
+  bridge commands, app-boot MCP initialization. `TEST-AI-019` is only a
+  primitive until the provider request uses `visible_tool_names`.
+
+Next: Phase 5 slice 3 (agent tool loop + MCP executor adapter + bridge
+approval events) or skills/plugin discovery. The deferred retention timer/UI,
+retry, picker, attachments, and per-surface usage remain unknown/deferred, not
+invented.

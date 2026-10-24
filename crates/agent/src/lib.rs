@@ -38,6 +38,15 @@
 //! a [`ProviderAdapter`]), the renderer bridge, usage aggregation, retention,
 //! and drafts. Those compose this loop from `myharness-bridge`; the loop stays
 //! free of transport and UI decisions.
+//!
+//! Phase 5 adds [`tool_policy`], the pure allow/ask/deny and approval engine.
+//! It is **not wired into the turn loop yet**: [`TurnInput::validate`] still
+//! refuses every non-empty tool list, so no caller can advertise a tool that
+//! cannot execute. The engine exists so the execution slice has one policy
+//! authority rather than a second, ad-hoc check.
+
+pub mod tool_exec;
+pub mod tool_policy;
 
 use futures::StreamExt;
 use myharness_provider_sdk::{
