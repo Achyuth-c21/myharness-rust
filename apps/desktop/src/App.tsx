@@ -17,10 +17,12 @@ import { Sidebar } from "./components/Sidebar";
 import { SearchPalette } from "./components/SearchPalette";
 import { SettingsModal } from "./components/SettingsModal";
 import { NewTaskScreen } from "./screens/NewTaskScreen";
+import { CoworkSessionScreen } from "./screens/CoworkSessionScreen";
 import { ArtifactsScreen, CodeScreen, ProjectsScreen, ScreenHead, ScheduledScreen } from "./screens/EmptyStates";
 import { LoadingShell } from "./components/shells";
 import { SCREENS } from "./routes";
 import SetupWindow from "./setup/SetupWindow";
+import { clearDraft, newDraftKey } from "./chat/drafts";
 
 /**
  * Which window this renderer instance belongs to.
@@ -135,8 +137,10 @@ function MainShell() {
         setSidebarOpen((open) => !open);
       } else if (key === "n") {
         event.preventDefault();
-        // UI-INT-005: New clears the composer context and focuses it — the remount
-        // resets the draft (useState("")) and the mount effect re-focuses.
+        // UI-INT-005: New clears the composer context and focuses it. The
+        // remount reloads the stored draft, so the stored New draft is cleared
+        // explicitly; per-session drafts are untouched.
+        clearDraft(newDraftKey());
         setNewKey((k) => k + 1);
         navigate("/new");
       } else if (key === "k") {
@@ -188,9 +192,9 @@ function MainShell() {
               path="/epitaxy"
               element={<CodeScreen screen={screens.get("/epitaxy") ?? { path: "/epitaxy", label: "Code", paletteSurface: "code" }} />}
             />
-            {/* Task detail arrives with the sessions module (docs/13 §Phase 4);
-                the loading shell announces the route contract for now. */}
-            <Route path="/cowork/:sessionId" element={<LoadingShell label="Opening task…" />} />
+            {/* Task detail (UI-SCREEN-03): opens the stored session, recovers an
+                interrupted stream, and streams follow-ups (docs/13 Phase 4). */}
+            <Route path="/cowork/:sessionId" element={<CoworkSessionScreen />} />
             <Route
               path="/cowork"
               element={

@@ -6,7 +6,9 @@
 //! that day even when its UTC date has already rolled over. Aggregation
 //! therefore takes the device's UTC offset explicitly (`FixedOffset`), which
 //! keeps the math testable across zones instead of reading the process
-//! timezone implicitly.
+//! timezone implicitly. The offset is the device's *current* offset applied to
+//! the whole window; a DST transition inside the window is not re-bucketed
+//! (the shipped app's exact behavior across a transition was not observed).
 //!
 //! Cached tokens are summed separately and are never folded into input/output
 //! (`docs/11` §6: the Usage page states they are excluded from token limits).
@@ -82,10 +84,17 @@ pub(crate) fn window_start_ms(
     let midnight = start
         .and_hms_opt(0, 0, 0)
         .expect("midnight is always a valid local time");
-    let start = tz
-        .from_local_datetime(&midnight)
-        .single()
-        .ok_or(StoreError::Validation("the usage window start is out of range"))?;
+    let start = match tz.from_local_datetime(&midnight) {
+        chrono::LocalResult::Single(start) => start,
+        // A repeated midnight (fall-back) belongs to the first occurrence.
+        chrono::LocalResult::Ambiguous(first, _) => first,
+        // Some zones jump over midnight (spring-forward). The first instant of
+        // that local day is the transition, so probe an hour into the day.
+        chrono::LocalResult::None => tz
+            .from_local_datetime(&(midnight + Duration::hours(1)))
+            .earliest()
+            .ok_or(StoreError::Validation("the usage window start is out of range"))?,
+    };
     Ok(start.timestamp_millis())
 }
 

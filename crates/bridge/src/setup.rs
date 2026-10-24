@@ -989,13 +989,13 @@ pub(crate) fn resolve_probe_credential(
         "interactive" => {
             return Err(BridgeError::new(
                 "CONFIG_VALIDATION",
-                "interactive sign-in cannot be verified by this probe; finish signing in, then test again with a saved profile",
+                "interactive sign-in cannot be verified here; finish signing in, then save the profile",
             ));
         }
         other => {
             return Err(BridgeError::new(
                 "CONFIG_VALIDATION",
-                format!("credential kind {other:?} cannot be probed"),
+                format!("credential kind {other:?} cannot be used by this build"),
             ));
         }
     }
@@ -1035,14 +1035,14 @@ pub(crate) fn resolve_probe_credential(
                 Ok(Some(secret)) => Ok(ProbeCredential::Value(secret)),
                 Ok(None) => Err(BridgeError::new(
                     "SECRET_MISSING",
-                    "no credential is stored for this profile's api key; save the profile, then test again",
+                    "no credential is stored for this profile's api key; save the profile, then try again",
                 )),
                 Err(error) => Err(bridge_secret_error(error)),
             }
         }
         _ => Err(BridgeError::new(
             "CONFIG_VALIDATION",
-            "a credential is required for the connection probe",
+            "a credential is required for this connection",
         )),
     }
 }
@@ -1815,7 +1815,7 @@ mod tests {
             panic!("expected an error response");
         };
         assert_eq!(error.code, "CONFIG_VALIDATION");
-        assert!(error.message.contains("cannot be verified by this probe"));
+        assert!(error.message.contains("cannot be verified here"));
         assert_eq!(stub.hits(), 0, "a refused kind must send nothing");
     }
 
@@ -2432,7 +2432,7 @@ mod tests {
             };
             assert_eq!(error.code, "CONFIG_VALIDATION", "{kind:?}");
             assert!(
-                error.message.contains("cannot be probed"),
+                error.message.contains("cannot be used"),
                 "{kind:?}: {}",
                 error.message
             );

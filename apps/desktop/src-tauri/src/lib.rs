@@ -255,9 +255,9 @@ fn init_chat(app: &tauri::AppHandle) -> Result<Chat, String> {
     ))
 }
 
-/// The chat subset of `web.LocalAgentModeSessions` (docs/18 §3.4/§4). Every
-/// non-terminal stream event is forwarded as `chat://turn-event` with the
-/// session id; the command's response is the final state.
+/// The chat subset of `web.LocalAgentModeSessions` (docs/18 §3.4/§4). Content
+/// deltas are forwarded as `chat://turn-event` with the session id; the
+/// command's response is the final state (usage, stop reason, errors).
 #[tauri::command]
 async fn chat_command(app: tauri::AppHandle, command: ChatCommand) -> ChatResponse {
     let service = match chat_state(&app) {

@@ -173,7 +173,15 @@ impl<K: AuditKeyStore> SessionService<K> {
     /// again rather than leaving a session whose chain begins mid-story.
     pub fn start(&self, session: NewSession<'_>) -> Result<SessionRow, SessionError> {
         let row = self.store.create_session(session)?;
-        let key = self.keys.create(&row.id)?;
+        // A session without an audit key could never be verified; roll the
+        // row back rather than leave an unauditable session behind.
+        let key = match self.keys.create(&row.id) {
+            Ok(key) => key,
+            Err(error) => {
+                let _ = self.store.delete_session(&row.id);
+                return Err(error);
+            }
+        };
         let payload = serde_json::json!({ "event": "session.created" }).to_string();
         if let Err(err) =
             self.store
@@ -201,6 +209,9 @@ impl<K: AuditKeyStore> SessionService<K> {
         error: Option<&str>,
         stop_reason: Option<&str>,
     ) -> Result<TurnRow, SessionError> {
+        // The key is resolved before the row: a missing key must not leave a
+        // turn that no chain link authenticates.
+        let key = self.key(session_id)?;
         let turn = self.store.put_turn(
             session_id,
             seq,
@@ -211,7 +222,6 @@ impl<K: AuditKeyStore> SessionService<K> {
             error,
             stop_reason,
         )?;
-        let key = self.key(session_id)?;
         let payload = serde_json::json!({
             "event": "turn.appended",
             "seq": turn.seq,
@@ -244,6 +254,7 @@ impl<K: AuditKeyStore> SessionService<K> {
         seq: i64,
         content: &[u8],
     ) -> Result<TurnRow, SessionError> {
+        let key = self.key(session_id)?;
         let turn = self.store.put_turn(
             session_id,
             seq,
@@ -254,7 +265,6 @@ impl<K: AuditKeyStore> SessionService<K> {
             None,
             None,
         )?;
-        let key = self.key(session_id)?;
         let payload = serde_json::json!({
             "event": "turn.started",
             "seq": turn.seq,
@@ -289,6 +299,10 @@ impl<K: AuditKeyStore> SessionService<K> {
         error: Option<&str>,
         stop_reason: Option<&str>,
     ) -> Result<TurnRow, SessionError> {
+        // Resolve the audit key BEFORE transitioning the row: a missing key
+        // must leave the turn live (and therefore recoverable) rather than
+        // finish it with no chain link.
+        let key = self.key(session_id)?;
         let turn = self.store.finish_turn(
             session_id,
             turn_id,
@@ -298,7 +312,6 @@ impl<K: AuditKeyStore> SessionService<K> {
             error,
             stop_reason,
         )?;
-        let key = self.key(session_id)?;
         let payload = serde_json::json!({
             "event": "turn.finished",
             "seq": turn.seq,

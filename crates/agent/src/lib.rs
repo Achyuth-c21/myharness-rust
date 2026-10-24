@@ -204,6 +204,11 @@ pub enum AgentError {
     /// `partial` turn first (`TEST-SESSION-001`).
     #[error("the turn was cancelled")]
     Cancelled,
+    /// The token was already cancelled before anything was persisted: there
+    /// is no attempt to record and no provider contact, so the caller must not
+    /// report the user's message as recorded.
+    #[error("the turn was cancelled before it started")]
+    CancelledBeforeSend,
     #[error("the provider failed ({:?}): {}", .0.class, .0.message)]
     Provider(ProviderError),
 }
@@ -221,8 +226,9 @@ pub struct TurnRun<'a, K: AuditKeyStore> {
     pub session_id: &'a str,
     pub input: TurnInput,
     pub cancel: &'a CancellationToken,
-    /// A live tap for the renderer bridge (slice 3): every non-error stream
-    /// event is passed through before it is accumulated.
+    /// A live tap for the renderer bridge: content events (text, reasoning,
+    /// citations, tool calls) are passed through before they are accumulated.
+    /// Usage, stop, and error events are folded into the final response.
     pub observer: Option<&'a (dyn Fn(&TurnEvent) + Send + Sync)>,
 }
 
@@ -302,7 +308,7 @@ pub async fn run_turn<K: AuditKeyStore>(
     // A turn stopped before anything was sent leaves no trace at all: there
     // was no attempt to record.
     if cancel.is_cancelled() {
-        return Err(AgentError::Cancelled);
+        return Err(AgentError::CancelledBeforeSend);
     }
 
     // A live assistant row from a previous process is a crash marker, not a

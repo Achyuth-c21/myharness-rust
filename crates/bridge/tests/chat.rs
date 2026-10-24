@@ -8,7 +8,9 @@
 //! session service, the agent loop, and the renderer contract without
 //! inventing policy.
 
+use std::future::Future;
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 
 use async_trait::async_trait;
 use futures::{stream, StreamExt};
@@ -388,6 +390,39 @@ async fn stop_is_idempotent_and_keeps_the_partial_reply() {
     }
     assert!(stopped, "the running turn was never claimed");
 
+    // Opening the task while it streams must not convert the live row into a
+    // crash: the in-process registry proves the turn is alive. Wait until the
+    // placeholder and the user turn are visible, then read them.
+    let mut live = fixture.open(&session).await;
+    for _ in 0..100 {
+        if live.turns.len() >= 2 {
+            break;
+        }
+        tokio::task::yield_now().await;
+        live = fixture.open(&session).await;
+    }
+    assert_eq!(live.turns.len(), 2, "the live turn must stay visible");
+    assert_eq!(live.turns[1].status, "partial");
+    assert_eq!(live.turns[1].error, None, "opening must not mark it interrupted");
+
+    // Archiving or deleting underneath a live turn is refused: the stream
+    // would otherwise finish against a session that no longer exists.
+    for command in [
+        ChatCommand::ArchiveSession {
+            id: session.clone(),
+            archived: true,
+        },
+        ChatCommand::DeleteSession {
+            id: session.clone(),
+        },
+    ] {
+        let response = dispatch(service.as_ref(), command, None).await;
+        assert!(matches!(
+            response,
+            ChatResponse::Error { error, .. } if error.code == "TURN_IN_PROGRESS"
+        ));
+    }
+
     // A second stop before the task resolves is still an accepted no-op.
     let again = dispatch(
         service.as_ref(),
@@ -538,6 +573,249 @@ async fn an_empty_message_is_refused_before_persistence() {
     ));
     assert!(fixture.open(&session).await.turns.is_empty());
     assert!(fixture.calls().is_empty());
+}
+
+/// A follow-up never silently switches the provider/model the task was created
+/// with (`docs/12` §9; `REQ-COMPOSER-07`). The applied profile moving to another
+/// target blocks the send and leaves the draft unrecorded.
+#[tokio::test]
+async fn a_send_never_switches_the_sessions_model() {
+    struct SwitchingTargets {
+        model: Arc<Mutex<ModelKey>>,
+        calls: Arc<Mutex<Vec<NativeTurnRequest>>>,
+    }
+
+    impl ChatTargetResolver for SwitchingTargets {
+        fn resolve(&self) -> Result<ChatTarget, BridgeError> {
+            Ok(ChatTarget {
+                adapter: Box::new(ScriptedAdapter {
+                    script: reply("still here"),
+                    tail: Tail::End,
+                    calls: Arc::clone(&self.calls),
+                }),
+                auth: AuthContext::new(SecretString::from("stub-credential"), "test"),
+                model: self.model.lock().expect("model mutex").clone(),
+                profile_id: "test-profile".into(),
+            })
+        }
+    }
+
+    let dir = TempDir::new().expect("temp dir");
+    let store = Store::open(&dir.path().join("chat.db"), &dir.path().join("files-root"))
+        .expect("open store");
+    let original = ModelKey {
+        provider_id: "stub".into(),
+        model_id: "stub-model".into(),
+        variant: None,
+        revision: None,
+    };
+    let model = Arc::new(Mutex::new(original.clone()));
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let service = ChatService::new(
+        SessionService::new(store, InMemoryAuditKeys::new()),
+        SwitchingTargets {
+            model: Arc::clone(&model),
+            calls: Arc::clone(&calls),
+        },
+    );
+    let created = dispatch(
+        &service,
+        ChatCommand::CreateSession {
+            title: Some("fixed target".into()),
+        },
+        None,
+    )
+    .await;
+    let ChatResponse::Session { session } = created else {
+        panic!("expected a session, got {created:?}");
+    };
+    let id = session.session.id;
+
+    let mut switched = original.clone();
+    switched.provider_id = "another-provider".into();
+    *model.lock().expect("model mutex") = switched;
+    let response = dispatch(
+        &service,
+        ChatCommand::SendTurn {
+            session_id: id.clone(),
+            text: "hello".into(),
+            max_tokens: None,
+        },
+        None,
+    )
+    .await;
+    assert!(matches!(
+        response,
+        ChatResponse::Error {
+            error,
+            user_turn_recorded: false
+        } if error.code == "MODEL_UNAVAILABLE" && error.message.contains("No model was substituted")
+    ));
+
+    let mut switched = original.clone();
+    switched.model_id = "another-model".into();
+    *model.lock().expect("model mutex") = switched;
+    let response = dispatch(
+        &service,
+        ChatCommand::SendTurn {
+            session_id: id.clone(),
+            text: "hello".into(),
+            max_tokens: None,
+        },
+        None,
+    )
+    .await;
+    assert!(matches!(
+        response,
+        ChatResponse::Error {
+            error,
+            user_turn_recorded: false
+        } if error.code == "MODEL_UNAVAILABLE"
+    ));
+
+    // Nothing was written and no request travelled while the target mismatched.
+    assert!(calls.lock().expect("calls mutex").is_empty());
+    let opened = dispatch(
+        &service,
+        ChatCommand::OpenSession { id: id.clone() },
+        None,
+    )
+    .await;
+    assert!(matches!(opened, ChatResponse::Session { session } if session.turns.is_empty()));
+
+    // Restoring the original target lets the task continue.
+    *model.lock().expect("model mutex") = original;
+    let response = dispatch(
+        &service,
+        ChatCommand::SendTurn {
+            session_id: id,
+            text: "hello".into(),
+            max_tokens: None,
+        },
+        None,
+    )
+    .await;
+    assert!(matches!(response, ChatResponse::Turn { .. }));
+    assert_eq!(calls.lock().expect("calls mutex").len(), 1);
+}
+
+/// A dropped send future (a renderer reload cancels the invoke) must release
+/// its running marker; otherwise the session would stay `TURN_IN_PROGRESS`
+/// forever and crash recovery would be skipped on open.
+#[tokio::test]
+async fn a_dropped_send_clears_the_running_slot() {
+    struct SwitchableTargets {
+        script: Arc<Mutex<Vec<Result<TurnEvent, ProviderError>>>>,
+        tail: Arc<Mutex<Tail>>,
+        calls: Arc<Mutex<Vec<NativeTurnRequest>>>,
+    }
+
+    impl ChatTargetResolver for SwitchableTargets {
+        fn resolve(&self) -> Result<ChatTarget, BridgeError> {
+            Ok(ChatTarget {
+                adapter: Box::new(ScriptedAdapter {
+                    script: self.script.lock().expect("script mutex").clone(),
+                    tail: *self.tail.lock().expect("tail mutex"),
+                    calls: Arc::clone(&self.calls),
+                }),
+                auth: AuthContext::new(SecretString::from("stub-credential"), "test"),
+                model: ModelKey {
+                    provider_id: "stub".into(),
+                    model_id: "stub-model".into(),
+                    variant: None,
+                    revision: None,
+                },
+                profile_id: "test-profile".into(),
+            })
+        }
+    }
+
+    let dir = TempDir::new().expect("temp dir");
+    let store = Store::open(&dir.path().join("chat.db"), &dir.path().join("files-root"))
+        .expect("open store");
+    let script = Arc::new(Mutex::new(vec![Ok(TurnEvent::TextDelta {
+        text: "par".into(),
+    })]));
+    let tail = Arc::new(Mutex::new(Tail::Pending));
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let service = ChatService::new(
+        SessionService::new(store, InMemoryAuditKeys::new()),
+        SwitchableTargets {
+            script: Arc::clone(&script),
+            tail: Arc::clone(&tail),
+            calls: Arc::clone(&calls),
+        },
+    );
+    let created = dispatch(
+        &service,
+        ChatCommand::CreateSession {
+            title: Some("dropped".into()),
+        },
+        None,
+    )
+    .await;
+    let ChatResponse::Session { session } = created else {
+        panic!("expected a session, got {created:?}");
+    };
+    let id = session.session.id;
+
+    // Drive the send to the pending tail, then drop it without a response.
+    let mut send = Box::pin(dispatch(
+        &service,
+        ChatCommand::SendTurn {
+            session_id: id.clone(),
+            text: "first".into(),
+            max_tokens: None,
+        },
+        None,
+    ));
+    let waker = futures::task::noop_waker();
+    let mut context = Context::from_waker(&waker);
+    assert!(
+        matches!(send.as_mut().poll(&mut context), Poll::Pending),
+        "the pending tail must leave the send in flight"
+    );
+    // While pinned, the turn owns the slot and Stop can reach it.
+    let stopped = dispatch(
+        &service,
+        ChatCommand::StopTurn {
+            session_id: id.clone(),
+        },
+        None,
+    )
+    .await;
+    assert!(matches!(stopped, ChatResponse::Stopped { stopped: true }));
+
+    drop(send);
+
+    // The guard cleared the slot: a second send is accepted, and its recovery
+    // pass turns the dropped placeholder into an explicit interruption.
+    *script.lock().expect("script mutex") = reply("done");
+    *tail.lock().expect("tail mutex") = Tail::End;
+    let response = dispatch(
+        &service,
+        ChatCommand::SendTurn {
+            session_id: id.clone(),
+            text: "second".into(),
+            max_tokens: None,
+        },
+        None,
+    )
+    .await;
+    assert!(matches!(response, ChatResponse::Turn { .. }), "{response:?}");
+    assert_eq!(calls.lock().expect("calls mutex").len(), 2);
+
+    let opened = dispatch(&service, ChatCommand::OpenSession { id }, None).await;
+    let ChatResponse::Session { session } = opened else {
+        panic!("expected a session, got {opened:?}");
+    };
+    assert!(
+        session.turns.iter().any(|turn| {
+            turn.status == "error"
+                && turn.error.as_deref() == Some("the stream was interrupted by an app restart")
+        }),
+        "the dropped turn must be recovered as an interruption"
+    );
 }
 
 /// Deleting a held session is refused and the session survives.

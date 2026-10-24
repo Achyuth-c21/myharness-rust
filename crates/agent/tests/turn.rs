@@ -706,7 +706,7 @@ async fn a_pre_cancelled_turn_writes_nothing_and_sends_nothing() {
     ))
     .await;
 
-    assert!(matches!(result, Err(AgentError::Cancelled)));
+    assert!(matches!(result, Err(AgentError::CancelledBeforeSend)));
     assert!(adapter.calls().is_empty());
     assert!(fixture
         .service
@@ -732,7 +732,7 @@ async fn a_pre_cancelled_turn_writes_nothing_and_sends_nothing() {
         &cancel,
     ))
     .await;
-    assert!(matches!(again, Err(AgentError::Cancelled)));
+    assert!(matches!(again, Err(AgentError::CancelledBeforeSend)));
     assert!(adapter.calls().is_empty());
     assert!(fixture
         .service

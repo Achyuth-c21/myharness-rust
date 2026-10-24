@@ -735,7 +735,6 @@ impl Store {
             return Err(StoreError::Validation("the turn id is not a uuid"));
         }
         let usage_json_text = usage_json.as_ref().map(|value| value.to_string());
-        let content_ref = self.files.put(content)?;
         let conn = self.conn.lock().expect("store mutex poisoned");
         let current: Option<(String, String, Option<String>)> = conn
             .query_row(
@@ -753,19 +752,27 @@ impl Store {
         if current_status != TurnStatus::Partial.as_stored() || current_error.is_some() {
             return Err(StoreError::Validation("the turn is already finished"));
         }
-        conn.execute(
+        // Store the content only after the row is known to be live: a refused
+        // finish must not leave an orphan blob behind. The WHERE clause keeps
+        // the transition one-shot even if a second finisher races the read.
+        let content_ref = self.files.put(content)?;
+        let updated = conn.execute(
             "UPDATE turns SET status = ?2, content_ref = ?3, usage_json = ?4, error = ?5,
                             stop_reason = ?6
-             WHERE id = ?1",
+             WHERE id = ?1 AND status = ?7 AND error IS NULL",
             params![
                 turn_id,
                 status.as_stored(),
                 content_ref,
                 usage_json_text,
                 error,
-                stop_reason
+                stop_reason,
+                TurnStatus::Partial.as_stored()
             ],
         )?;
+        if updated != 1 {
+            return Err(StoreError::Validation("the turn is already finished"));
+        }
         let turn = conn.query_row(
             &format!("SELECT {} FROM turns WHERE id = ?1", turn_columns()),
             params![turn_id],

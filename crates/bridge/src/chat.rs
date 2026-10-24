@@ -368,9 +368,9 @@ fn optional_string(connection: &Value, key: &str) -> Result<Option<String>, Brid
                 Some(trimmed.to_string())
             })
         }
-        Some(other) => Err(BridgeError::new(
+        Some(_) => Err(BridgeError::new(
             "CONFIG_VALIDATION",
-            format!("{key} expects a string, found {other:?}"),
+            format!("{key} expects a string"),
         )),
     }
 }
@@ -605,6 +605,23 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
     }
 }
 
+/// Clears a session's running marker when the send future ends, including when
+/// the future is dropped mid-stream (a renderer reload cancels the invoke).
+/// Without this guard a dropped send would leave the session permanently
+/// `TURN_IN_PROGRESS` and make session open skip crash recovery.
+struct RunningTurn<'a> {
+    running: &'a Mutex<HashMap<String, CancellationToken>>,
+    session_id: &'a str,
+}
+
+impl Drop for RunningTurn<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut running) = self.running.lock() {
+            running.remove(self.session_id);
+        }
+    }
+}
+
 /// Execute one command. Streaming events reach `observer` before they are
 /// accumulated; the terminal `Turn`/`Error` response is the final state.
 pub async fn dispatch<K: AuditKeyStore, R: ChatTargetResolver>(
@@ -662,10 +679,16 @@ async fn run<K: AuditKeyStore, R: ChatTargetResolver>(
         }
         ChatCommand::OpenSession { id } => {
             validate_session_id(&id)?;
-            service
-                .sessions
-                .recover_interrupted(&id)
-                .map_err(session_failure)?;
+            // A live turn in THIS process is not a crash: opening the task
+            // while it streams must not convert it into an interrupted turn.
+            // Recovery is for rows left behind by a previous process
+            // (`TEST-SESSION-002`).
+            if !service.has_running_turn(&id) {
+                service
+                    .sessions
+                    .recover_interrupted(&id)
+                    .map_err(session_failure)?;
+            }
             let session = service
                 .sessions
                 .store()
@@ -704,6 +727,14 @@ async fn run<K: AuditKeyStore, R: ChatTargetResolver>(
         }
         ChatCommand::ArchiveSession { id, archived } => {
             validate_session_id(&id)?;
+            // A running turn owns the session until it finishes; archiving or
+            // deleting underneath it would orphan the stream and its finish.
+            if service.has_running_turn(&id) {
+                return Err(ChatFailure::before_send(BridgeError::new(
+                    "TURN_IN_PROGRESS",
+                    "stop the running turn before archiving this task",
+                )));
+            }
             service
                 .sessions
                 .archive(&id, archived)
@@ -712,6 +743,12 @@ async fn run<K: AuditKeyStore, R: ChatTargetResolver>(
         }
         ChatCommand::DeleteSession { id } => {
             validate_session_id(&id)?;
+            if service.has_running_turn(&id) {
+                return Err(ChatFailure::before_send(BridgeError::new(
+                    "TURN_IN_PROGRESS",
+                    "stop the running turn before deleting this task",
+                )));
+            }
             service.sessions.delete(&id).map_err(session_failure)?;
             Ok(ChatResponse::Ack)
         }
@@ -759,6 +796,32 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
         // Resolve before claiming the slot: a missing credential or model
         // must fail without leaving a running marker behind.
         let target = self.targets.resolve()?;
+        // No silent substitution (`docs/12` §9): the task keeps the
+        // provider/model it was created with. The applied profile is the only
+        // credential source in this phase, so a profile that now serves a
+        // different target blocks the send instead of switching it.
+        if let Some(provider) = session.extra.get("providerId").and_then(Value::as_str) {
+            if provider != target.model.provider_id {
+                return Err(ChatFailure::before_send(BridgeError::new(
+                    "MODEL_UNAVAILABLE",
+                    format!(
+                        "this task uses provider {provider}; the applied profile serves {}. No model was substituted.",
+                        target.model.provider_id
+                    ),
+                )));
+            }
+        }
+        if let Some(model) = session.model.as_deref() {
+            if model != target.model.model_id {
+                return Err(ChatFailure::before_send(BridgeError::new(
+                    "MODEL_UNAVAILABLE",
+                    format!(
+                        "this task uses model {model}; the applied profile serves {}. No model was substituted.",
+                        target.model.model_id
+                    ),
+                )));
+            }
+        }
         let cancel = CancellationToken::new();
         {
             let mut running = self.running.lock().map_err(|_| {
@@ -775,6 +838,11 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
             }
             running.insert(session_id.to_string(), cancel.clone());
         }
+        // The guard owns the marker until the future ends, however it ends.
+        let _running = RunningTurn {
+            running: &self.running,
+            session_id,
+        };
 
         let input = TurnInput::text(target.model.clone(), max_tokens, text);
         let mut turn = TurnRun::new(
@@ -789,10 +857,6 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
             turn = turn.with_observer(observer);
         }
         let result = run_turn(turn).await;
-
-        if let Ok(mut running) = self.running.lock() {
-            running.remove(session_id);
-        }
 
         match result {
             Ok(outcome) => Ok(ChatResponse::Turn {
@@ -809,6 +873,9 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
             Err(AgentError::Cancelled) => Err(ChatFailure::new(
                 BridgeError::new("TURN_CANCELLED", "the turn was cancelled"),
                 true,
+            )),
+            Err(AgentError::CancelledBeforeSend) => Err(ChatFailure::before_send(
+                BridgeError::new("TURN_CANCELLED", "the turn was cancelled before it started"),
             )),
             Err(AgentError::Protocol(message)) => Err(ChatFailure::new(
                 BridgeError::new("PROVIDER_ERROR", message),
@@ -831,6 +898,13 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
             Err(error @ AgentError::Session(_)) => Err(session_failure(error)),
             Err(error @ AgentError::Store(_)) => Err(session_failure(error)),
         }
+    }
+
+    fn has_running_turn(&self, session_id: &str) -> bool {
+        self.running
+            .lock()
+            .map(|running| running.contains_key(session_id))
+            .unwrap_or(false)
     }
 
     fn stop_turn(&self, session_id: &str) -> Result<bool, ChatFailure> {
