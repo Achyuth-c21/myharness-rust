@@ -161,10 +161,18 @@ impl<K: AuditKeyStore> SessionService<K> {
         content: &[u8],
         usage_json: Option<serde_json::Value>,
         error: Option<&str>,
+        stop_reason: Option<&str>,
     ) -> Result<TurnRow, SessionError> {
-        let turn = self
-            .store
-            .put_turn(session_id, seq, role, status, content, usage_json, error)?;
+        let turn = self.store.put_turn(
+            session_id,
+            seq,
+            role,
+            status,
+            content,
+            usage_json,
+            error,
+            stop_reason,
+        )?;
         let key = self.key(session_id)?;
         let payload = serde_json::json!({
             "event": "turn.appended",
@@ -172,6 +180,7 @@ impl<K: AuditKeyStore> SessionService<K> {
             "role": turn.role,
             "status": turn.status,
             "contentRef": turn.content_ref,
+            "stopReason": turn.stop_reason,
         })
         .to_string();
         self.store.append_audit(

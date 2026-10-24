@@ -101,6 +101,7 @@ fn a_turn_extends_the_chain_and_touches_activity() {
             b"hello",
             None,
             None,
+            None,
         )
         .unwrap();
     fixture
@@ -113,6 +114,7 @@ fn a_turn_extends_the_chain_and_touches_activity() {
             b"partial reply",
             Some(serde_json::json!({ "inputTokens": 4, "outputTokens": 2 })),
             Some("cancelled by the user"),
+            None,
         )
         .unwrap();
 
@@ -153,6 +155,7 @@ fn a_refused_turn_does_not_grow_the_chain() {
             b"one",
             None,
             None,
+            None,
         )
         .unwrap();
     let refused = fixture.service.append_turn(
@@ -161,6 +164,7 @@ fn a_refused_turn_does_not_grow_the_chain() {
         TurnRole::User,
         TurnStatus::Complete,
         b"two",
+        None,
         None,
         None,
     );
@@ -186,6 +190,7 @@ fn archive_and_hold_chain_and_delete_honors_the_hold() {
             TurnRole::User,
             TurnStatus::Complete,
             b"content to sweep",
+            None,
             None,
             None,
         )

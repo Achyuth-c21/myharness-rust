@@ -142,6 +142,10 @@ pub struct TurnRow {
     #[serde(rename = "usageJson")]
     pub usage_json: Option<String>,
     pub error: Option<String>,
+    /// The provider's own stop spelling (`docs/12` §4.1) — never collapsed into
+    /// a generic "done".
+    #[serde(rename = "stopReason")]
+    pub stop_reason: Option<String>,
     #[serde(rename = "createdAt")]
     pub created_at: i64,
 }
@@ -210,7 +214,7 @@ fn session_columns() -> &'static str {
 }
 
 fn turn_columns() -> &'static str {
-    "id, session_id, seq, role, status, content_ref, usage_json, error, created_at"
+    "id, session_id, seq, role, status, content_ref, usage_json, error, created_at, stop_reason"
 }
 
 fn usage_columns() -> &'static str {
@@ -603,6 +607,7 @@ impl Store {
         content: &[u8],
         usage_json: Option<serde_json::Value>,
         error: Option<&str>,
+        stop_reason: Option<&str>,
     ) -> Result<TurnRow, StoreError> {
         if !is_uuid(session_id) {
             return Err(StoreError::Validation("the session id is not a uuid"));
@@ -618,8 +623,8 @@ impl Store {
         let created_at = now_ms();
         let usage_json_text = usage_json.as_ref().map(|v| v.to_string());
         if let Err(err) = conn.execute(
-            "INSERT INTO turns (id, session_id, seq, role, status, content_ref, usage_json, error, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO turns (id, session_id, seq, role, status, content_ref, usage_json, error, created_at, stop_reason)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 id,
                 session_id,
@@ -630,6 +635,7 @@ impl Store {
                 usage_json_text,
                 error,
                 created_at,
+                stop_reason,
             ],
         ) {
             return match err {
@@ -656,6 +662,7 @@ impl Store {
             content_ref,
             usage_json: usage_json_text,
             error: error.map(|e| e.to_string()),
+            stop_reason: stop_reason.map(|s| s.to_string()),
             created_at,
         })
     }
@@ -688,6 +695,7 @@ impl Store {
                     usage_json: row.get(6)?,
                     error: row.get(7)?,
                     created_at: row.get(8)?,
+                    stop_reason: row.get(9)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;

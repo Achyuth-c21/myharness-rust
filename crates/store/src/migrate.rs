@@ -99,31 +99,22 @@ CREATE TABLE quarantined_records (
     UNIQUE (source_table, source_id)
 );
 "#,
-}];
+},
+    // Revision 2 (Phase 4 slice 2): the native stop reason belongs to the turn.
+    // `docs/12` §4.1 requires preserving native stop reasons rather than
+    // collapsing them to "done"; without a column they died at the agent
+    // boundary. Stored as the provider's own spelling (`NativeStopReason::wire`).
+    Migration {
+        version: 2,
+        name: "turns_stop_reason",
+        sql: "ALTER TABLE turns ADD COLUMN stop_reason TEXT;",
+    },
+];
 
 /// The newest schema revision this binary understands. Kept as a flat constant
 /// (const-eval cannot iterate the table); the unit test below pins it to the
 /// last migration so the two can never drift apart.
-pub const LATEST_SCHEMA_VERSION: i64 = 1;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The constant, the table's last revision, and ascending order must agree.
-    #[test]
-    fn the_supported_version_is_the_last_migration() {
-        assert_eq!(
-            Some(&LATEST_SCHEMA_VERSION),
-            MIGRATIONS.last().map(|m| &m.version)
-        );
-        let mut previous = 0;
-        for migration in MIGRATIONS {
-            assert!(migration.version > previous, "migrations must ascend");
-            previous = migration.version;
-        }
-    }
-}
+pub const LATEST_SCHEMA_VERSION: i64 = 2;
 
 /// Apply every missing migration inside one transaction each, recording the
 /// version row together with the schema it belongs to. Idempotent: an already
@@ -166,4 +157,23 @@ pub fn run(conn: &mut Connection) -> Result<(), StoreError> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The constant, the table's last revision, and ascending order must agree.
+    #[test]
+    fn the_supported_version_is_the_last_migration() {
+        assert_eq!(
+            Some(&LATEST_SCHEMA_VERSION),
+            MIGRATIONS.last().map(|m| &m.version)
+        );
+        let mut previous = 0;
+        for migration in MIGRATIONS {
+            assert!(migration.version > previous, "migrations must ascend");
+            previous = migration.version;
+        }
+    }
 }

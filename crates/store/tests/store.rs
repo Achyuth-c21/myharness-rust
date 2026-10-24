@@ -63,17 +63,17 @@ fn migrations_are_forward_only_and_idempotent() {
         )
         .unwrap()
     };
-    assert_eq!(version(&probe.db_path), 1);
+    assert_eq!(version(&probe.db_path), myharness_store::LATEST_SCHEMA_VERSION);
 
     // Reopen: idempotent, same version.
     drop(probe.store);
     let reopened = Store::open(&probe.db_path, &probe.files_dir).expect("reopen");
-    assert_eq!(version(&probe.db_path), 1);
+    assert_eq!(version(&probe.db_path), myharness_store::LATEST_SCHEMA_VERSION);
     drop(reopened);
 
     // The crate exposes no down path: the supported height is a forward-only
     // constant, and the ledger keeps one row per applied revision.
-    assert_eq!(myharness_store::LATEST_SCHEMA_VERSION, 1);
+    assert_eq!(myharness_store::LATEST_SCHEMA_VERSION, 2);
 }
 
 /// The `payload` passthrough preserves unknown keys across a close/reopen
@@ -123,7 +123,7 @@ fn refuses_a_database_written_by_a_newer_build() {
     match Store::open(&probe.db_path, &probe.files_dir).map(|_| ()) {
         Err(StoreError::SchemaAhead { found, supported }) => {
             assert_eq!(found, 99);
-            assert_eq!(supported, 1);
+            assert_eq!(supported, myharness_store::LATEST_SCHEMA_VERSION);
         }
         other => panic!("expected SchemaAhead, got {other:?}"),
     }
@@ -213,6 +213,10 @@ fn sessions_round_trip_and_order_by_activity() {
     let first = probe.fresh_session("first");
     std::thread::sleep(std::time::Duration::from_millis(3));
     let second = probe.fresh_session("second");
+    // `touch_session` records millisecond resolution; create and touch in the
+    // same millisecond ties, and the tie-breaker (`id ASC`) would make this
+    // assertion order-dependent rather than activity-dependent.
+    std::thread::sleep(std::time::Duration::from_millis(3));
     probe.store.touch_session(&first.id).unwrap();
 
     let all = probe.store.list_sessions(None).unwrap();
@@ -327,6 +331,7 @@ fn delete_removes_rows_and_content_blobs_of_one_session() {
             b"content of the doomed session",
             None,
             None,
+            None,
         )
         .unwrap();
     let neighbor_turn = probe
@@ -337,6 +342,7 @@ fn delete_removes_rows_and_content_blobs_of_one_session() {
             TurnRole::User,
             TurnStatus::Complete,
             b"neighbor content",
+            None,
             None,
             None,
         )
@@ -376,6 +382,7 @@ fn a_turn_sequence_is_a_slot_not_an_overwrite() {
             b"one",
             None,
             None,
+            None,
         )
         .unwrap();
     let second = probe.store.put_turn(
@@ -386,9 +393,37 @@ fn a_turn_sequence_is_a_slot_not_an_overwrite() {
         b"two",
         None,
         None,
+        None,
     );
     assert!(matches!(second, Err(StoreError::Validation(_))));
     assert_eq!(probe.store.list_turns(&created.id).unwrap().len(), 1);
+}
+
+/// A turn's native stop reason rides the row across a restart (schema v2) —
+/// it is not collapsed at the agent boundary (`docs/12` §4.1;
+/// `AI-ADAPTER-08`).
+#[test]
+fn a_turn_keeps_its_native_stop_reason_across_reopen() {
+    let probe = TestStore::new();
+    let created = probe.fresh_session("stop-reasons");
+    probe
+        .store
+        .put_turn(
+            &created.id,
+            0,
+            TurnRole::Assistant,
+            TurnStatus::Complete,
+            b"a truncated reply",
+            None,
+            None,
+            Some("max_tokens"),
+        )
+        .unwrap();
+    drop(probe.store);
+
+    let reopened = Store::open(&probe.db_path, &probe.files_dir).expect("reopen");
+    let turns = reopened.list_turns(&created.id).unwrap();
+    assert_eq!(turns[0].stop_reason.as_deref(), Some("max_tokens"));
 }
 
 /// A turn written against a session that does not exist is refused.
@@ -401,6 +436,7 @@ fn a_turn_needs_its_session() {
         TurnRole::User,
         TurnStatus::Complete,
         b"orphan",
+        None,
         None,
         None,
     );
@@ -426,6 +462,7 @@ fn a_corrupt_turn_row_is_quarantined_never_deleted() {
             TurnRole::User,
             TurnStatus::Complete,
             b"good",
+            None,
             None,
             None,
         )
