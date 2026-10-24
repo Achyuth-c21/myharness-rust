@@ -2,5 +2,17 @@
 name = "myharness-store"
 version.workspace = true
 edition.workspace = true
+repository.workspace = true
 
 [dependencies]
+rusqlite.workspace = true
+sha2.workspace = true
+hmac.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

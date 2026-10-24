@@ -6,7 +6,7 @@
  *   2. icon rows: New (+), Projects, Artifacts, Scheduled, Customize (docs/06 §2);
  *   3. Tasks header with disclosure chevron + search/filter icons (UI-INT-025
  *      triggers; the chevron is a section indicator, not a control);
- *   4. task rows (session data arrives in Phase 4 — empty list renders no rows);
+ *   4. task rows from the local session store (Phase 4; empty until a task exists);
  *   5. bottom: "Update available" banner above the profile row (docs/05 §2).
  * The profile row renders the starburst avatar, the account display-name slot
  * (identity/API arrives with the accounts phase — the label stays a neutral
@@ -14,10 +14,12 @@
  * provider label, and a disclosure chevron; its menu behavior is unchanged.
  */
 import { useState } from "react";
-import { NavLink } from "react-router-dom";
+import { Link, NavLink } from "react-router-dom";
 import { NAV_ITEMS } from "../routes";
 import { ModeSwitch } from "./ModeSwitch";
 import { openSetupWindow } from "../setup/client";
+import { useChatSessions } from "../chat/useSessions";
+import { formatRelative } from "../chat/format";
 
 interface Props {
   onOpenSettings: () => void;
@@ -105,6 +107,19 @@ function ChevronDown() {
   );
 }
 
+function TaskIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path
+        d="M2.5 4.5A1.5 1.5 0 0 1 4 3h8a1.5 1.5 0 0 1 1.5 1.5v5A1.5 1.5 0 0 1 12 11H7l-3 2.5V11H4a1.5 1.5 0 0 1-1.5-1.5v-5Z"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function ArrowRight() {
   return (
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -147,6 +162,7 @@ const NAV_ICONS: Record<string, () => JSX.Element> = {
 
 export function Sidebar({ onOpenSettings, onOpenSearch }: Props) {
   const [accountOpen, setAccountOpen] = useState(false);
+  const { sessions } = useChatSessions(false);
 
   return (
     <nav className="sidebar" aria-label="Primary">
@@ -208,7 +224,15 @@ export function Sidebar({ onOpenSettings, onOpenSearch }: Props) {
               </button>
             </div>
           </div>
-          {/* Task rows: no session store yet (Phase 4) — empty list, no faux data. */}
+          {sessions.map((session) => (
+            <Link key={session.id} to={`/cowork/${session.id}`} className="task-row">
+              <span className="task-icon">
+                <TaskIcon />
+              </span>
+              <span className="task-title">{session.title}</span>
+              <span className="task-time">{formatRelative(session.lastActivityAt)}</span>
+            </Link>
+          ))}
         </div>
       </div>
 

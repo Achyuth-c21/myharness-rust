@@ -5,17 +5,31 @@
  *   (serif display type; the section sits lower in the viewport than earlier
  *   builds, per the reference);
  * - composer: a rounded input card (transparent textarea; plain "+" lower-left;
- *   plain "claude" model label and a rounded-square outlined send with an
- *   upward arrow at the right), with a DISTINCT section strip directly beneath
+ *   a neutral model label and a rounded-square outlined send with an upward
+ *   arrow at the right), with a DISTINCT section strip directly beneath
  *   it holding the "Project or folder" selector and the info icon;
  * - "Ideas for you" suggestion rows under the composer (the shipped empty-home
  *   state; the Active list appears with session data — Phase 4).
  *
- * Phase 1 boundary: session creation (Enter send → /cowork/<local_uuid>) belongs to
- * the sessions module (docs/13 §Phase 4). Send is visually per reference but stays
- * disabled with a runtime reason; suggestions only pre-fill the existing draft.
+ * Phase 4 surface: Enter (or Send) creates the session through the bridge and
+ * hands the draft to `/cowork/<session-id>`, which streams the first turn. The
+ * text moves into that task's stored draft before the first await; it is
+ * cleared only when a turn completes, so a recoverable failure never loses it
+ * (`TEST-SESSION-009`). When session metadata exists the Active list replaces
+ * "Ideas for you"; a browser preview has no core, so it keeps the documented
+ * empty home instead of inventing rows.
  */
 import { useEffect, useRef, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import {
+  chat,
+  emitSessionsChanged,
+  type BridgeError,
+  type SessionRecord,
+} from "../chat/client";
+import { loadDraft, newDraftKey, saveDraft } from "../chat/drafts";
+import { formatRelative, titleFromMessage } from "../chat/format";
+import { useChatSessions } from "../chat/useSessions";
 
 interface Props {
   /** UI-INT-005: the composer focuses on the explicit New invocation (the Ctrl+N
@@ -109,6 +123,58 @@ function CustomizeSuggestionIcon() {
   );
 }
 
+function ChatGlyph() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path
+        d="M2.5 4.5A1.5 1.5 0 0 1 4 3h8a1.5 1.5 0 0 1 1.5 1.5v5A1.5 1.5 0 0 1 12 11H7l-3 2.5V11H4a1.5 1.5 0 0 1-1.5-1.5v-5Z"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function ChevronRight() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="m6 3.5 4.5 4.5L6 12.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** One Active-list row (docs/screens/new-task.md §Active list). */
+function ActiveList({ sessions }: { sessions: SessionRecord[] }) {
+  return (
+    <section className="active-list" aria-label="Active">
+      <div className="active-head">
+        <h2>Active</h2>
+        <button
+          type="button"
+          className="text-btn"
+          disabled
+          title="Clearing the active list was not observed; the rebuild keeps history (docs/14 §9)"
+        >
+          Clear active
+        </button>
+      </div>
+      {sessions.map((session) => (
+        <Link key={session.id} to={`/cowork/${session.id}`} className="active-row">
+          <span className="active-icon">
+            <ChatGlyph />
+          </span>
+          <span className="active-title">{session.title}</span>
+          <span className="active-time">{formatRelative(session.lastActivityAt)}</span>
+          <span className="active-chevron">
+            <ChevronRight />
+          </span>
+        </Link>
+      ))}
+    </section>
+  );
+}
+
 /** Suggestion rows of the shipped empty home ("Ideas for you", reference capture). */
 const IDEAS = [
   { label: "Send me a daily briefing", Icon: BriefingIcon },
@@ -117,8 +183,15 @@ const IDEAS = [
 ];
 
 export function NewTaskScreen({ focusOnMount = false }: Props) {
-  const [draft, setDraft] = useState("");
+  const navigate = useNavigate();
+  const [draft, setDraft] = useState(() => loadDraft(newDraftKey()));
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<BridgeError | null>(null);
+  const { sessions } = useChatSessions(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  // State updates are asynchronous; the ref makes a double Enter (or a click
+  // racing a keypress) create exactly one session.
+  const sendingRef = useRef(false);
 
   useEffect(() => {
     if (focusOnMount) taRef.current?.focus(); // UI-INT-005 (Ctrl+N remount only)
@@ -126,10 +199,41 @@ export function NewTaskScreen({ focusOnMount = false }: Props) {
 
   const hasText = draft.trim().length > 0;
 
+  const send = async () => {
+    if (!hasText || sendingRef.current) return;
+    sendingRef.current = true;
+    setSending(true);
+    setSendError(null);
+    const text = draft;
+    try {
+      // Sending creates the session immediately (docs/features/chat-and-composer.md).
+      // The draft stays in storage until the task screen owns it; a failure
+      // before then never loses text.
+      const response = await chat({
+        type: "createSession",
+        title: titleFromMessage(text),
+      });
+      if (response.type !== "session") {
+        if (response.type === "error") setSendError(response.error);
+        return;
+      }
+      emitSessionsChanged();
+      navigate(`/cowork/${response.session.session.id}`, {
+        state: { pendingText: text, originKey: newDraftKey() },
+      });
+    } finally {
+      sendingRef.current = false;
+      setSending(false);
+    }
+  };
+
   const onKeyDown = (event: React.KeyboardEvent) => {
-    // UI-INT-041: Enter sends, Shift+Enter newlines. Send itself arrives with the
-    // sessions module (docs/13 §Phase 4) — Enter stays inert until then.
-    if (event.key === "Enter" && !event.shiftKey) event.preventDefault();
+    // UI-INT-041: Enter sends, Shift+Enter newlines. IME composition must not
+    // send a half-composed message (REQ-COMPOSER-02).
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      if (!(event.nativeEvent as KeyboardEvent).isComposing) void send();
+    }
   };
 
   const autoGrow = (el: HTMLTextAreaElement) => {
@@ -144,6 +248,7 @@ export function NewTaskScreen({ focusOnMount = false }: Props) {
     // textarea must re-measure after the value lands or the card keeps its
     // old height.
     setDraft(label);
+    saveDraft(newDraftKey(), label);
     requestAnimationFrame(() => {
       const el = taRef.current;
       if (el) autoGrow(el);
@@ -158,6 +263,17 @@ export function NewTaskScreen({ focusOnMount = false }: Props) {
         You’re here!
       </h1>
 
+      {sendError ? (
+        <div className="composer-error" role="alert">
+          <span className="error-code">{sendError.code}</span>
+          <span>
+            {sendError.code === "BRIDGE_UNAVAILABLE"
+              ? "Sending is available in the desktop app. Your draft is kept."
+              : sendError.message}
+          </span>
+        </div>
+      ) : null}
+
       <div className="composer-stack">
         <div className="composer-card">
           <textarea
@@ -169,7 +285,10 @@ export function NewTaskScreen({ focusOnMount = false }: Props) {
             rows={1}
             aria-label="Message"
             onChange={(event) => {
-              setDraft(event.target.value);
+              const value = event.target.value;
+              setDraft(value);
+              saveDraft(newDraftKey(), value);
+              if (sendError) setSendError(null);
               autoGrow(event.target);
             }}
             onKeyDown={onKeyDown}
@@ -189,16 +308,17 @@ export function NewTaskScreen({ focusOnMount = false }: Props) {
               type="button"
               className="composer-model"
               disabled
-              title="Model wiring arrives with provider adapters (docs/13 §Phase 3); the shipped home shows this label"
+              title="The applied profile chooses the model; it is shown on the task. The picker arrives with the model phase."
             >
-              claude
+              model
             </button>
             <button
               type="button"
               className={`send-btn${hasText ? " primary" : ""}`}
               aria-label="Send"
-              disabled
-              title="Sending arrives with the sessions module (docs/13 §Phase 4)"
+              disabled={!hasText || sending}
+              title={sending ? "Creating the task…" : "Send"}
+              onClick={() => void send()}
             >
               <ArrowUpIcon />
             </button>
@@ -232,18 +352,19 @@ export function NewTaskScreen({ focusOnMount = false }: Props) {
         </div>
       </div>
 
-      <section className="ideas" aria-label="Ideas for you">
-        <h2 className="ideas-title">Ideas for you</h2>
-        {IDEAS.map(({ label, Icon }) => (
-          <button key={label} type="button" className="idea-row" onClick={() => seedDraft(label)}>
-            <Icon />
-            <span>{label}</span>
-          </button>
-        ))}
-        {/* The Active list (surface icon, title, relative time, chevron —
-            docs/screens/new-task.md §Active list) replaces this block when
-            session metadata exists — Phase 4; the empty home shows Ideas. */}
-      </section>
+      {sessions.length > 0 ? (
+        <ActiveList sessions={sessions} />
+      ) : (
+        <section className="ideas" aria-label="Ideas for you">
+          <h2 className="ideas-title">Ideas for you</h2>
+          {IDEAS.map(({ label, Icon }) => (
+            <button key={label} type="button" className="idea-row" onClick={() => seedDraft(label)}>
+              <Icon />
+              <span>{label}</span>
+            </button>
+          ))}
+        </section>
+      )}
     </div>
   );
 }

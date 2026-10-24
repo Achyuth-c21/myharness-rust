@@ -350,28 +350,42 @@ try {
     await page.evaluate(() => localStorage.setItem("sidebar.collapsed", "0"));
   });
 
-  await step("T27 composer: Shift+Enter newline, Enter inert, Ctrl+N clears+focuses (UI-INT-005/040/041)", async () => {
+  await step("T27 composer: Shift+Enter newline, Enter attempts send, Ctrl+N clears+focuses (UI-INT-005/040/041)", async () => {
     await page.goto(`${BASE}/new`);
     const ta = page.locator("#composer");
     await ta.fill("hello");
     await page.keyboard.press("Shift+Enter");
     await page.keyboard.type("world");
     await expectTrue((await ta.inputValue()).includes("\n"), "Shift+Enter inserts a newline");
+    // Enter now runs the send flow; a browser preview has no core, so the
+    // failure must be visible and the draft must survive (REQ-COMPOSER-04).
     await page.keyboard.press("Enter");
-    await page.waitForTimeout(30);
-    await expectTrue(page.url().endsWith("/new"), "Enter stays inert until the sessions phase");
+    await page.locator(".composer-error").waitFor({ state: "visible" });
+    await expectTrue(page.url().endsWith("/new"), "no session is created without the desktop host");
+    await expectTrue(await page.locator(".composer-error").count() === 1, "desktop-only send error must show");
+    await expectTrue((await ta.inputValue()).includes("hello"), "the draft is retained on failure");
     await page.keyboard.press("Control+n");
-    await page.waitForTimeout(30);
+    await page.waitForTimeout(40);
     await expectTrue((await ta.inputValue()) === "", "Ctrl+N clears the draft");
+    await expectTrue(
+      (await page.evaluate(() => localStorage.getItem("composer-draft:new"))) === null,
+      "Ctrl+N clears the stored New draft too",
+    );
     await expectTrue(
       (await page.evaluate(() => document.activeElement?.id)) === "composer",
       "Ctrl+N focuses the composer",
     );
   });
 
-  await step("T28 task route announces; code greeting distinct; unknown routes redirect", async () => {
+  await step("T28 task route is desktop-only in the preview; code greeting distinct; unknown routes redirect", async () => {
     await page.goto(`${BASE}/cowork/local_abc123`);
-    await expectTrue(await page.getByRole("status").count() === 1, "loading shell announces via role=status");
+    await page.getByRole("heading", { name: "Chat is available in the desktop app" }).waitFor();
+    await expectTrue(
+      await page.getByRole("heading", { name: "Chat is available in the desktop app" }).count() === 1,
+      "the preview must state that the session store is desktop-only, not fake a transcript",
+    );
+    await page.getByRole("button", { name: "Back to New" }).click();
+    await page.waitForURL("**/new");
     await page.goto(`${BASE}/epitaxy`);
     await expectTrue(await page.getByRole("heading", { name: "What’s up next?" }).count() === 1, "code greeting");
     await expectTrue(await page.getByRole("heading", { name: "You’re here!" }).count() === 0, "cowork greeting must NOT appear in code mode");
@@ -402,7 +416,40 @@ try {
     await expectTrue(styles.shadow !== "none", "ring shadow must be applied");
   });
 
-  await step("T31 back/forward grey at history ends; Forward navigates (UI-INT-003, report A1)", async () => {
+  await step("T31 drafts survive a reload (TEST-SESSION-009 scope: renderer storage)", async () => {
+    await page.goto(`${BASE}/new`);
+    await page.evaluate(() => localStorage.removeItem("composer-draft:new"));
+    await page.reload();
+    const ta = page.locator("#composer");
+    await ta.fill("draft that must survive");
+    await page.reload();
+    await expectTrue(
+      (await page.locator("#composer").inputValue()) === "draft that must survive",
+      "the stored draft must be restored on reload",
+    );
+    await page.evaluate(() => localStorage.removeItem("composer-draft:new"));
+  });
+
+  await step("T32 no faux task rows or Active list without a core (docs/14 §9)", async () => {
+    await page.goto(`${BASE}/new`);
+    await page.waitForSelector("#composer");
+    await expectTrue((await page.locator(".task-row").count()) === 0, "sidebar task rows must be empty in the preview");
+    await expectTrue((await page.locator(".active-row").count()) === 0, "Active list must not invent rows");
+    await expectTrue(await page.getByText("Ideas for you").count() === 1, "empty home keeps Ideas");
+  });
+
+  await step("T33 usage panel states its desktop-only boundary", async () => {
+    await page.goto(`${BASE}/#settings/usage`);
+    await page.waitForSelector("[role=dialog][aria-label=Settings]");
+    await page.getByText("Usage is available in the desktop app.", { exact: false }).first().waitFor();
+    await expectTrue(
+      await page.getByText("Usage is available in the desktop app.", { exact: false }).count() === 1,
+      "the browser preview must not fabricate usage totals",
+    );
+    await page.keyboard.press("Escape");
+  });
+
+  await step("T34 back/forward grey at history ends; Forward navigates (UI-INT-003, report A1)", async () => {
     await page.goto(BASE);
     await page.waitForSelector("a.nav-item");
     const backBtn = page.locator("button[aria-label=Back]");
@@ -428,7 +475,7 @@ try {
     await page.waitForURL("**/projects");
   });
 
-  await step("T32 closing settings leaves no zombie history entry (report A2)", async () => {
+  await step("T35 closing settings leaves no zombie history entry (report A2)", async () => {
     await page.locator("a.nav-item", { hasText: "New" }).click();
     await page.waitForURL("**/new");
     for (let i = 0; i < 2; i += 1) {

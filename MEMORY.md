@@ -431,3 +431,160 @@ branch. `evidence/app-asar-orig/` is git-ignored by design.
     must print nothing; abort the push otherwise.
   - Slice-1 commit was re-cut to `d25005c` (code only) to honor this; the doc content lives in
     the worktree.
+
+## 7e. Phase 4 slice 1 — the persistence core (2026-10-24)
+
+The `phase-4` lane (cut from `dev` @ `77b6bb3`) implemented the first slice of
+`docs/13` Phase 4: `crates/store` (`fc2e62a`) and `crates/sessions` (`bdc472d`).
+What is durable about it, so a later agent does not re-derive or contradict it:
+
+- **The store is the rebuild's data truth, not a port of the shipped layout.**
+  `docs/11` §4 (per-session `local_<uuid>.json` + `audit.jsonl` +
+  `.audit-key`) stays the preservation baseline; the schema is `docs/11` §14's
+  normalized model. 1:1 session-JSON parity is deliberately not attempted.
+  Turn content lives in a content-addressed blob store (`sha256` names, reads
+  and deletes validate the hex shape before touching a path); rows reference
+  blobs by hash, `list_turns` never loads content bytes.
+- **Migrations are forward-only with no down path.** A database written by a
+  newer build refuses to open (`SchemaAhead`) untouched. Unknown session fields
+  survive round-trips in `sessions.payload` (`TEST-DATA-001`). The supported
+  version constant is pinned to the last migration by a unit test.
+- **Corrupt-row policy is quarantine-then-fail-read.** The row moves to
+  `quarantined_records`, the read returns `QuarantinedRecord { source_table,
+  source_id }`, and the retry lists survivors. Never a silent skip; never an
+  in-place repair. A corrupt database *file* is renamed `<name>.corrupt-<ms>`
+  (never deleted) and `CorruptDatabase` is returned. Only real corruption
+  signals trigger that path (`DatabaseCorrupt` / `SQLITE_NOTADB`); I/O and
+  permission errors stay distinguishable.
+- **Audit keys never live in the database.** `AuditKeyStore` is the seam; the
+  slice-1 implementation is process memory with OS-random 32-byte keys. The
+  keychain implementation landed in the bridge slice (`KeyringAuditKeys`,
+  §7g); `TEST-CFG-006` remains compile-verified only. The chain adds a `prev_hmac` link the captures do not
+  show — an implementation refinement, recorded as such in `docs/17` §4.15.
+- **Delete honors legal hold and sweeps what it owns**: rows (one transaction,
+  cascade), transcript blobs, and the audit key. Uploads/outputs/preview are
+  artifact-phase scope, not this slice's.
+- **Statuses are tracked in `docs/17` §4.15** (18 rows): Available =
+  quarantine, chain, migrations, legal hold; Partial = `TEST-SESSION-001`
+  (persistence half), 004, 007, `TEST-DATA-002`/`007`/`010`; Unknown =
+  retention, aggregation, drafts, backup/export, Code worktrees.
+- **`crates/protocol-core` stays a scaffold on purpose.** The turn types live
+  in `myharness-provider-sdk` (Phase 3 put them there); protocol-core becomes a
+  re-export facade only if the agent layer wants an app-side name. Do not
+  create a second truth for `TurnEvent`.
+
+Next slice was the turn loop — recorded in §7f.
+
+## 7f. Phase 4 slice 2 — the turn loop (2026-10-24)
+
+`crates/agent` implements one turn end-to-end (`run_turn(TurnRun)`): replay → user turn →
+adapter `authenticate`/`create_turn` → typed-stream accumulation → assistant turn. It takes
+`&dyn ProviderAdapter`; **adapter construction stays outside** (the profile→adapter factory
+is slice-3 bridge work, not agent work).
+
+- **The transcript record shape is `TurnContent` JSON**: `{ parts: [ContentPart…],
+  citations: [...] }`. Citations are response-only and have no request-side home in the sdk
+  model; they stay in the record and are **excluded from replay** on purpose. Anything that
+  decodes transcript blobs must handle this shape (a bare `Vec<ContentPart>` will not read
+  back).
+- **Replay rules**: only `user`/`assistant` turns; empty turns skipped (an error turn that
+  never received content); **consecutive same-role turns merged** — a failed send leaves
+  `user, user`, which the Messages grammar rejects as separate messages. A missing/undecodable
+  blob fails the replay (`Transcript`), never a shortened send.
+- **Ordering**: validate (model-provider mismatch, empty model id, zero max_tokens, empty
+  user, non-empty tools) → pre-cancel check → replay → **persist the user turn** → auth →
+  send. Refusals write nothing and contact nobody; a pre-cancelled turn writes nothing.
+- **Terminal states**: complete (stop received) / partial (cancelled mid-stream, content
+  non-empty; no assistant row when nothing arrived) / error (provider error or stream ending
+  without a stop reason). A stop/cancel race resolves as **complete** (the model did finish).
+  Dropping the stream is the cancellation (`TEST-AI-015`).
+- **Ledger**: one `usage_events` row per attempt that contacted (or tried to contact) the
+  provider; failure rows carry the provider's message in `error`. Absent cache/web-search
+  channels land as `0` in the ledger (numbers for aggregation) while the turn's `usage_json`
+  keeps the exact `Option` shape. Counts are capped at `i64::MAX`, never wrapped.
+- **`ToolSpec` declarations are refused before contact** (`AgentError::Unsupported`) until
+  the MCP phase can execute them; the loop also refuses a model whose `provider_id` is not
+  the adapter's `id()`. No retries: retry policy is unobserved and must not be invented.
+- **Schema v2** (`migrate.rs` revision 2) adds `turns.stop_reason`; `Store::put_turn` and
+  `SessionService::append_turn` grew a trailing `stop_reason: Option<&str>` parameter, stored
+  as `NativeStopReason::wire()`. The v1→v2 upgrade runs as `ALTER TABLE` during fresh opens,
+  which exercises the migration sequence in every test.
+- **Tests at this slice**: agent 13 (`crates/agent/tests/turn.rs`, scripted adapter with
+  per-call error injection and a pending tail for cancellation), store 21 (+ stop-reason
+  reopen), sessions 8; clippy clean on the three crates. Pre-existing flake fixed: the store's
+  activity-order test touched a session in the same millisecond it created its neighbor, and
+  the `id ASC` tie-breaker made the assertion a coin flip.
+- **Docs (disk-only)**: `docs/17` §4.15 now covers slices 1–2 (`TEST-SESSION-001` →
+  Available (unit)); `docs/04` §3.1 has the slice-2 row.
+
+The next slice — profile→adapter factory + bridge commands + renderer chat surface, plus
+usage aggregation/drafts/retention — is recorded in §7g.
+
+## 7g. Phase 4 slices 3–4 + renderer (2026-10-24)
+
+Slices 3 (`e1ad4bd`) and 4 (`955f47d`) plus the renderer slice complete Phase 4's chat path.
+The full lane is `phase-4`; `dev` stays untouched until the owner says merge/push.
+
+- **Crash recovery is marker-based, not replay-based.** `run_turn` writes an assistant
+  placeholder (`partial`, no error) at send start; `finish_turn` may only transition a live
+  `partial`/no-error row, validates session ownership, resolves the audit key **before** the
+  row transition, and writes the content blob only after the row is known live. Recovery
+  (`recover_interrupted`) turns leftovers into `error` with `"the stream was interrupted by
+  an app restart"`; it runs at `run_turn` start and on session open, but **skips a turn this
+  process is running** (opening a task mid-stream must not kill it). Cancelled turns are
+  always finished as `partial` + `"the turn was cancelled"`, so a cancel never looks like a
+  crash. A token cancelled before anything persisted returns `AgentError::CancelledBeforeSend`
+  → `userTurnRecorded: false`; a post-persistence cancel is `TURN_CANCELLED` with `true`.
+- **Archive/delete refuse while a turn runs** (`TURN_IN_PROGRESS`); otherwise the stream would
+  finish against a deleted session. The renderer disables those menu items while streaming.
+- **Audit-key ordering**: `start` rolls the session row back if key creation fails;
+  `append_turn`/`begin_assistant_turn` resolve the key before inserting; `finish_turn` resolves
+  it before transitioning. A missing key must leave a live turn recoverable, not finish it
+  with no chain link.
+- **Usage is local-day over raw ledger rows.** `summarize_usage(events, days, FixedOffset,
+  now)` builds 1..=366 day buckets; cached tokens stay separate; the renderer passes
+  `utcOffsetMinutes` (east-positive, clamped ±840), absent → process local offset. The offset
+  is applied to the whole window, so a DST transition inside it is not re-bucketed (recorded
+  unknown). The ledger has **no surface column**, so the panel combines Cowork+Code.
+- **Retention is an engine only.** `sweep_retention` filters surface + `older_than_days`,
+  honors a global hold and per-session legal hold, reports `deleted`/`held`/`kept`. No timer
+  calls it and Settings has no control; the shipped schedule/UI was not observed.
+- **The factory resolves only the applied profile.** `ProfileTargets` over `ConfigBackend`
+  refuses `CONFIG_MISSING`/`CONFIG_VALIDATION`, refuses locked `mantle`/`foundry`
+  (`ADAPTER_NOT_AVAILABLE`), reuses setup's `resolve_probe_credential` (static key or helper
+  script) and base-URL/header rules, and runs no discovery at send. A session stores
+  provider/profile/model; a send whose applied target no longer matches refuses
+  `MODEL_UNAVAILABLE` ("No model was substituted") instead of switching. The profile document
+  has no revision field, so a same-provider/model profile swap is not detected — recorded gap
+  (`docs/14` §9 item 39).
+- **No system prompt is sent.** The shipped bootstrap prompt/context assembly was never
+  captured; `TurnInput::text` carries an empty system. This is an explicit deviation, not a
+  claim (`docs/14` §9 item 33). No retries, picker, attachments, tools, or per-model token
+  capability validation either.
+- **Bridge + renderer surface.** `chat_command` (create/list/open/send/stop/archive/rename/
+  delete/usage) and `chat://turn-event` (content deltas only; final response carries usage/
+  stop/error). App audit keys are keychain `session-audit/<uuid>`; tests use in-memory.
+  Renderer: `/cowork/:sessionId`, New→session handoff with the draft moved before the first
+  await, Active list replacing "Ideas for you" when sessions exist, sidebar task rows,
+  transcript with Stop/verbatim provider error/`Stopped`/reasoning `<details>`/copy,
+  rename/archive/delete inline, 7/30/90 usage panel. The session's model label is
+  provider-qualified; the New screen's is neutral ("model") because the applied profile is
+  unknown until a session exists.
+- **Draft rule (spec wins over the earlier plan):** drafts are retained on **any** failure,
+  including a provider failure after the user turn is recorded (`docs/features/
+  chat-and-composer.md` §Errors), and cleared only when a turn completes. The New draft is
+  moved into the session draft before the first await. Drafts are plaintext `localStorage`,
+  not encrypted — a recorded limitation.
+- **Tests/gates**: store 24, sessions 15, agent 15, bridge 40 setup + 10 chat; desktop
+  `cargo check`; clippy `-D warnings` on the four crates; `cargo metadata`; renderer
+  `tsc --noEmit` + `vite build`; E2E **35/35** (T27/T28 updated, T31–T33 added, old T31/T32
+  renumbered T34/T35). The E2E browser has **no Tauri host**: it proves the desktop-only
+  error, draft persistence, and no faux rows/totals — not a live stream. No native-runtime UI
+  stream test yet (`docs/14` §9 item 40).
+- **Traps**: `docs/**` stays uncommitted; never touch
+  `apps/desktop/src/components/Untitled-1`; use `apps/desktop/node_modules/.bin/tsc`, not
+  root `npx tsc`; `Usage` serializes camelCase (`cacheRead`), `ContentPart` keeps snake_case
+  fields, `SessionRow` keeps `legal_hold`/`permission_mode`, `TurnSummary` is camelCase.
+
+Next: Phase 5 (tools/approvals/MCP) or the deferred retention timer/UI, retry, picker,
+attachments, per-surface usage — all recorded as unknown/deferred, not invented.

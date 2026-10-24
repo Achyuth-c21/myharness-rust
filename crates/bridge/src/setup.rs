@@ -231,6 +231,13 @@ impl ConfigBackend {
     pub fn library(&self) -> &ConfigLibrary {
         &self.library
     }
+
+    /// The credential store the profile handles resolve against. Chat uses
+    /// the same store as the setup window; it is never exposed beyond the
+    /// crate (`RULES.md` §4).
+    pub(crate) fn secrets(&self) -> &dyn SecretStore {
+        self.secrets.as_ref()
+    }
 }
 
 impl SetupBackend for ConfigBackend {
@@ -897,7 +904,7 @@ impl OpenAiCompatFamily {
 /// `authenticate` refuses an empty credential before any bytes.
 /// A malformed stored handle and a stored handle missing its value remain
 /// errors on every family.
-fn resolve_optional_probe_credential(
+pub(crate) fn resolve_optional_probe_credential(
     connection: &Value,
     typed: &BTreeMap<String, String>,
     store: &dyn SecretStore,
@@ -928,8 +935,9 @@ fn resolve_optional_probe_credential(
 /// The probe's credential source. `Helper` carries the configured helper; its
 /// script runs once inside `test_connection` and its output is never stored
 /// (a probe must not persist anything — the TTL/cache machinery belongs to
-/// the runtime, not to a draft check).
-enum ProbeCredential {
+/// the runtime, not to a draft check). The chat factory reuses the same
+/// resolution so a probe and a send cannot disagree about a credential.
+pub(crate) enum ProbeCredential {
     Value(secrecy::SecretString),
     Helper(myharness_secrets::helper::HelperConfig),
 }
@@ -941,7 +949,7 @@ enum ProbeCredential {
 /// logged or carried in an error message. The slot key is the family's own
 /// spelling (`inferenceGatewayApiKey` / `inferenceAnthropicApiKey`), and
 /// `allow_helper` is the family's offered-kind set (`docs/12` §1).
-fn resolve_probe_credential(
+pub(crate) fn resolve_probe_credential(
     connection: &Value,
     typed: &BTreeMap<String, String>,
     store: &dyn SecretStore,
@@ -981,13 +989,13 @@ fn resolve_probe_credential(
         "interactive" => {
             return Err(BridgeError::new(
                 "CONFIG_VALIDATION",
-                "interactive sign-in cannot be verified by this probe; finish signing in, then test again with a saved profile",
+                "interactive sign-in cannot be verified here; finish signing in, then save the profile",
             ));
         }
         other => {
             return Err(BridgeError::new(
                 "CONFIG_VALIDATION",
-                format!("credential kind {other:?} cannot be probed"),
+                format!("credential kind {other:?} cannot be used by this build"),
             ));
         }
     }
@@ -1027,20 +1035,22 @@ fn resolve_probe_credential(
                 Ok(Some(secret)) => Ok(ProbeCredential::Value(secret)),
                 Ok(None) => Err(BridgeError::new(
                     "SECRET_MISSING",
-                    "no credential is stored for this profile's api key; save the profile, then test again",
+                    "no credential is stored for this profile's api key; save the profile, then try again",
                 )),
                 Err(error) => Err(bridge_secret_error(error)),
             }
         }
         _ => Err(BridgeError::new(
             "CONFIG_VALIDATION",
-            "a credential is required for the connection probe",
+            "a credential is required for this connection",
         )),
     }
 }
 
 /// The probe's auth scheme: the form's plain values are the wire spellings.
-fn parse_probe_scheme(value: Option<&Value>) -> Result<crate::helper::AuthScheme, BridgeError> {
+pub(crate) fn parse_probe_scheme(
+    value: Option<&Value>,
+) -> Result<crate::helper::AuthScheme, BridgeError> {
     match value {
         None => Ok(crate::helper::AuthScheme::Bearer),
         Some(Value::String(raw)) => match raw.trim() {
@@ -1061,7 +1071,9 @@ fn parse_probe_scheme(value: Option<&Value>) -> Result<crate::helper::AuthScheme
 /// The routing headers the probe sends. Validate-time rules hold: a
 /// credential-shaped name or value is refused instead of sent (TEST-SEC-004
 /// discipline; the credential section is the only credential lane).
-fn custom_headers_for_probe(connection: &Value) -> Result<Vec<(String, String)>, BridgeError> {
+pub(crate) fn custom_headers_for_probe(
+    connection: &Value,
+) -> Result<Vec<(String, String)>, BridgeError> {
     let Some(headers) = connection
         .get("inferenceCustomHeaders")
         .and_then(Value::as_object)
@@ -1096,7 +1108,7 @@ fn custom_headers_for_probe(connection: &Value) -> Result<Vec<(String, String)>,
 /// layer (2026-10-23, `docs/14` §9) there is no family predicate to satisfy —
 /// any id the user named is probeable; an empty or absent list means callers
 /// fall back to discovery.
-fn first_probe_model(connection: &Value) -> Option<String> {
+pub(crate) fn first_probe_model(connection: &Value) -> Option<String> {
     let list = connection
         .get("inferenceModels")
         .and_then(Value::as_array)?;
@@ -1126,7 +1138,7 @@ pub(crate) fn bridge_provider_error(error: ProviderError) -> BridgeError {
 /// Map a secret-source error onto the bridge: the `SECRET_*` prefix of the
 /// crate's own Display is the bridge's code, the rest is the (value-free)
 /// message (`docs/09` §4: no value ever appears in an error).
-fn bridge_secret_error(error: myharness_secrets::SecretError) -> BridgeError {
+pub(crate) fn bridge_secret_error(error: myharness_secrets::SecretError) -> BridgeError {
     // The secret crate's errors never carry a credential value.
     match error.to_string().split_once(": ") {
         Some((code, rest)) if code.starts_with("SECRET_") => BridgeError::new(code, rest),
@@ -1803,7 +1815,7 @@ mod tests {
             panic!("expected an error response");
         };
         assert_eq!(error.code, "CONFIG_VALIDATION");
-        assert!(error.message.contains("cannot be verified by this probe"));
+        assert!(error.message.contains("cannot be verified here"));
         assert_eq!(stub.hits(), 0, "a refused kind must send nothing");
     }
 
@@ -2420,7 +2432,7 @@ mod tests {
             };
             assert_eq!(error.code, "CONFIG_VALIDATION", "{kind:?}");
             assert!(
-                error.message.contains("cannot be probed"),
+                error.message.contains("cannot be used"),
                 "{kind:?}: {}",
                 error.message
             );

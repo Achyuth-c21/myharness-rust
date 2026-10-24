@@ -8,9 +8,14 @@
 //! Phase 2 adds the `settings.Custom3pSetup` namespace ([`setup`]): profiles, config
 //! read/write/apply, the merged view, health, the export bundle, and the setup-tab
 //! form schemas. Secrets cross this boundary as opaque handles, never as values.
+//!
+//! Phase 4 adds the chat subset of `web.LocalAgentModeSessions` ([`chat`]): the
+//! applied profile resolves to a native adapter, sessions restore from SQLite,
+//! turns stream through an observer, and stop is idempotent.
 
 use serde::{Deserialize, Serialize};
 
+pub mod chat;
 pub mod helper;
 pub mod setup;
 

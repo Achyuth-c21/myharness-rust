@@ -36,6 +36,7 @@ repository = "https://github.com/Achyuth-c21/myharness-rust"
 
 [workspace.dependencies]
 tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 futures = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -53,6 +54,9 @@ keyring = "3"
 secrecy = { version = "0.10", features = ["serde"] }
 zeroize = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
+sha2 = "0.10"
+hmac = "0.12"
+rand = "0.8"
 portable-pty = "0.8"
 tauri = "2"
 tauri-build = "2"

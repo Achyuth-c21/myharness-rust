@@ -13,8 +13,15 @@ use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
 use myharness_app_shell as shell;
-use myharness_bridge::setup::{ConfigBackend, SetupCommand, SetupResponse};
-use tauri::{Manager as _, WebviewUrl, WebviewWindowBuilder};
+use myharness_bridge::chat::{
+    dispatch as chat_dispatch, ChatCommand, ChatResponse, ChatService, KeyringAuditKeys,
+    ProfileTargets,
+};
+use myharness_bridge::setup::{BridgeError, ConfigBackend, SetupCommand, SetupResponse};
+use myharness_provider_sdk::TurnEvent;
+use myharness_sessions::SessionService;
+use myharness_store::Store;
+use tauri::{Emitter as _, Manager as _, WebviewUrl, WebviewWindowBuilder};
 
 /// Resolve the production static root (`frontendDist`). Development uses `devUrl`
 /// instead, so a missing root must never hard-crash: the protocol still answers with
@@ -212,6 +219,73 @@ fn setup_backend() -> Result<&'static Mutex<ConfigBackend>, String> {
     Ok(backend)
 }
 
+/// The app's chat service: SQLite sessions under the app data directory, audit
+/// keys in the OS keychain (`docs/11` §4.3), targets from the applied profile.
+///
+/// The store is opened once per process. A failure is reported to the caller
+/// instead of falling back to an in-memory or renderer-owned store — losing
+/// transcripts silently would be worse than refusing to send.
+type Chat = ChatService<KeyringAuditKeys, ProfileTargets>;
+
+fn chat_state(app: &tauri::AppHandle) -> Result<&'static Chat, String> {
+    static CHAT: OnceLock<Result<Chat, String>> = OnceLock::new();
+    match CHAT.get_or_init(|| init_chat(app)) {
+        Ok(chat) => Ok(chat),
+        Err(message) => Err(message.clone()),
+    }
+}
+
+fn init_chat(app: &tauri::AppHandle) -> Result<Chat, String> {
+    let root = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("the app data directory is not available: {error}"))?
+        .join("chat");
+    std::fs::create_dir_all(&root)
+        .map_err(|error| format!("the session directory could not be created: {error}"))?;
+    let store = Store::open(&root.join("sessions.db"), &root.join("files"))
+        .map_err(|error| format!("the session store could not be opened: {error}"))?;
+    let keys = KeyringAuditKeys::new(Box::new(myharness_secrets::KeyringStore::new(
+        myharness_secrets::DEFAULT_SERVICE,
+    )));
+    let targets = ProfileTargets::new(setup_backend()?);
+    Ok(ChatService::new(
+        SessionService::new(store, keys),
+        targets,
+    ))
+}
+
+/// The chat subset of `web.LocalAgentModeSessions` (docs/18 §3.4/§4). Content
+/// deltas are forwarded as `chat://turn-event` with the session id; the
+/// command's response is the final state (usage, stop reason, errors).
+#[tauri::command]
+async fn chat_command(app: tauri::AppHandle, command: ChatCommand) -> ChatResponse {
+    let service = match chat_state(&app) {
+        Ok(service) => service,
+        Err(message) => {
+            return ChatResponse::Error {
+                error: BridgeError::new("STORE_UNAVAILABLE", message),
+                user_turn_recorded: false,
+            }
+        }
+    };
+    let session_id = match &command {
+        ChatCommand::SendTurn { session_id, .. } => Some(session_id.clone()),
+        _ => None,
+    };
+    let handle = app.clone();
+    let observer = move |event: &TurnEvent| {
+        if let Some(session_id) = &session_id {
+            let payload = serde_json::json!({
+                "sessionId": session_id,
+                "event": event,
+            });
+            let _ = handle.emit("chat://turn-event", payload);
+        }
+    };
+    chat_dispatch(service, command, Some(&observer)).await
+}
+
 /// The `settings.Custom3pSetup` namespace (docs/18 §3.4): profiles, config
 /// read/write/apply, the merged view, health, the export bundle, and the setup
 /// form schemas. Arguments are validated in the bridge; secrets cross this
@@ -343,6 +417,7 @@ pub fn run() {
         .register_uri_scheme_protocol("app", |_context, request| adapt(request))
         .invoke_handler(tauri::generate_handler![
             ping,
+            chat_command,
             setup_command,
             setup_discover_models,
             setup_discover_openai_models,
