@@ -21,14 +21,35 @@
 //!   own directory (`docs/11` §4.1); legal hold refuses the operation until
 //!   explicitly released (`TEST-DATA-005`).
 //!
-//! Not in this slice: send/stream/stop (the agent loop, slice 2), retention
-//! (`TEST-DATA-004`), draft recovery (`TEST-SESSION-009`), and the renderer
-//! surface (slice 3). Content bytes are never copied into the chain — a link
+//! Slice 3 adds the phase-exit semantics on top of the same service:
+//!
+//! - **Live turns and crash recovery.** An assistant turn is opened as a
+//!   `partial` row *before* the provider is contacted; the agent finishes that
+//!   row exactly once. A row still live on the next open means the process
+//!   died mid-stream, and [`SessionService::recover_interrupted`] marks it
+//!   `error` ("interrupted by an app restart") instead of replaying or
+//!   duplicating it (`TEST-SESSION-002`; docs/features/chat-and-composer.md:
+//!   "unfinished streams are marked interrupted, not replayed").
+//! - **Usage aggregation** ([`usage`]) over local-day windows, so 7/30/90-day
+//!   views do not shift at midnight (`TEST-SESSION-008`, `TEST-DATA-007`).
+//! - **Retention** ([`retention`]) for one surface, honoring both the
+//!   per-session legal hold and the profile-level hold switch
+//!   (`TEST-DATA-004`, `TEST-SESSION-005`).
+//!
+//! Drafts (`TEST-SESSION-009`) are renderer-owned in the shipped app
+//! (`docs/11` §10.1) and stay renderer-owned in the rebuild; they never cross
+//! this crate. Content bytes are never copied into the chain — a link
 //! authenticates a serialized summary, while the transcript content lives in
 //! the content-addressed store and is referenced by hash.
 
+pub mod retention;
+pub mod usage;
+
+pub use retention::{RetentionPolicy, RetentionReport};
+pub use usage::{summarize_usage, DailyUsage, UsageSummary, UsageTotals};
+
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use myharness_store::{
     NewSession, NewUsageEvent, SessionRow, Store, StoreError, TurnRole, TurnRow, TurnStatus,
@@ -109,6 +130,23 @@ impl AuditKeyStore for InMemoryAuditKeys {
             .expect("key mutex poisoned")
             .remove(session_id);
         Ok(())
+    }
+}
+
+/// Sharing one key store across service handles is how a test (or a
+/// re-opened app service) keeps keys available across a store reopen. The app
+/// uses the keyring-backed store; the trait stays the only seam.
+impl<T: AuditKeyStore + ?Sized> AuditKeyStore for Arc<T> {
+    fn create(&self, session_id: &str) -> Result<[u8; 32], SessionError> {
+        (**self).create(session_id)
+    }
+
+    fn get(&self, session_id: &str) -> Result<Option<[u8; 32]>, SessionError> {
+        (**self).get(session_id)
+    }
+
+    fn remove(&self, session_id: &str) -> Result<(), SessionError> {
+        (**self).remove(session_id)
     }
 }
 
@@ -193,6 +231,123 @@ impl<K: AuditKeyStore> SessionService<K> {
         )?;
         self.store.touch_session(session_id)?;
         Ok(turn)
+    }
+
+    /// Open a live assistant turn: a `partial` row with no error, plus a
+    /// `turn.started` chain link. The agent finishes the row exactly once
+    /// ([`Self::finish_turn`]); a row left in this state is the durable marker
+    /// of an interrupted stream that [`Self::recover_interrupted`] turns into
+    /// an explicit error (`TEST-SESSION-002`).
+    pub fn begin_assistant_turn(
+        &self,
+        session_id: &str,
+        seq: i64,
+        content: &[u8],
+    ) -> Result<TurnRow, SessionError> {
+        let turn = self.store.put_turn(
+            session_id,
+            seq,
+            TurnRole::Assistant,
+            TurnStatus::Partial,
+            content,
+            None,
+            None,
+            None,
+        )?;
+        let key = self.key(session_id)?;
+        let payload = serde_json::json!({
+            "event": "turn.started",
+            "seq": turn.seq,
+            "role": turn.role,
+            "contentRef": turn.content_ref,
+        })
+        .to_string();
+        self.store.append_audit(
+            session_id,
+            "agent",
+            "turn.started",
+            None,
+            payload.as_bytes(),
+            &key,
+        )?;
+        self.store.touch_session(session_id)?;
+        Ok(turn)
+    }
+
+    /// Finish a live assistant turn exactly once and chain the outcome. The
+    /// store refuses a second finish, so a retried write cannot rewrite
+    /// history; `partial` here is the deliberate cancellation state, with the
+    /// error text naming the cancellation.
+    #[allow(clippy::too_many_arguments)]
+    pub fn finish_turn(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        status: TurnStatus,
+        content: &[u8],
+        usage_json: Option<serde_json::Value>,
+        error: Option<&str>,
+        stop_reason: Option<&str>,
+    ) -> Result<TurnRow, SessionError> {
+        let turn = self.store.finish_turn(
+            session_id,
+            turn_id,
+            status,
+            content,
+            usage_json,
+            error,
+            stop_reason,
+        )?;
+        let key = self.key(session_id)?;
+        let payload = serde_json::json!({
+            "event": "turn.finished",
+            "seq": turn.seq,
+            "status": turn.status,
+            "contentRef": turn.content_ref,
+            "stopReason": turn.stop_reason,
+        })
+        .to_string();
+        self.store.append_audit(
+            session_id,
+            "agent",
+            "turn.finished",
+            None,
+            payload.as_bytes(),
+            &key,
+        )?;
+        Ok(turn)
+    }
+
+    /// Mark every live assistant turn as interrupted. Called before replay on
+    /// a send and when a session is opened; idempotent because a finished turn
+    /// is no longer live. Delivered-but-unpersisted deltas are not replayed —
+    /// the doc records the interruption, never a fabricated reply.
+    pub fn recover_interrupted(&self, session_id: &str) -> Result<usize, SessionError> {
+        let mut recovered = 0;
+        for turn in self.store.list_turns(session_id)? {
+            if turn.role != TurnRole::Assistant.as_stored()
+                || turn.status != TurnStatus::Partial.as_stored()
+                || turn.error.is_some()
+            {
+                continue;
+            }
+            let content = self
+                .store
+                .files
+                .read(&turn.content_ref)?
+                .ok_or(StoreError::NotFound)?;
+            self.finish_turn(
+                session_id,
+                &turn.id,
+                TurnStatus::Error,
+                &content,
+                None,
+                Some("the stream was interrupted by an app restart"),
+                None,
+            )?;
+            recovered += 1;
+        }
+        Ok(recovered)
     }
 
     /// Flip the archived flag and record which way it went.

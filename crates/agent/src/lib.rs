@@ -17,7 +17,13 @@
 //! - **Cancellation leaves a `partial` turn** carrying what the stream
 //!   delivered before the drop — and dropping the stream is what cancels the
 //!   native request (`TEST-SESSION-001` stop clause; `TEST-AI-015`;
-//!   `AI-STREAM-02`).
+//!   `AI-STREAM-02`). A stop before the first delta still resolves the live
+//!   turn (empty `partial`, error names the cancellation), so the start marker
+//!   is never mistaken for a crash.
+//! - **A live assistant turn is the crash marker.** It is opened as a
+//!   `partial` row before the provider is contacted and finished exactly once.
+//!   A leftover live row on the next send is recovered as an explicit
+//!   interruption (`TEST-SESSION-002`) — never replayed or duplicated.
 //! - **Native stop reasons are preserved** on the turn (`turns.stop_reason`,
 //!   schema v2) instead of being collapsed to "done" (`docs/12` §4.1;
 //!   `AI-ADAPTER-08`).
@@ -28,9 +34,10 @@
 //! record and excluded from replay — no adapter accepts a response annotation
 //! as a request block, and discarding them would be the `AI-STREAM-01` loss.
 //!
-//! Not in this slice: the profile→adapter construction seam (the caller passes
+//! Not in this crate: the profile→adapter construction seam (the caller passes
 //! a [`ProviderAdapter`]), the renderer bridge, usage aggregation, retention,
-//! and drafts.
+//! and drafts. Those compose this loop from `myharness-bridge`; the loop stays
+//! free of transport and UI decisions.
 
 use futures::StreamExt;
 use myharness_provider_sdk::{
@@ -266,13 +273,16 @@ pub struct TurnOutcome {
 /// Side-effect contract:
 ///
 /// - A validation/refusal error happens **before** any row is written and
-///   before the provider is contacted.
-/// - The user turn is written before the send, so a crash or cancellation
-///   cannot lose what the user asked.
-/// - A provider failure writes an `error` assistant turn and a usage event
-///   carrying the provider's message, then returns [`AgentError::Provider`].
-/// - Cancellation writes the delivered content as `partial` (when there is
-///   any) and a usage event marked cancelled, then returns
+///   before the provider is contacted. Recovery of an earlier interrupted
+///   attempt runs after those checks, so a refused turn writes nothing.
+/// - The user turn and the live assistant marker are written before the send,
+///   so a crash or cancellation cannot lose what the user asked and the next
+///   open can name the interruption.
+/// - A provider failure finishes the live turn as `error` and writes a usage
+///   event carrying the provider's message, then returns
+///   [`AgentError::Provider`].
+/// - Cancellation finishes the live turn as `partial` (empty when no delta
+///   arrived) and writes a usage event marked cancelled, then returns
 ///   [`AgentError::Cancelled`].
 pub async fn run_turn<K: AuditKeyStore>(
     run: TurnRun<'_, K>,
@@ -295,11 +305,20 @@ pub async fn run_turn<K: AuditKeyStore>(
         return Err(AgentError::Cancelled);
     }
 
+    // A live assistant row from a previous process is a crash marker, not a
+    // reply to replay: name the interruption before reading the transcript.
+    sessions.recover_interrupted(session_id)?;
+
     let (history, next_seq) = replay(sessions, session_id)?;
+    let assistant = sessions.begin_assistant_turn(
+        session_id,
+        next_seq + 1,
+        &encode(&TurnContent::default()),
+    )?;
     let recorder = Recorder {
         sessions,
         session_id,
-        next_seq,
+        assistant,
         model_id: &input.model.model_id,
     };
 
@@ -499,20 +518,17 @@ fn push_message(
 // Recording
 // ---------------------------------------------------------------------------
 
-/// Writes the turn tail. Assistant turns only — the user turn already exists.
+/// Finishes the live assistant turn opened before the send.
 struct Recorder<'a, K: AuditKeyStore> {
     sessions: &'a SessionService<K>,
     session_id: &'a str,
-    /// The sequence of the user turn this run wrote; the assistant turn is the
-    /// next slot.
-    next_seq: i64,
+    /// The `partial` row opened at send time; finishing it is a one-way
+    /// transition enforced by the store.
+    assistant: TurnRow,
     model_id: &'a str,
 }
 
 impl<K: AuditKeyStore> Recorder<'_, K> {
-    /// The assistant turn is always the slot after the user turn — even when
-    /// earlier failed attempts left later slots free (the store refuses a
-    /// duplicate sequence, and replay has already established the tail).
     fn record_assistant(
         &self,
         status: TurnStatus,
@@ -524,10 +540,9 @@ impl<K: AuditKeyStore> Recorder<'_, K> {
         let usage_json = usage.map(|usage| {
             serde_json::to_value(usage).unwrap_or(serde_json::Value::Null)
         });
-        self.sessions.append_turn(
+        self.sessions.finish_turn(
             self.session_id,
-            self.next_seq + 1,
-            TurnRole::Assistant,
+            &self.assistant.id,
             status,
             &encode(content),
             usage_json,
@@ -578,22 +593,21 @@ impl<K: AuditKeyStore> Recorder<'_, K> {
         Ok(turn)
     }
 
-    /// Cancellation records what arrived as `partial`; a cancel before any
-    /// content has nothing to show and writes no assistant turn.
+    /// Cancellation always resolves the live turn: with no delta it is an
+    /// empty `partial` carrying the cancellation text, so recovery cannot
+    /// later misread the start marker as a crash.
     fn record_cancelled(
         &self,
         content: &TurnContent,
         usage: Option<&Usage>,
     ) -> Result<(), SessionError> {
-        if !content.parts.is_empty() || !content.citations.is_empty() {
-            self.record_assistant(
-                TurnStatus::Partial,
-                content,
-                usage,
-                Some("the turn was cancelled"),
-                None,
-            )?;
-        }
+        self.record_assistant(
+            TurnStatus::Partial,
+            content,
+            usage,
+            Some("the turn was cancelled"),
+            None,
+        )?;
         self.record_usage(usage, Some("the turn was cancelled"))
     }
 

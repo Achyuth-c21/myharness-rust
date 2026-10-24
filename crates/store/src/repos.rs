@@ -226,6 +226,36 @@ fn audit_columns() -> &'static str {
     "id, session_id, actor, action, message, payload_hash, prev_hmac, hmac, timestamp"
 }
 
+fn turn_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TurnRow> {
+    Ok(TurnRow {
+        id: row.get(0)?,
+        session_id: row.get(1)?,
+        seq: row.get(2)?,
+        role: row.get(3)?,
+        status: row.get(4)?,
+        content_ref: row.get(5)?,
+        usage_json: row.get(6)?,
+        error: row.get(7)?,
+        created_at: row.get(8)?,
+        stop_reason: row.get(9)?,
+    })
+}
+
+fn usage_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<UsageEventRow> {
+    Ok(UsageEventRow {
+        id: row.get(0)?,
+        session_id: row.get(1)?,
+        model: row.get(2)?,
+        input_tokens: row.get(3)?,
+        output_tokens: row.get(4)?,
+        cache_read_tokens: row.get(5)?,
+        cache_write_tokens: row.get(6)?,
+        search_requests: row.get(7)?,
+        error: row.get(8)?,
+        timestamp: row.get(9)?,
+    })
+}
+
 /// The raw session row before validation.
 #[derive(Debug, serde::Serialize)]
 struct SessionRowParsed {
@@ -553,11 +583,25 @@ impl Store {
         let tx = conn.transaction()?;
         tx.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
         tx.commit()?;
-        drop(conn);
+        // Content is addressed by hash, so two sessions can reference the same
+        // blob. Delete only the refs no surviving turn still needs; removing a
+        // shared blob would corrupt the neighbor (`TEST-SESSION-004`).
+        let mut removed = Vec::new();
         for item in &refs {
-            self.files.delete(item)?;
+            let still_referenced: Option<i64> = conn
+                .query_row(
+                    "SELECT 1 FROM turns WHERE content_ref = ?1 LIMIT 1",
+                    params![item],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if still_referenced.is_none() {
+                self.files.delete(item)?;
+                removed.push(item.clone());
+            }
         }
-        Ok(refs)
+        drop(conn);
+        Ok(removed)
     }
 
     /// Bump `last_activity_at` (the agent loop calls this per turn).
@@ -667,6 +711,71 @@ impl Store {
         })
     }
 
+    /// Finish a live turn: the assistant placeholder written at send time is
+    /// updated with its terminal status and final content. Only a `partial`
+    /// row with no error is live — the agent's start marker; a finished row is
+    /// refused rather than rewritten, so a retry cannot silently overwrite the
+    /// record. The audit chain records the start and the finish as separate
+    /// links (`SessionService`); this method moves the row only.
+    #[allow(clippy::too_many_arguments)]
+    pub fn finish_turn(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        status: TurnStatus,
+        content: &[u8],
+        usage_json: Option<serde_json::Value>,
+        error: Option<&str>,
+        stop_reason: Option<&str>,
+    ) -> Result<TurnRow, StoreError> {
+        if !is_uuid(session_id) {
+            return Err(StoreError::Validation("the session id is not a uuid"));
+        }
+        if !is_uuid(turn_id) {
+            return Err(StoreError::Validation("the turn id is not a uuid"));
+        }
+        let usage_json_text = usage_json.as_ref().map(|value| value.to_string());
+        let content_ref = self.files.put(content)?;
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        let current: Option<(String, String, Option<String>)> = conn
+            .query_row(
+                "SELECT session_id, status, error FROM turns WHERE id = ?1",
+                params![turn_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+        let Some((row_session_id, current_status, current_error)) = current else {
+            return Err(StoreError::NotFound);
+        };
+        if row_session_id != session_id {
+            return Err(StoreError::Validation("the turn belongs to another session"));
+        }
+        if current_status != TurnStatus::Partial.as_stored() || current_error.is_some() {
+            return Err(StoreError::Validation("the turn is already finished"));
+        }
+        conn.execute(
+            "UPDATE turns SET status = ?2, content_ref = ?3, usage_json = ?4, error = ?5,
+                            stop_reason = ?6
+             WHERE id = ?1",
+            params![
+                turn_id,
+                status.as_stored(),
+                content_ref,
+                usage_json_text,
+                error,
+                stop_reason
+            ],
+        )?;
+        let turn = conn.query_row(
+            &format!("SELECT {} FROM turns WHERE id = ?1", turn_columns()),
+            params![turn_id],
+            turn_from_row,
+        )?;
+        drop(conn);
+        self.touch_session(session_id)?;
+        Ok(turn)
+    }
+
     /// The session's transcript, sequence order. Content bytes are NOT loaded
     /// here — callers resolve `content_ref` through `self.files` lazily (the
     /// shipped session files ballooned because everything loaded eagerly;
@@ -684,20 +793,7 @@ impl Store {
             turn_columns()
         ))?;
         let rows: Vec<TurnRow> = stmt
-            .query_map(params![session_id], |row| {
-                Ok(TurnRow {
-                    id: row.get(0)?,
-                    session_id: row.get(1)?,
-                    seq: row.get(2)?,
-                    role: row.get(3)?,
-                    status: row.get(4)?,
-                    content_ref: row.get(5)?,
-                    usage_json: row.get(6)?,
-                    error: row.get(7)?,
-                    created_at: row.get(8)?,
-                    stop_reason: row.get(9)?,
-                })
-            })?
+            .query_map(params![session_id], turn_from_row)?
             .collect::<Result<Vec<_>, _>>()?;
         drop(stmt);
 
@@ -799,20 +895,7 @@ impl Store {
             usage_columns()
         ))?;
         let rows: Vec<UsageEventRow> = stmt
-            .query_map(params![session_id], |row| {
-                Ok(UsageEventRow {
-                    id: row.get(0)?,
-                    session_id: row.get(1)?,
-                    model: row.get(2)?,
-                    input_tokens: row.get(3)?,
-                    output_tokens: row.get(4)?,
-                    cache_read_tokens: row.get(5)?,
-                    cache_write_tokens: row.get(6)?,
-                    search_requests: row.get(7)?,
-                    error: row.get(8)?,
-                    timestamp: row.get(9)?,
-                })
-            })?
+            .query_map(params![session_id], usage_from_row)?
             .collect::<Result<Vec<_>, _>>()?;
         drop(stmt);
 
@@ -837,6 +920,42 @@ impl Store {
             }
         }
         Ok(out)
+    }
+
+    /// Usage events in a closed time window (`TEST-SESSION-008` /
+    /// `TEST-DATA-007`'s aggregation input): the caller decides the window
+    /// boundaries from its own local-day arithmetic; this layer only selects
+    /// and returns the raw rows, newest last. `session_id` narrows to one
+    /// session; `None` is the device-wide ledger.
+    pub fn list_usage_between(
+        &self,
+        from_ms: i64,
+        to_ms: i64,
+        session_id: Option<&str>,
+    ) -> Result<Vec<UsageEventRow>, StoreError> {
+        if to_ms < from_ms {
+            return Err(StoreError::Validation(
+                "the usage window ends before it starts",
+            ));
+        }
+        if let Some(id) = session_id {
+            if !is_uuid(id) {
+                return Err(StoreError::Validation("the session id is not a uuid"));
+            }
+        }
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {} FROM usage_events
+             WHERE timestamp >= ?1 AND timestamp <= ?2
+               AND (?3 IS NULL OR session_id = ?3)
+             ORDER BY timestamp ASC, id ASC",
+            usage_columns()
+        ))?;
+        let rows: Vec<UsageEventRow> = stmt
+            .query_map(params![from_ms, to_ms, session_id], usage_from_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(stmt);
+        Ok(rows)
     }
 }
 

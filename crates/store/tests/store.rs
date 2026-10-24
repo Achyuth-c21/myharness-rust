@@ -426,6 +426,121 @@ fn a_turn_keeps_its_native_stop_reason_across_reopen() {
     assert_eq!(turns[0].stop_reason.as_deref(), Some("max_tokens"));
 }
 
+/// A live turn (partial, no error) finishes exactly once; a finished row or a
+/// cancelled partial is refused rather than rewritten.
+#[test]
+fn a_live_turn_finishes_once() {
+    let probe = TestStore::new();
+    let created = probe.fresh_session("live-turn");
+    let live = probe
+        .store
+        .put_turn(
+            &created.id,
+            0,
+            TurnRole::Assistant,
+            TurnStatus::Partial,
+            b"{}",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+    let done = probe
+        .store
+        .finish_turn(
+            &created.id,
+            &live.id,
+            TurnStatus::Complete,
+            b"final",
+            Some(serde_json::json!({ "input": 1 })),
+            None,
+            Some("end_turn"),
+        )
+        .unwrap();
+    assert_eq!(done.id, live.id);
+    assert_eq!(done.status, "complete");
+    assert_eq!(done.stop_reason.as_deref(), Some("end_turn"));
+    assert_eq!(
+        probe.store.files.read(&done.content_ref).unwrap().as_deref(),
+        Some(&b"final"[..])
+    );
+
+    let again = probe
+        .store
+        .finish_turn(&created.id, &live.id, TurnStatus::Complete, b"x", None, None, None);
+    assert!(matches!(again, Err(StoreError::Validation(_))));
+
+    let cancelled = probe
+        .store
+        .put_turn(
+            &created.id,
+            1,
+            TurnRole::Assistant,
+            TurnStatus::Partial,
+            b"{}",
+            None,
+            Some("the turn was cancelled"),
+            None,
+        )
+        .unwrap();
+    let rewrite = probe.store.finish_turn(
+        &created.id,
+        &cancelled.id,
+        TurnStatus::Error,
+        b"x",
+        None,
+        None,
+        None,
+    );
+    assert!(matches!(rewrite, Err(StoreError::Validation(_))));
+}
+
+/// Content is addressed by hash, so two sessions can share one blob; deleting
+/// one session must not remove content the other still references
+/// (`TEST-SESSION-004`).
+#[test]
+fn deleting_a_session_keeps_blobs_its_neighbor_still_references() {
+    let probe = TestStore::new();
+    let doomed = probe.fresh_session("shared-doomed");
+    let keeper = probe.fresh_session("shared-keeper");
+    let shared = b"identical turn content";
+    let first = probe
+        .store
+        .put_turn(
+            &doomed.id,
+            0,
+            TurnRole::User,
+            TurnStatus::Complete,
+            shared,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let second = probe
+        .store
+        .put_turn(
+            &keeper.id,
+            0,
+            TurnRole::User,
+            TurnStatus::Complete,
+            shared,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    assert_eq!(first.content_ref, second.content_ref);
+
+    let removed = probe.store.delete_session(&doomed.id).unwrap();
+    assert!(removed.is_empty(), "a shared blob must not be deleted");
+    assert_eq!(
+        probe.store.files.read(&second.content_ref).unwrap().as_deref(),
+        Some(&shared[..])
+    );
+}
+
 /// A turn written against a session that does not exist is refused.
 #[test]
 fn a_turn_needs_its_session() {
@@ -441,6 +556,52 @@ fn a_turn_needs_its_session() {
         None,
     );
     assert!(matches!(err, Err(StoreError::NotFound)));
+}
+
+
+/// The ledger can be read as a closed window, device-wide or per session
+/// (`TEST-SESSION-008` / `TEST-DATA-007` aggregation input).
+#[test]
+fn usage_events_are_selectable_in_a_window() {
+    let probe = TestStore::new();
+    let first = probe.fresh_session("usage-window-a");
+    let second = probe.fresh_session("usage-window-b");
+    for (session, input) in [(&first.id, 3), (&second.id, 5)] {
+        probe
+            .store
+            .record_usage(
+                session,
+                NewUsageEvent {
+                    model: "model-a",
+                    input_tokens: input,
+                    output_tokens: 1,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+
+    let all = probe.store.list_usage_between(0, now + 1_000, None).unwrap();
+    assert_eq!(all.len(), 2);
+    let one = probe
+        .store
+        .list_usage_between(0, now + 1_000, Some(&second.id))
+        .unwrap();
+    assert_eq!(one.len(), 1);
+    assert_eq!(one[0].input_tokens, 5);
+    assert!(probe
+        .store
+        .list_usage_between(now + 1_000, now + 2_000, None)
+        .unwrap()
+        .is_empty());
+    assert!(matches!(
+        probe.store.list_usage_between(10, 5, None),
+        Err(StoreError::Validation(_))
+    ));
 }
 
 // ---------------------------------------------------------------------

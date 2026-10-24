@@ -6,7 +6,7 @@
 //! provider is pinned by that provider's own battery. These tests ask only
 //! whether the agent layer records exactly what the stream delivered.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use futures::{stream, StreamExt};
@@ -17,7 +17,7 @@ use myharness_provider_sdk::{
     ProviderHealth, Role, SystemBlock, TokenCount, ToolSpec, TurnEvent, TurnStream, Usage,
 };
 use myharness_sessions::{InMemoryAuditKeys, SessionService};
-use myharness_store::{NewSession, Store, TurnRow};
+use myharness_store::{NewSession, Store, TurnRole, TurnRow, TurnStatus};
 use secrecy::SecretString;
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
@@ -117,6 +117,9 @@ struct StubAdapter {
     /// Taken by the first `create_turn`, so a later run in the same test can
     /// succeed.
     create_error: Mutex<Option<ProviderError>>,
+    /// Cancels the token from inside `create_turn`: the live turn exists, no
+    /// delta has arrived yet, and the loop must still resolve the marker.
+    cancel_on_create: Option<CancellationToken>,
     calls: Mutex<Vec<NativeTurnRequest>>,
 }
 
@@ -128,8 +131,14 @@ impl StubAdapter {
             tail: Tail::End,
             auth_error: None,
             create_error: Mutex::new(None),
+            cancel_on_create: None,
             calls: Mutex::new(Vec::new()),
         }
+    }
+
+    fn with_cancel_on_create(mut self, token: CancellationToken) -> StubAdapter {
+        self.cancel_on_create = Some(token);
+        self
     }
 
     fn with_tail(mut self, tail: Tail) -> StubAdapter {
@@ -200,6 +209,9 @@ impl ProviderAdapter for StubAdapter {
             .take()
         {
             return Err(error);
+        }
+        if let Some(token) = &self.cancel_on_create {
+            token.cancel();
         }
         let head = stream::iter(self.script.clone());
         Ok(match self.tail {
@@ -293,7 +305,7 @@ async fn a_reply_streams_and_is_recorded_with_its_stop_reason_and_usage() {
     assert!(usage[0].error.is_none());
 
     // Genesis link + one link per turn.
-    assert_eq!(fixture.service.verify(&session).expect("verify"), 3);
+    assert_eq!(fixture.service.verify(&session).expect("verify"), 4);
 }
 
 /// The transcript content is JSON in the agent's shape, and the turn's
@@ -514,7 +526,7 @@ async fn a_provider_refusal_is_recorded_and_returned_verbatim() {
     assert_eq!(usage.len(), 1);
     assert_eq!(usage[0].error.as_deref(), Some("the credential is empty"));
     assert_eq!(usage[0].input_tokens, 0);
-    assert_eq!(fixture.service.verify(&session).expect("verify"), 3);
+    assert_eq!(fixture.service.verify(&session).expect("verify"), 4);
 }
 
 /// An authentication failure is recorded without contacting the inference
@@ -708,6 +720,151 @@ async fn a_pre_cancelled_turn_writes_nothing_and_sends_nothing() {
         .list_usage(&session)
         .expect("usage")
         .is_empty());
+
+    // Stop is idempotent: a second attempt on the same cancelled token still
+    // writes nothing and still does not contact the provider.
+    let again = run_turn(TurnRun::new(
+        &fixture.service,
+        &adapter,
+        &auth,
+        &session,
+        TurnInput::text(model("stub", "stub-model"), 64, "hi"),
+        &cancel,
+    ))
+    .await;
+    assert!(matches!(again, Err(AgentError::Cancelled)));
+    assert!(adapter.calls().is_empty());
+    assert!(fixture
+        .service
+        .store()
+        .list_turns(&session)
+        .expect("turns")
+        .is_empty());
+}
+
+/// A stop that lands after the live turn is opened but before the first delta
+/// still resolves that turn as an empty `partial`: recovery must not later
+/// mistake it for a crash.
+#[tokio::test]
+async fn a_cancel_before_the_first_delta_still_resolves_the_live_turn() {
+    let fixture = Fixture::new();
+    let session = fixture.start();
+    let cancel = CancellationToken::new();
+    let adapter = StubAdapter::new(Vec::new())
+        .with_tail(Tail::Pending)
+        .with_cancel_on_create(cancel.clone());
+    let auth = auth();
+
+    let result = run_turn(TurnRun::new(
+        &fixture.service,
+        &adapter,
+        &auth,
+        &session,
+        TurnInput::text(model("stub", "stub-model"), 64, "hi"),
+        &cancel,
+    ))
+    .await;
+    assert!(matches!(result, Err(AgentError::Cancelled)));
+
+    let turns = fixture.service.store().list_turns(&session).expect("turns");
+    assert_eq!(turns.len(), 2);
+    assert_eq!(turns[1].status, "partial");
+    assert!(stored_content(&fixture.service, &turns[1]).parts.is_empty());
+    assert_eq!(turns[1].error.as_deref(), Some("the turn was cancelled"));
+
+    // Recovery has nothing to do: the marker was resolved by the cancellation.
+    assert_eq!(
+        fixture
+            .service
+            .recover_interrupted(&session)
+            .expect("recover"),
+        0
+    );
+}
+
+/// A live assistant row left by a previous process is an interruption, not a
+/// reply: the next send names it, replays only the real transcript, and never
+/// duplicates the attempt (`TEST-SESSION-002`).
+#[tokio::test]
+async fn a_crashed_stream_is_marked_interrupted_and_not_replayed() {
+    let dir = TempDir::new().expect("temp dir");
+    let keys = Arc::new(InMemoryAuditKeys::new());
+    let db = dir.path().join("agent.db");
+    let files = dir.path().join("files-root");
+    let session;
+    {
+        let store = Store::open(&db, &files).expect("open store");
+        let service = SessionService::new(store, Arc::clone(&keys));
+        session = service
+            .start(NewSession {
+                surface: "chat",
+                title: "crash",
+                ..Default::default()
+            })
+            .expect("start")
+            .id;
+        service
+            .append_turn(
+                &session,
+                0,
+                TurnRole::User,
+                TurnStatus::Complete,
+                &serde_json::to_vec(&TurnContent::text("before the crash")).unwrap(),
+                None,
+                None,
+                None,
+            )
+            .expect("user turn");
+        service
+            .begin_assistant_turn(
+                &session,
+                1,
+                &serde_json::to_vec(&TurnContent::default()).unwrap(),
+            )
+            .expect("live marker");
+        // The process "dies" here: no finish, store dropped.
+    }
+
+    let store = Store::open(&db, &files).expect("reopen store");
+    let service = SessionService::new(store, Arc::clone(&keys));
+    let adapter = StubAdapter::new(reply("after the restart"));
+    let cancel = CancellationToken::new();
+    let auth = auth();
+
+    let outcome = run_turn(TurnRun::new(
+        &service,
+        &adapter,
+        &auth,
+        &session,
+        TurnInput::text(model("stub", "stub-model"), 64, "again"),
+        &cancel,
+    ))
+    .await
+    .expect("turn after recovery");
+
+    let turns = service.store().list_turns(&session).expect("turns");
+    assert_eq!(turns.len(), 4);
+    assert_eq!(turns[1].status, "error");
+    assert_eq!(
+        turns[1].error.as_deref(),
+        Some("the stream was interrupted by an app restart")
+    );
+    assert_eq!(outcome.user_turn.seq, 2);
+    assert_eq!(outcome.assistant_turn.seq, 3);
+
+    // The interrupted turn carried no content, so replay is the two user
+    // messages merged into one role run — nothing fabricated.
+    let calls = adapter.calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].messages.len(), 1);
+    assert_eq!(calls[0].messages[0].0, Role::User);
+    assert_eq!(calls[0].messages[0].1.len(), 2);
+
+    // Idempotent: a second recovery finds no live turn and adds no row.
+    assert_eq!(service.recover_interrupted(&session).expect("recover"), 0);
+    assert_eq!(service.store().list_turns(&session).expect("turns").len(), 4);
+    // created, user, started, interrupted finish, user, started, finish
+    assert_eq!(service.verify(&session).expect("verify"), 7);
 }
 
 // ---------------------------------------------------------------------
