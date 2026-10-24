@@ -350,6 +350,23 @@ impl<K: AuditKeyStore> SessionService<K> {
         Ok(recovered)
     }
 
+    /// Move the title and chain the change. The sidebar is a view; the chain
+    /// is the record of what the session was called.
+    pub fn rename(&self, session_id: &str, title: &str) -> Result<(), SessionError> {
+        self.store.set_title(session_id, title)?;
+        let key = self.key(session_id)?;
+        let payload = serde_json::json!({ "event": "session.renamed", "title": title }).to_string();
+        self.store.append_audit(
+            session_id,
+            "core",
+            "session.renamed",
+            None,
+            payload.as_bytes(),
+            &key,
+        )?;
+        Ok(())
+    }
+
     /// Flip the archived flag and record which way it went.
     pub fn archive(&self, session_id: &str, archived: bool) -> Result<(), SessionError> {
         self.store.set_archived(session_id, archived)?;

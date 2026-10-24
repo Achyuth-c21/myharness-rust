@@ -2258,6 +2258,10 @@ version = "0.1.0"
 name = "myharness-bridge"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "chrono",
+ "futures",
+ "myharness-agent",
  "myharness-config",
  "myharness-provider-anthropic",
  "myharness-provider-bedrock",
@@ -2265,11 +2269,16 @@ dependencies = [
  "myharness-provider-openai",
  "myharness-provider-sdk",
  "myharness-secrets",
+ "myharness-sessions",
+ "myharness-store",
+ "rand 0.8.8",
  "reqwest 0.12.28",
  "secrecy",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
+ "tokio-util",
  "uuid",
 ]
 
@@ -2289,8 +2298,12 @@ version = "0.1.0"
 dependencies = [
  "myharness-app-shell",
  "myharness-bridge",
+ "myharness-provider-sdk",
  "myharness-secrets",
+ "myharness-sessions",
+ "myharness-store",
  "reqwest 0.12.28",
+ "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-single-instance",

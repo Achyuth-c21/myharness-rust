@@ -15,7 +15,7 @@
 
 use chrono::{Duration, FixedOffset, TimeZone};
 use myharness_store::{StoreError, UsageEventRow};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{AuditKeyStore, SessionError, SessionService};
 
@@ -25,7 +25,7 @@ const MAX_WINDOW_DAYS: u32 = 366;
 
 /// One window's token totals. `events` counts ledger rows (attempts);
 /// `error_events` counts the attempts that ended in a provider error.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageTotals {
     pub input_tokens: i64,
@@ -39,7 +39,7 @@ pub struct UsageTotals {
 
 /// One local day in the window. Days with no events are present with zero
 /// totals so the chart does not silently collapse gaps.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DailyUsage {
     /// Local date, `YYYY-MM-DD`.
@@ -48,7 +48,7 @@ pub struct DailyUsage {
 }
 
 /// The usage page's data: a closed local-day window and its per-day buckets.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageSummary {
     pub days: u32,
