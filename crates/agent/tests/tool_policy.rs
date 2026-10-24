@@ -220,7 +220,12 @@ fn a_scheduled_approval_expires_after_its_lifetime() {
         .unwrap();
     let expiry = 1_000 + 2 * 86_400;
     assert_eq!(record.expires_at, Some(expiry));
-    assert!(store.check(&context, "github:issues", &json!({"repo": "prod"}), expiry - 1));
+    assert!(store.check(
+        &context,
+        "github:issues",
+        &json!({"repo": "prod"}),
+        expiry - 1
+    ));
     assert!(!store.check(&context, "github:issues", &json!({"repo": "prod"}), expiry));
 
     store.revoke_expired(expiry);
@@ -348,9 +353,7 @@ fn the_policy_round_trips_and_uses_explicit_kinds() {
         rules: vec![PolicyRule {
             tool: ToolPattern::Server("github".to_string()),
             arguments: ArgumentMatch::Exact(
-                [("repo".to_string(), json!("prod"))]
-                    .into_iter()
-                    .collect(),
+                [("repo".to_string(), json!("prod"))].into_iter().collect(),
             ),
             effect: PolicyEffect::Ask,
         }],

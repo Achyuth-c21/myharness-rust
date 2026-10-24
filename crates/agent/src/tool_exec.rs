@@ -126,9 +126,7 @@ pub async fn execute_tool_call(
 ) -> ToolExecution {
     match evaluate(policy, store, context, &call.name, &call.arguments, now) {
         PolicyDecision::Deny { reason } => ToolExecution::Denied { reason },
-        PolicyDecision::Ask { allowed_scopes } => {
-            ToolExecution::NeedsApproval { allowed_scopes }
-        }
+        PolicyDecision::Ask { allowed_scopes } => ToolExecution::NeedsApproval { allowed_scopes },
         PolicyDecision::Allow => match executor.execute(&call.name, call.arguments.clone()).await {
             Ok(output) => ToolExecution::Completed(output),
             Err(message) => ToolExecution::Completed(ToolOutput::error(message)),

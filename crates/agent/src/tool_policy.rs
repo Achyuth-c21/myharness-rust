@@ -162,7 +162,11 @@ fn default_effect() -> PolicyEffect {
 
 /// The result of evaluating the policy for one call.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "decision", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "decision",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum PolicyDecision {
     /// Execute without prompting.
     Allow,
@@ -382,13 +386,14 @@ impl ApprovalStore {
             return Err(ApprovalError::ScopeNotAllowed(scope));
         }
         let arguments_fingerprint = arguments_fingerprint(arguments);
-        let expires_at = if context.scheduled {
-            Some(now.saturating_add(
-                u64::from(context.scheduled_lifetime_days).saturating_mul(86_400),
-            ))
-        } else {
-            None
-        };
+        let expires_at =
+            if context.scheduled {
+                Some(now.saturating_add(
+                    u64::from(context.scheduled_lifetime_days).saturating_mul(86_400),
+                ))
+            } else {
+                None
+            };
         let record = ApprovalRecord {
             session_id: context.session_id.clone(),
             tool: tool.to_string(),

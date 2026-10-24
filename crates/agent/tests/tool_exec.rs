@@ -1,7 +1,7 @@
 //! Tool execution gate tests (`TEST-MCP-003/004/008`, `TEST-AI-019`).
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use myharness_agent::tool_exec::{
@@ -163,15 +163,7 @@ async fn an_approved_ask_executes() {
     let executor = MockExecutor::default();
     let request = call("safe:read", json!({"path": "x"}));
 
-    let before = execute_tool_call(
-        &policy,
-        &store,
-        &context(),
-        &request,
-        &executor,
-        10,
-    )
-    .await;
+    let before = execute_tool_call(&policy, &store, &context(), &request, &executor, 10).await;
     assert!(matches!(before, ToolExecution::NeedsApproval { .. }));
     assert_eq!(executor.calls(), 0);
 
@@ -184,15 +176,7 @@ async fn an_approved_ask_executes() {
             10,
         )
         .unwrap();
-    let after = execute_tool_call(
-        &policy,
-        &store,
-        &context(),
-        &request,
-        &executor,
-        11,
-    )
-    .await;
+    let after = execute_tool_call(&policy, &store, &context(), &request, &executor, 11).await;
     assert!(matches!(after, ToolExecution::Completed(_)));
     assert_eq!(executor.calls(), 1);
 }

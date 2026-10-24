@@ -82,8 +82,7 @@ impl EgressPolicy {
         if !matches!(url.scheme(), "http" | "https") {
             return false;
         }
-        url.host_str()
-            .is_some_and(|host| self.allows_host(host))
+        url.host_str().is_some_and(|host| self.allows_host(host))
     }
 
     /// Check a raw URL.
@@ -197,7 +196,11 @@ mod tests {
             env: BTreeMap::new(),
         };
         assert_eq!(policy.check_server(&stdio), Ok(()));
-        assert!(policy.check_server(&http("https://example.com/mcp")).is_err());
+        assert!(
+            policy
+                .check_server(&http("https://example.com/mcp"))
+                .is_err()
+        );
     }
 
     #[test]
