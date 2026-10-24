@@ -3,7 +3,7 @@
 **Facts that are true, would be expensive to rediscover, and should survive across sessions.**
 Everything here is sourced. If you cannot cite a source for an entry, it does not belong here.
 
-Last verified against the repository: **2026-10-20**.
+Last verified against the repository: **2026-10-24**.
 
 ---
 
@@ -586,5 +586,64 @@ The full lane is `phase-4`; `dev` stays untouched until the owner says merge/pus
   root `npx tsc`; `Usage` serializes camelCase (`cacheRead`), `ContentPart` keeps snake_case
   fields, `SessionRow` keeps `legal_hold`/`permission_mode`, `TurnSummary` is camelCase.
 
-Next: Phase 5 (tools/approvals/MCP) or the deferred retention timer/UI, retry, picker,
-attachments, per-surface usage — all recorded as unknown/deferred, not invented.
+## 7h. Phase 5 slice 1 — MCP lifecycle foundation (2026-10-24)
+
+`crates/mcp` is no longer a scaffold. It owns the transport-independent MCP
+lifecycle (`docs/13` Phase 5; `docs/12` §5.1; `TEST-MCP-001/002/009/010`):
+
+- **SDK:** `rmcp` 3.7 with `client`, `transport-child-process`,
+  `transport-streamable-http-client-reqwest`; `default-features = false` so the
+  production crate does not compile the server/macro surface. The test-only
+  `fixture-server` feature adds `server`, `macros`, `transport-io`, `schemars`
+  and builds `mcp-echo-server` from `tests/fixtures/echo_server.rs`; a normal
+  `cargo test -p myharness-mcp` does not build it.
+- **Transports:** stdio (`TokioChildProcess`) and Streamable HTTP
+  (`StreamableHttpClientTransport`) are real. Legacy HTTP+SSE is *modelled* in
+  `ServerConfig::Sse` but returns `UnsupportedTransport` — rmcp 3.7 carries SSE
+  inside Streamable HTTP, and the legacy client was not available. This is an
+  explicit limitation, not a silent fallback.
+- **Manager:** `McpManager` over an injectable `McpConnector`/`McpSession`.
+  `start_all` records per-server failures and continues; an optional
+  `with_start_timeout` bounds connect/list-tools so a hanging server cannot
+  block the rest. A dead transport (`McpSession::is_closed`) is reconnected on
+  the next `start`, and the tool cache is rebuilt. `shutdown` collects
+  per-server failures and is idempotent.
+- **Names and snapshots:** server names are `[A-Za-z0-9._-]`, at most 64 bytes,
+  and may not contain `:`; tool names may contain `:` and are split on the
+  first colon. The registry key is `<server>:<tool>`. A session snapshots the
+  enabled subset; `missing` names stay visible; duplicate requested names are
+  collapsed. Empty `enabled` means an empty snapshot, not "all".
+- **Calls:** `McpManager::call_tool(snapshot, name, arguments, timeout)` refuses
+  a tool absent from the frozen snapshot *before* touching the session. The
+  caller supplies the timeout because the shipped `mcpToolTimeoutSec` default
+  was not captured. Text, images, audio, embedded text/blob resources, resource
+  links, and structured content are preserved; an unknown content block is a
+  visible `UnsupportedContent` error, never a silent drop.
+- **Trust:** `ServerConfig`'s `Debug` prints env/header **keys only**, redacts
+  URL userinfo and query, and `redact()` removes env/header values, URL
+  passwords, and query strings from stored errors. Schemas are bounded at
+  4,096 tools/server and 256 KiB/schema — rebuild-defined resource bounds
+  (`docs/14` §9), not observed shipped caps.
+- **Tests/gates:** 2 unit + 15 manager + 2 real-stdio = 19 passing with
+  `--features fixture-server`; `cargo clippy -p myharness-mcp --all-targets
+  --features fixture-server -- -D warnings`; `cargo check --workspace`;
+  `cargo metadata`. The stdio test spawns the fixture, lists `echo:echo`, calls
+  it, and shuts the child down; a broken command does not stop the healthy
+  server.
+- **Traps:** in rmcp 3.7 `RunningService::peer_info()` exposes
+  `server_info: Option<Implementation>` (not a bare `Implementation`);
+  `StreamableHttpClientTransportConfig` is `#[non_exhaustive]`, so use
+  `with_uri(...)` and assign `custom_headers`; `ContentBlock` and
+  `ResourceContents` are `#[non_exhaustive]`, so a wildcard arm is mandatory.
+  Do not add `reqwest`/`tracing` directly to `crates/mcp` unless used; the
+  transport's reqwest type is inferred by `from_config`.
+- **Not done in this slice:** OAuth/token storage; tool policy/approvals
+  (allow/ask/deny, argument scopes, persistent approvals); egress policy; tool
+  search/on-demand schemas; skills; plugins; bridge commands; renderer/UI;
+  app-boot wiring; durable schema cache; tool-call audit-chain integration;
+  health probing beyond `is_closed`; legacy SSE. `TEST-AI-019/020` are not
+  satisfied by this crate alone.
+
+Next: Phase 5 slice 2 (tool policy/approval engine), then egress, skills, and
+bridge/renderer wiring. The deferred retention timer/UI, retry, picker,
+attachments, and per-surface usage remain unknown/deferred, not invented.

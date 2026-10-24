@@ -4,3 +4,27 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+async-trait = { workspace = true }
+http = { workspace = true }
+rmcp = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+url = { workspace = true }
+
+[features]
+# Test-only stdio fixture (`tests/fixtures/echo_server.rs`). The fixture binary
+# is not part of a normal build; `cargo test -p myharness-mcp --features
+# fixture-server` builds it and exposes `CARGO_BIN_EXE_mcp-echo-server`.
+fixture-server = ["rmcp/server", "rmcp/macros", "rmcp/transport-io", "rmcp/schemars"]
+
+[[bin]]
+name = "mcp-echo-server"
+path = "tests/fixtures/echo_server.rs"
+required-features = ["fixture-server"]
+test = false
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tokio = { workspace = true }
