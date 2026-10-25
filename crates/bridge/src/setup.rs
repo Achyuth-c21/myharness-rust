@@ -276,6 +276,14 @@ impl ConfigBackend {
         };
         Ok(Some(self.library.read(&entry.id)?))
     }
+
+    /// The effective retention settings (`docs/09` §2.6; `TEST-CFG-009`).
+    /// Nothing deletes unless a profile configures it.
+    pub fn retention_settings(&self) -> Result<crate::policy::RetentionSettings, BridgeError> {
+        Ok(crate::policy::RetentionSettings::from_merged(
+            &self.library.get_merged()?,
+        ))
+    }
 }
 
 impl SetupBackend for ConfigBackend {

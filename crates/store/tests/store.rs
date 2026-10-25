@@ -75,8 +75,9 @@ fn migrations_are_forward_only_and_idempotent() {
     // The crate exposes no down path: the supported height is a forward-only
     // constant, and the ledger keeps one row per applied revision. Revision 3
     // is Phase 6 slice 2 (projects + sessions.project_id); revision 4 is
-    // slice 4 (scheduled tasks + runs).
-    assert_eq!(myharness_store::LATEST_SCHEMA_VERSION, 4);
+    // slice 4 (scheduled tasks + runs); revision 5 is Phase 7 (delete
+    // tombstones for the blob GC).
+    assert_eq!(myharness_store::LATEST_SCHEMA_VERSION, 5);
 }
 
 /// The `payload` passthrough preserves unknown keys across a close/reopen
@@ -369,6 +370,48 @@ fn delete_removes_rows_and_content_blobs_of_one_session() {
     ));
     assert_eq!(probe.store.list_turns(&neighbor.id).unwrap().len(), 1);
     assert_eq!(probe.store.list_sessions(None).unwrap().len(), 1);
+}
+
+/// A delete records a tombstone in the same transaction as the row removal
+/// (`docs/11` §13); the sweep is idempotent crash recovery — a completed
+/// delete leaves nothing to sweep, a shared blob survives until its last
+/// referent is gone, and the marker is pruned either way.
+#[test]
+fn a_delete_records_a_tombstone_the_sweep_finishes_and_prunes() {
+    let probe = TestStore::new();
+    let first = probe.fresh_session("tombstone-first");
+    let second = probe.fresh_session("tombstone-second");
+    let shared_text = b"content both tombstones point at";
+    let first_turn = probe
+        .store
+        .put_turn(&first.id, 0, TurnRole::User, TurnStatus::Complete, shared_text, None, None, None)
+        .unwrap();
+    let second_turn = probe
+        .store
+        .put_turn(&second.id, 0, TurnRole::User, TurnStatus::Complete, shared_text, None, None, None)
+        .unwrap();
+    assert_eq!(first_turn.content_ref, second_turn.content_ref);
+
+    // First delete: the shared blob must survive (the neighbor needs it),
+    // and the sweep must not remove it either.
+    probe.store.delete_session(&first.id).unwrap();
+    let report = probe.store.sweep_tombstones().unwrap();
+    assert_eq!(report.pruned_tombstones, 1);
+    assert_eq!(report.swept_blobs, 0);
+    assert!(probe.store.files.read(&first_turn.content_ref).unwrap().is_some());
+
+    // Second delete: the blob is now unreferenced. The sweep — possibly in a
+    // later process, so prove it across a reopen — finishes the job.
+    probe.store.delete_session(&second.id).unwrap();
+    let reopened = Store::open(&probe.db_path, &probe.files_dir).unwrap();
+    let report = reopened.sweep_tombstones().unwrap();
+    assert_eq!(report.pruned_tombstones, 1);
+    assert_eq!(report.swept_blobs, 1);
+    assert!(reopened.files.read(&second_turn.content_ref).unwrap().is_none());
+    // Idempotent: the second sweep has nothing left.
+    let again = reopened.sweep_tombstones().unwrap();
+    assert_eq!(again.pruned_tombstones, 0);
+    assert_eq!(again.swept_blobs, 0);
 }
 
 /// A turn sequence is a slot, not an overwrite target: double-appending is a

@@ -50,6 +50,7 @@ struct ScriptedTargets {
     memory_policy: myharness_bridge::policy::MemoryPolicy,
     telemetry: myharness_telemetry::TelemetryPolicy,
     profile: Option<myharness_config::ProfileDocument>,
+    retention: myharness_bridge::policy::RetentionSettings,
 }
 
 impl ChatTargetResolver for ScriptedTargets {
@@ -89,6 +90,10 @@ impl ChatTargetResolver for ScriptedTargets {
         &self,
     ) -> Result<Option<myharness_config::ProfileDocument>, BridgeError> {
         Ok(self.profile.clone())
+    }
+
+    fn retention_settings(&self) -> Result<myharness_bridge::policy::RetentionSettings, BridgeError> {
+        Ok(self.retention.clone())
     }
 }
 
@@ -227,6 +232,42 @@ impl Fixture {
                 memory_policy,
                 telemetry: myharness_telemetry::TelemetryPolicy::default(),
                 profile: None,
+                retention: myharness_bridge::policy::RetentionSettings::default(),
+            },
+        )
+        .with_memory(
+            myharness_memory::MemoryStore::open(&dir.path().join("memory"))
+                .map(Arc::new)
+                .ok(),
+        );
+        Fixture {
+            dir,
+            service: Arc::new(service),
+            calls,
+        }
+    }
+
+    /// A fixture whose resolver configures retention (Phase 7).
+    fn with_retention(
+        script: Vec<Result<TurnEvent, ProviderError>>,
+        tail: Tail,
+        retention: myharness_bridge::policy::RetentionSettings,
+    ) -> Fixture {
+        let dir = TempDir::new().expect("temp dir");
+        let store = Store::open(&dir.path().join("chat.db"), &dir.path().join("files-root"))
+            .expect("open store");
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let service = ChatService::new(
+            SessionService::new(store, InMemoryAuditKeys::new()),
+            ScriptedTargets {
+                script,
+                tail,
+                calls: Arc::clone(&calls),
+                policy: CodePolicy::default(),
+                memory_policy: myharness_bridge::policy::MemoryPolicy::default(),
+                telemetry: myharness_telemetry::TelemetryPolicy::default(),
+                profile: None,
+                retention,
             },
         )
         .with_memory(
@@ -262,6 +303,7 @@ impl Fixture {
                 memory_policy: myharness_bridge::policy::MemoryPolicy::default(),
                 telemetry: myharness_telemetry::TelemetryPolicy::default(),
                 profile,
+                retention: myharness_bridge::policy::RetentionSettings::default(),
             },
         )
         .with_memory(
@@ -2529,12 +2571,14 @@ async fn a_diagnostic_bundle_requires_explicit_consent() {
 /// logged without contents.
 #[tokio::test]
 async fn a_consented_bundle_is_written_redacted_and_logged() {
-    let mut profile = myharness_config::ProfileDocument::default();
-    profile.connection = myharness_config::Section(serde_json::json!({
-        "inferenceProvider": "gateway",
-        "inferenceGatewayApiKey": "sk-ant-api03-FAKE0123456789",
-        "inferenceGatewayBaseUrl": "https://gateway.internal.example/v1?token=secret",
-    }));
+    let profile = myharness_config::ProfileDocument {
+        connection: myharness_config::Section(serde_json::json!({
+            "inferenceProvider": "gateway",
+            "inferenceGatewayApiKey": "sk-ant-api03-FAKE0123456789",
+            "inferenceGatewayBaseUrl": "https://gateway.internal.example/v1?token=secret",
+        })),
+        ..myharness_config::ProfileDocument::default()
+    };
     let fixture = Fixture::with_diagnostics(reply("unused"), Tail::End, Some(profile));
     let response = dispatch(
         fixture.service.as_ref(),
@@ -2565,4 +2609,89 @@ async fn a_consented_bundle_is_written_redacted_and_logged() {
     .expect("the action log");
     assert!(log.contains("bundle-built"));
     assert!(!log.contains("FAKE0123456789"));
+}
+
+// ---------------------------------------------------------------------
+// Retention enforcement (Phase 7; `TEST-CFG-009`, `REQ-PRIV-04`)
+// ---------------------------------------------------------------------
+
+/// Retention deletes only what a profile explicitly configures, on both
+/// surfaces, and the hold suspends everything. Nothing is configured by
+/// default, so a default profile deletes nothing.
+#[tokio::test]
+async fn retention_deletes_only_what_a_profile_configures() {
+    // The default settings configure no retention: the sweep is a no-op.
+    let fixture = Fixture::new(reply("unused"), Tail::End);
+    fixture.create().await;
+    let reports = fixture
+        .service
+        .retention_sweep(now_ms() + 40 * 86_400_000)
+        .expect("default sweep");
+    assert!(
+        reports.is_empty(),
+        "nothing is configured, so nothing may be deleted"
+    );
+
+    // Cowork 7 days + Code 30 days: a sweep 40 days out expires both.
+    let fixture = Fixture::with_retention(
+        reply("unused"),
+        Tail::End,
+        myharness_bridge::policy::RetentionSettings {
+            cowork_days: Some(7),
+            code_days: Some(30),
+            hold: false,
+        },
+    );
+    let chat = fixture.create().await;
+    let folder = fixture.dir.path().join("retention-repo");
+    std::fs::create_dir_all(&folder).expect("folder");
+    let folder_text = std::fs::canonicalize(&folder)
+        .expect("canonical folder")
+        .to_str()
+        .expect("utf-8")
+        .to_string();
+    let code = match fixture
+        .create_code(&folder_text, PermissionMode::Default)
+        .await
+    {
+        ChatResponse::Session { session } => session.session.id,
+        other => panic!("expected code session, got {other:?}"),
+    };
+    let reports = fixture
+        .service
+        .retention_sweep(now_ms() + 40 * 86_400_000)
+        .expect("configured sweep");
+    assert_eq!(reports.len(), 2);
+    let chat_report = reports.iter().find(|r| r.surface == "chat").unwrap();
+    assert_eq!(chat_report.deleted, vec![chat]);
+    let code_report = reports.iter().find(|r| r.surface == "code").unwrap();
+    assert_eq!(code_report.deleted, vec![code]);
+
+    // The hold suspends every deletion and reports what it kept.
+    let fixture = Fixture::with_retention(
+        reply("unused"),
+        Tail::End,
+        myharness_bridge::policy::RetentionSettings {
+            cowork_days: Some(7),
+            code_days: Some(30),
+            hold: true,
+        },
+    );
+    fixture.create().await;
+    let reports = fixture
+        .service
+        .retention_sweep(now_ms() + 40 * 86_400_000)
+        .expect("held sweep");
+    assert!(reports.iter().all(|report| report.deleted.is_empty()));
+    assert_eq!(
+        reports.iter().map(|report| report.held.len()).sum::<usize>(),
+        1
+    );
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_millis() as i64
 }

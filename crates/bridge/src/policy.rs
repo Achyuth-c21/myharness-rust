@@ -152,6 +152,52 @@ pub struct MemoryPolicyView {
     pub memory_enabled: bool,
 }
 
+/// The effective retention settings (Phase 7; `docs/09` §2.6; `TEST-CFG-009`).
+///
+/// Absent days mean **no automatic deletion** for that surface: deletion is
+/// destructive, the shipped defaults were never captured, and inventing one
+/// would be the worst kind of guess. Retention runs only when a profile
+/// explicitly configures it (`docs/14` §9). A malformed day value also means
+/// "do not delete"; a malformed hold switch fails closed to **hold** —
+/// suspending deletion is the safe direction.
+///
+/// The rebuild has one chat surface (the Cowork task surface), so
+/// `coworkSessionRetentionDays` governs it; the shipped app's separate
+/// `chatSessionRetentionDays` has no distinct rebuild surface and is not
+/// silently mapped onto it (`docs/14` §9).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RetentionSettings {
+    /// `limits/coworkSessionRetentionDays` → the rebuild's `chat` surface.
+    pub cowork_days: Option<u32>,
+    /// `limits/codeSessionRetentionDays` → the `code` surface.
+    pub code_days: Option<u32>,
+    /// `limits/sessionRetentionHold` — suspends every automatic deletion.
+    pub hold: bool,
+}
+
+impl RetentionSettings {
+    pub fn from_merged(merged: &MergedConfig) -> RetentionSettings {
+        let read_days = |key: &str| match merged.value("limits", key) {
+            Some(Value::Number(number)) => number
+                .as_u64()
+                .filter(|days| (1..=3660).contains(days))
+                .map(|days| days as u32),
+            _ => None,
+        };
+        let hold = match merged.value("limits", "sessionRetentionHold") {
+            None | Some(Value::Null) | Some(Value::Bool(false)) => false,
+            Some(Value::Bool(true)) => true,
+            // Malformed hold switch: suspending deletion is fail-closed.
+            Some(_) => true,
+        };
+        RetentionSettings {
+            cowork_days: read_days("coworkSessionRetentionDays"),
+            code_days: read_days("codeSessionRetentionDays"),
+            hold,
+        }
+    }
+}
+
 /// Validate and canonicalize a folder selected by the renderer.
 ///
 /// Rules:

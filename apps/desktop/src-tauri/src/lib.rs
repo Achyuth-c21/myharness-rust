@@ -300,6 +300,7 @@ fn init_chat(app: &tauri::AppHandle) -> Result<Chat, String> {
                 mcp_root,
                 catalog,
                 memory,
+                data.join("diagnostics"),
             ));
         }
     };
@@ -331,6 +332,7 @@ fn init_chat(app: &tauri::AppHandle) -> Result<Chat, String> {
         mcp_root,
         catalog,
         memory,
+        data.join("diagnostics"),
     ))
 }
 
@@ -344,6 +346,7 @@ fn chat_with_tools(
     mcp_root: std::path::PathBuf,
     catalog: Arc<CatalogRuntime>,
     memory: Option<Arc<myharness_memory::MemoryStore>>,
+    diagnostics_dir: std::path::PathBuf,
 ) -> Chat {
     let handle = app.clone();
     let prompt = Arc::new(BridgeApprovalPrompt::new(Arc::new(move |event| {
@@ -370,10 +373,41 @@ fn chat_with_tools(
             }),
         );
     });
-    ChatService::new(sessions, targets)
+    let service = ChatService::new(sessions, targets)
         .with_tools(runtime)
         .with_catalog(catalog)
         .with_memory(memory)
+        .with_diagnostics(Some(diagnostics_dir));
+    // Phase 7 boot sweeps: retention deletes only the surfaces a profile
+    // explicitly configures (never by default), and the tombstone sweep
+    // finishes any blob removal a crash interrupted (`docs/11` §13).
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    match service.retention_sweep(now) {
+        Ok(reports) => {
+            for report in reports {
+                dlog(&format!(
+                    "retention swept {}: {} deleted, {} held, {} kept",
+                    report.surface,
+                    report.deleted.len(),
+                    report.held.len(),
+                    report.kept
+                ));
+            }
+        }
+        Err(_failure) => dlog("retention sweep failed; the configured policy was not applied"),
+    }
+    match service.sessions().store().sweep_tombstones() {
+        Ok(report) if report.swept_blobs > 0 || report.pruned_tombstones > 0 => dlog(&format!(
+            "tombstone sweep: {} blobs removed, {} markers pruned",
+            report.swept_blobs, report.pruned_tombstones
+        )),
+        Ok(_) => {}
+        Err(error) => dlog(&format!("tombstone sweep failed: {error}")),
+    }
+    service
 }
 
 /// The chat subset of `web.LocalAgentModeSessions` (docs/18 §3.4/§4). Content

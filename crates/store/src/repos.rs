@@ -180,6 +180,16 @@ pub struct UsageEventRow {
     pub timestamp: i64,
 }
 
+/// What the tombstone sweep did (Phase 7; `docs/11` §13).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TombstoneReport {
+    /// Blob files removed because no surviving turn references them.
+    pub swept_blobs: usize,
+    /// Tombstone rows pruned after their sweep completed.
+    pub pruned_tombstones: usize,
+}
+
 /// Local row counts for the diagnostic bundle (Phase 7). Counts only — the
 /// bundle never reads content (`docs/features/updates-telemetry-privacy.md`
 /// §3, §7).
@@ -648,6 +658,17 @@ impl Store {
             rows
         };
         let tx = conn.transaction()?;
+        // The tombstone records what this delete owned, in the same
+        // transaction that removes the rows (`docs/11` §13): a crash between
+        // the row deletion and the blob sweep leaves a recoverable marker
+        // instead of orphaned content. The sweep prunes it.
+        tx.execute(
+            "INSERT OR REPLACE INTO deleted_sessions (session_id, deleted_at, content_refs) \
+             VALUES (?1, ?2, ?3)",
+            params![id, now_ms(), serde_json::to_string(&refs).map_err(|_| {
+                StoreError::Validation("the tombstone refs could not be serialized")
+            })?],
+        )?;
         tx.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
         tx.commit()?;
         // Content is addressed by hash, so two sessions can reference the same
@@ -669,6 +690,63 @@ impl Store {
         }
         drop(conn);
         Ok(removed)
+    }
+
+    /// Finish interrupted deletions and prune their tombstones
+    /// (`docs/11` §13: tombstones plus a garbage collector). For every
+    /// tombstone, each recorded blob ref that no surviving turn still needs
+    /// is deleted from the blob store; the marker is then removed. Idempotent
+    /// by construction — a completed delete leaves nothing to sweep — so it
+    /// runs at every boot without a schedule.
+    pub fn sweep_tombstones(&self) -> Result<TombstoneReport, StoreError> {
+        struct Marker {
+            session_id: String,
+            refs: Vec<String>,
+        }
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        let markers: Vec<Marker> = {
+            let mut stmt = conn.prepare(
+                "SELECT session_id, content_refs FROM deleted_sessions ORDER BY deleted_at ASC",
+            )?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok(Marker {
+                        session_id: row.get(0)?,
+                        refs: serde_json::from_str(&row.get::<_, String>(1)?)
+                            .map_err(|_| rusqlite::Error::FromSqlConversionFailure(
+                                1,
+                                rusqlite::types::Type::Text,
+                                "the tombstone refs are not a JSON array".into(),
+                            ))?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows
+        };
+        let mut report = TombstoneReport {
+            swept_blobs: 0,
+            pruned_tombstones: 0,
+        };
+        for marker in markers {
+            for item in &marker.refs {
+                let still_referenced: Option<i64> = conn
+                    .query_row(
+                        "SELECT 1 FROM turns WHERE content_ref = ?1 LIMIT 1",
+                        params![item],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                if still_referenced.is_none() && self.files.delete(item).is_ok() {
+                    report.swept_blobs += 1;
+                }
+            }
+            conn.execute(
+                "DELETE FROM deleted_sessions WHERE session_id = ?1",
+                params![marker.session_id],
+            )?;
+            report.pruned_tombstones += 1;
+        }
+        Ok(report)
     }
 
     /// Bump `last_activity_at` (the agent loop calls this per turn).

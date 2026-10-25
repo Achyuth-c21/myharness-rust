@@ -123,6 +123,13 @@ pub trait ChatTargetResolver: Send + Sync {
     ) -> Result<Option<myharness_config::ProfileDocument>, BridgeError> {
         Ok(None)
     }
+
+    /// Effective retention settings (Phase 7; `TEST-CFG-009`). The default
+    /// configures nothing: automatic deletion runs only when a profile
+    /// explicitly sets retention days.
+    fn retention_settings(&self) -> Result<crate::policy::RetentionSettings, BridgeError> {
+        Ok(crate::policy::RetentionSettings::default())
+    }
 }
 
 /// Production resolver over the same backend the setup window uses.
@@ -179,6 +186,14 @@ impl ChatTargetResolver for ProfileTargets {
             .lock()
             .map_err(|_| BridgeError::new("CONFIG_IO", "the configuration lock is unavailable"))?;
         backend.diagnostic_profile()
+    }
+
+    fn retention_settings(&self) -> Result<crate::policy::RetentionSettings, BridgeError> {
+        let backend = self
+            .backend
+            .lock()
+            .map_err(|_| BridgeError::new("CONFIG_IO", "the configuration lock is unavailable"))?;
+        backend.retention_settings()
     }
 }
 
@@ -2284,6 +2299,32 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
         self.memory_gate()?;
         let deleted = self.memory()?.reset().map_err(memory_failure)?;
         Ok(ChatResponse::MemoryReset { deleted })
+    }
+
+    /// Run the configured retention sweeps (Phase 7; `TEST-CFG-009`,
+    /// `REQ-PRIV-04`). Only the surfaces a profile explicitly configures are
+    /// swept; the hold suspends everything. Called at boot — the shipped
+    /// schedule was never observed (`docs/14` §9), so there is no timer
+    /// beyond that.
+    pub fn retention_sweep(
+        &self,
+        now_ms: i64,
+    ) -> Result<Vec<myharness_sessions::RetentionReport>, BridgeError> {
+        let settings = self.targets.retention_settings()?;
+        let mut reports = Vec::new();
+        for (surface, days) in [("chat", settings.cowork_days), ("code", settings.code_days)] {
+            let Some(days) = days else { continue };
+            let policy = myharness_sessions::RetentionPolicy {
+                surface,
+                older_than_days: days,
+                hold: settings.hold,
+                now_ms,
+            };
+            reports.push(self.sessions.sweep_retention(&policy).map_err(|error| {
+                BridgeError::new("CONFIG_IO", format!("the retention sweep failed: {error}"))
+            })?);
+        }
+        Ok(reports)
     }
 
     /// The manifest of what a diagnostic bundle includes
