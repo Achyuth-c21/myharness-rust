@@ -2571,6 +2571,11 @@ dependencies = [
 [[package]]
 name = "myharness-updates"
 version = "0.1.0"
+dependencies = [
+ "myharness-config",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "ndk"

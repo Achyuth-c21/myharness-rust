@@ -14,6 +14,7 @@ import { SETTINGS_GROUPS } from "../routes";
 import { applyMode, loadMode, type ThemeMode } from "../theme";
 import { UsagePanel } from "../settings/UsagePanel";
 import { PrivacyPanel } from "../settings/PrivacyPanel";
+import { SystemPanel } from "../settings/SystemPanel";
 import { MemoryPanel } from "../settings/MemoryPanel";
 import { DeveloperPanel } from "../settings/DeveloperPanel";
 import { PluginsPanel } from "../settings/PluginsPanel";
@@ -190,6 +191,8 @@ export function SettingsModal({ section, onSection, onClose }: Props) {
               <PrivacyPanel />
             ) : section === "cowork" ? (
               <MemoryPanel />
+            ) : section === "desktop" ? (
+              <SystemPanel />
             ) : section === "developer" ? (
               <DeveloperPanel />
             ) : section === "skills" ? (

@@ -1539,6 +1539,29 @@ try {
     await page.keyboard.press("Escape");
   });
 
+  await step("T49 system pane reports the version boundary and the honest update posture", async () => {
+    await page.goto(`${BASE}/#settings/desktop`);
+    await page.waitForSelector("[role=dialog][aria-label=Settings]");
+    // Browser preview: no shell to ask for a version, and the pane says so
+    // instead of inventing one.
+    await page.getByText("The running version is reported by the desktop app.", { exact: false }).waitFor();
+    await expectTrue(
+      (await page.locator("[data-testid=system-version] .usage-value").innerText()) === "—",
+      "the preview must not fabricate a version",
+    );
+    // The update posture is the recorded unavailability, never a fake feed
+    // or a fake banner.
+    await expectTrue(
+      await page.getByText("This build has no update feed", { exact: false }).count() === 1,
+      "the no-feed posture is stated",
+    );
+    await expectTrue(
+      await page.getByText("never replaced by an unverified bundle", { exact: false }).count() === 1,
+      "the verification guarantee is stated",
+    );
+    await page.keyboard.press("Escape");
+  });
+
 } finally {
   await browser.close();
 }
