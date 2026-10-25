@@ -393,15 +393,15 @@ async fn chat_command(app: tauri::AppHandle, command: ChatCommand) -> ChatRespon
     chat_dispatch(service, command, Some(&observer)).await
 }
 
-/// Native folder selection for Code. The browser preview has no Tauri host
-/// and reports `BRIDGE_UNAVAILABLE`; it never invents a folder. Cancellation
-/// is `None`; `rfd` does not expose a separate platform-picker failure, so a
-/// failed portal is also observed as `None` and the bridge still revalidates
-/// any path it receives.
+/// Native folder selection for Code and Projects. The browser preview has no
+/// Tauri host and reports `BRIDGE_UNAVAILABLE`; it never invents a folder.
+/// Cancellation is `None`; `rfd` does not expose a separate platform-picker
+/// failure, so a failed portal is also observed as `None` and the bridge
+/// still revalidates any path it receives.
 #[tauri::command]
 async fn pick_workspace_folder() -> Result<Option<String>, BridgeError> {
     let picked = rfd::AsyncFileDialog::new()
-        .set_title("Choose a folder for Code")
+        .set_title("Choose a folder")
         .pick_folder()
         .await;
     let Some(folder) = picked else {
@@ -415,6 +415,57 @@ async fn pick_workspace_folder() -> Result<Option<String>, BridgeError> {
             BridgeError::new(
                 "CONFIG_VALIDATION",
                 "the selected folder path is not valid UTF-8",
+            )
+        })
+}
+
+/// Open a project/session folder in the OS file manager (REQ-PROJ-06's
+/// "open the folder" minimum for project detail). The path is untrusted
+/// renderer input: it must be absolute, exist, be a directory, and still
+/// canonicalize to itself — the same availability posture the bridge uses —
+/// before anything is opened. The opener runs without a shell, so the path
+/// is passed as one argument and cannot inject anything.
+#[tauri::command]
+fn reveal_workspace_folder(path: String) -> Result<(), BridgeError> {
+    if path.is_empty() || path.contains('\0') || path.chars().any(char::is_control) {
+        return Err(BridgeError::new(
+            "CONFIG_VALIDATION",
+            "the folder path is empty or contains an unsafe character",
+        ));
+    }
+    let candidate = std::path::PathBuf::from(&path);
+    if !candidate.is_absolute() {
+        return Err(BridgeError::new(
+            "CONFIG_VALIDATION",
+            "the folder path must be absolute",
+        ));
+    }
+    let canonical = std::fs::canonicalize(&candidate).map_err(|_| {
+        BridgeError::new(
+            "FOLDER_UNAVAILABLE",
+            "the folder is not available; it may have been moved or deleted",
+        )
+    })?;
+    if !canonical.is_dir() || canonical.to_str() != Some(path.as_str()) {
+        return Err(BridgeError::new(
+            "FOLDER_UNAVAILABLE",
+            "the folder no longer resolves to the recorded path",
+        ));
+    }
+    #[cfg(target_os = "macos")]
+    let program = "open";
+    #[cfg(target_os = "windows")]
+    let program = "explorer";
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let program = "xdg-open";
+    std::process::Command::new(program)
+        .arg(&canonical)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| {
+            BridgeError::new(
+                "FOLDER_UNAVAILABLE",
+                format!("the file manager could not be opened: {error}"),
             )
         })
 }
@@ -550,6 +601,7 @@ pub fn run() {
             ping,
             chat_command,
             pick_workspace_folder,
+            reveal_workspace_folder,
             setup_command,
             setup_discover_models,
             setup_discover_openai_models,

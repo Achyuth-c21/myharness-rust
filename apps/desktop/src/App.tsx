@@ -19,7 +19,8 @@ import { SettingsModal } from "./components/SettingsModal";
 import { NewTaskScreen } from "./screens/NewTaskScreen";
 import { CoworkSessionScreen, CodeSessionScreen } from "./screens/CoworkSessionScreen";
 import { CodeDashboardScreen } from "./screens/CodeDashboardScreen";
-import { ArtifactsScreen, ProjectsScreen, ScreenHead, ScheduledScreen } from "./screens/EmptyStates";
+import { ArtifactsScreen, ScheduledScreen, ScreenHead } from "./screens/EmptyStates";
+import { ProjectDetailScreen, ProjectsScreen } from "./screens/ProjectsScreen";
 import { LoadingShell } from "./components/shells";
 import SetupWindow from "./setup/SetupWindow";
 import { clearDraft, newDraftKey } from "./chat/drafts";
@@ -184,6 +185,8 @@ function MainShell() {
                 setup surface is never a page of the main app. */}
             <Route path="/setup-desktop-3p" element={<Navigate replace to="/new" />} />
             <Route path="/projects" element={<ProjectsScreen />} />
+            {/* Project detail — an explicit rebuild design (unobserved; docs/features/projects.md). */}
+            <Route path="/projects/:projectId" element={<ProjectDetailScreen />} />
             <Route path="/cowork-artifact" element={<ArtifactsScreen />} />
             <Route path="/scheduled-task" element={<ScheduledScreen />} />
             <Route path="/epitaxy" element={<CodeDashboardScreen />} />

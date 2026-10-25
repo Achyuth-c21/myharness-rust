@@ -24,7 +24,9 @@ import { Link, useNavigate } from "react-router-dom";
 import {
   chat,
   emitSessionsChanged,
+  pickWorkspaceFolder,
   type BridgeError,
+  type ProjectRecord,
   type SessionRecord,
 } from "../chat/client";
 import { loadDraft, newDraftKey, saveDraft } from "../chat/drafts";
@@ -37,6 +39,17 @@ interface Props {
    *  boot focus visuals are unobserved (docs/14 §9 decision note, report Run 4). */
   focusOnMount?: boolean;
 }
+
+/**
+ * The composer's working context (REQ-PROJ-05): a project or a one-off
+ * folder. "Project or folder" is intentionally broad — a one-off folder does
+ * not require creating a project (docs/features/projects.md). The bridge
+ * validates whichever path is chosen; the renderer only displays it.
+ */
+type ComposerContext =
+  | { kind: "project"; id: string; name: string }
+  | { kind: "folder"; path: string }
+  | null;
 
 function Starburst() {
   // Orange starburst mark (docs/07 §1.5: starburst uses the orange accent).
@@ -55,9 +68,9 @@ function Starburst() {
   );
 }
 
-function FolderGlyph() {
+function FolderGlyph({ size = 16 }: { size?: number }) {
   return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true">
       <path
         d="M1.75 4.5A1.5 1.5 0 0 1 3.25 3h3l1.5 1.75h4.5a1.5 1.5 0 0 1 1.5 1.5v5.25a1.5 1.5 0 0 1-1.5 1.5H3.25a1.5 1.5 0 0 1-1.5-1.5V4.5Z"
         stroke="currentColor"
@@ -192,6 +205,13 @@ export function NewTaskScreen({ focusOnMount = false }: Props) {
   // State updates are asynchronous; the ref makes a double Enter (or a click
   // racing a keypress) create exactly one session.
   const sendingRef = useRef(false);
+  // The working context (REQ-PROJ-05). The selector loads real projects from
+  // the bridge; a browser preview shows why nothing can be selected.
+  const [context, setContext] = useState<ComposerContext>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [projects, setProjects] = useState<ProjectRecord[] | null>(null);
+  const [projectsError, setProjectsError] = useState<string | null>(null);
+  const [picking, setPicking] = useState(false);
 
   useEffect(() => {
     if (focusOnMount) taRef.current?.focus(); // UI-INT-005 (Ctrl+N remount only)
@@ -208,10 +228,13 @@ export function NewTaskScreen({ focusOnMount = false }: Props) {
     try {
       // Sending creates the session immediately (docs/features/chat-and-composer.md).
       // The draft stays in storage until the task screen owns it; a failure
-      // before then never loses text.
+      // before then never loses text. The selected project/folder, if any,
+      // travels as an id/path — the bridge resolves and validates it.
       const response = await chat({
         type: "createSession",
         title: titleFromMessage(text),
+        projectId: context?.kind === "project" ? context.id : null,
+        cwd: context?.kind === "folder" ? context.path : null,
       });
       if (response.type !== "session") {
         if (response.type === "error") setSendError(response.error);
@@ -254,6 +277,46 @@ export function NewTaskScreen({ focusOnMount = false }: Props) {
       if (el) autoGrow(el);
       el?.focus();
     });
+  };
+
+  const openPicker = async () => {
+    if (pickerOpen) {
+      setPickerOpen(false);
+      return;
+    }
+    setPickerOpen(true);
+    setProjectsError(null);
+    const response = await chat({ type: "listProjects" });
+    if (response.type === "projects") {
+      setProjects(response.projects);
+    } else if (response.type === "error") {
+      setProjects(null);
+      setProjectsError(
+        response.error.code === "BRIDGE_UNAVAILABLE"
+          ? "Projects and folders are available in the desktop app."
+          : response.error.message,
+      );
+    }
+  };
+
+  const addFolder = async () => {
+    setPicking(true);
+    try {
+      const picked = await pickWorkspaceFolder();
+      if (picked.kind === "picked") {
+        setContext({ kind: "folder", path: picked.path });
+        setPickerOpen(false);
+      } else if (picked.kind === "error") {
+        setProjectsError(
+          picked.error.code === "BRIDGE_UNAVAILABLE"
+            ? "Folder selection is available in the desktop app."
+            : picked.error.message,
+        );
+      }
+      // Cancellation keeps the selector open.
+    } finally {
+      setPicking(false);
+    }
   };
 
   return (
@@ -326,19 +389,80 @@ export function NewTaskScreen({ focusOnMount = false }: Props) {
         </div>
 
         {/* Distinct selector section directly beneath the input (reference:
-            same width, its own rounded strip). Selection arrives later
-            (docs/08 §UI-INT-045); the info affordance is an inert pointer. */}
+            same width, its own rounded strip). The selector lists real
+            projects and offers one-off folders (REQ-PROJ-05); the info
+            affordance is an inert pointer. */}
         <div className="composer-strip">
-          <button
-            type="button"
-            className="project-chip"
-            disabled
-            title="Project/folder selection arrives in a later phase (docs/08 §UI-INT-045)"
-          >
-            <FolderGlyph />
-            Project or folder
-            <ChevronDown />
-          </button>
+          <span className="project-chip-wrap">
+            <button
+              type="button"
+              className={`project-chip${context ? " selected" : ""}`}
+              aria-expanded={pickerOpen}
+              aria-haspopup="menu"
+              title={context ? (context.kind === "project" ? context.name : context.path) : "Choose a project or folder"}
+              onClick={() => void openPicker()}
+            >
+              <FolderGlyph />
+              {context
+                ? context.kind === "project"
+                  ? context.name
+                  : context.path.split("/").filter(Boolean).pop() ?? context.path
+                : "Project or folder"}
+              <ChevronDown />
+            </button>
+            {pickerOpen ? (
+              <div className="project-chip-menu" role="menu">
+                {projectsError ? (
+                  <p className="project-chip-note" role="status">
+                    {projectsError}
+                  </p>
+                ) : projects === null ? (
+                  <p className="project-chip-note">Loading…</p>
+                ) : (
+                  <>
+                    {projects.map((project) => (
+                      <button
+                        key={project.id}
+                        type="button"
+                        role="menuitem"
+                        className="project-chip-item"
+                        disabled={!project.folderAvailable}
+                        title={project.folderAvailable ? project.cwd : "Folder unavailable"}
+                        onClick={() => {
+                          setContext({ kind: "project", id: project.id, name: project.name });
+                          setPickerOpen(false);
+                        }}
+                      >
+                        <FolderGlyph size={14} />
+                        <span>{project.name}</span>
+                        {!project.folderAvailable ? <span className="project-row-state unavailable">unavailable</span> : null}
+                      </button>
+                    ))}
+                    {projects.length === 0 ? (
+                      <p className="project-chip-note">No projects yet. Create one on the Projects page.</p>
+                    ) : null}
+                    <button type="button" role="menuitem" className="project-chip-item" onClick={() => void addFolder()} disabled={picking}>
+                      <FolderGlyph size={14} />
+                      <span>{picking ? "Choosing…" : "Add folder"}</span>
+                    </button>
+                    {context ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="project-chip-item"
+                        onClick={() => {
+                          setContext(null);
+                          setPickerOpen(false);
+                        }}
+                      >
+                        <span className="project-chip-clear">No context</span>
+                      </button>
+                    ) : null}
+                  </>
+                )}
+              </div>
+            ) : null}
+          </span>
           <span className="composer-spacer" />
           <button
             type="button"

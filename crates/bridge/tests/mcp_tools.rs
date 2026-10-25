@@ -323,6 +323,8 @@ impl Fixture {
         let response = dispatch(
             self.service.as_ref(),
             ChatCommand::CreateSession {
+                project_id: None,
+                cwd: None,
                 title: Some("tools".into()),
             },
             None,

@@ -109,12 +109,39 @@ CREATE TABLE quarantined_records (
         name: "turns_stop_reason",
         sql: "ALTER TABLE turns ADD COLUMN stop_reason TEXT;",
     },
+    // Revision 3 (Phase 6 slice 2): projects. The shipped schema was never
+    // observed (`docs/features/projects.md`, `docs/11`); this is the rebuild
+    // model. `sessions.project_id` is a **soft** association on purpose — no
+    // foreign key — because deleting a project must not delete or retarget its
+    // sessions (`REQ-PROJ-06`); a session keeps its own `cwd` and stays open.
+    Migration {
+        version: 3,
+        name: "phase6_projects",
+        sql: r#"
+CREATE TABLE projects (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    instructions TEXT,
+    cwd TEXT NOT NULL,
+    memory_enabled INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL,
+    last_activity_at INTEGER NOT NULL,
+    payload TEXT NOT NULL
+);
+
+CREATE INDEX idx_projects_activity ON projects(last_activity_at DESC);
+
+ALTER TABLE sessions ADD COLUMN project_id TEXT;
+
+CREATE INDEX idx_sessions_project ON sessions(project_id);
+"#,
+    },
 ];
 
 /// The newest schema revision this binary understands. Kept as a flat constant
 /// (const-eval cannot iterate the table); the unit test below pins it to the
 /// last migration so the two can never drift apart.
-pub const LATEST_SCHEMA_VERSION: i64 = 2;
+pub const LATEST_SCHEMA_VERSION: i64 = 3;
 
 /// Apply every missing migration inside one transaction each, recording the
 /// version row together with the schema it belongs to. Idempotent: an already

@@ -54,6 +54,7 @@ impl Fixture {
     fn start(&self) -> String {
         self.service
             .start(NewSession {
+                project_id: None,
                 surface: "chat",
                 title: "tools",
                 ..Default::default()

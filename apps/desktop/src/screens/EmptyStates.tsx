@@ -14,18 +14,6 @@ function ClockGlyph() {
   );
 }
 
-function FolderGlyph({ size = 40 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 40 40" fill="none" aria-hidden="true">
-      <path
-        d="M5 12a3 3 0 0 1 3-3h7l4 4.5h13a3 3 0 0 1 3 3V28a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V12Z"
-        stroke="currentColor"
-        strokeWidth="1.6"
-      />
-    </svg>
-  );
-}
-
 function DocGlyph() {
   return (
     <svg width="40" height="40" viewBox="0 0 40 40" fill="none" aria-hidden="true">
@@ -84,20 +72,7 @@ export function ScreenHead({ label, action }: { label: string; action?: string }
   );
 }
 
-/** /projects — docs/05 §4.4 empty state, exact copy. */
-export function ProjectsScreen() {
-  return (
-    <>
-      <ScreenHead label="Projects" action="New project" />
-      <EmptyState
-        icon={<FolderGlyph />}
-        headline="Looking to start a project?"
-        copy="Give Claude a folder you already work from"
-        action="New project"
-      />
-    </>
-  );
-}
+/** /projects — the real screen (Phase 6 slice 2) lives in ProjectsScreen.tsx. */
 
 /** /cowork-artifact — docs/05 §4.5 empty state, exact copy (no sentence captured). */
 export function ArtifactsScreen() {

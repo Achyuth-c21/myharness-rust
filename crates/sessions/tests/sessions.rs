@@ -46,6 +46,7 @@ impl Fixture {
     fn start(&self, title: &str) -> myharness_store::SessionRow {
         self.service
             .start(NewSession {
+                project_id: None,
                 surface: "chat",
                 title,
                 ..Default::default()
@@ -455,6 +456,7 @@ fn recovery_works_across_a_store_reopen() {
         let service = SessionService::new(store, Arc::clone(&keys));
         session = service
             .start(NewSession {
+                project_id: None,
                 surface: "chat",
                 title: "crash",
                 ..Default::default()
@@ -668,6 +670,7 @@ fn retention_sweeps_one_surface_and_honors_holds() {
     let cowork = fixture
         .service
         .start(NewSession {
+            project_id: None,
             surface: "cowork",
             title: "cowork stays",
             ..Default::default()

@@ -22,6 +22,7 @@ fn fixture() -> (TempDir, SessionService<InMemoryAuditKeys>) {
 fn start(service: &SessionService<InMemoryAuditKeys>, surface: &str, title: &str) -> String {
     service
         .start(NewSession {
+            project_id: None,
             surface,
             title,
             ..Default::default()

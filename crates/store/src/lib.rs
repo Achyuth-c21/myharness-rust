@@ -32,6 +32,7 @@ pub mod blobs;
 pub mod migrate;
 pub mod quarantine;
 pub mod repos;
+pub mod repos_projects;
 
 pub use blobs::BlobStore;
 pub use migrate::LATEST_SCHEMA_VERSION;
@@ -40,6 +41,7 @@ pub use repos::{
     AuditEventRow, CodeTurnActivity, NewSession, NewUsageEvent, SessionRow, TurnRole, TurnStatus,
     TurnRow, UsageEventRow,
 };
+pub use repos_projects::{NewProject, ProjectRow};
 
 pub(crate) mod secure {
     //! Owner-only file modes (`TEST-CFG-106` posture carried into storage). The

@@ -2302,6 +2302,7 @@ dependencies = [
  "myharness-config",
  "myharness-mcp",
  "myharness-plugins",
+ "myharness-projects",
  "myharness-provider-anthropic",
  "myharness-provider-bedrock",
  "myharness-provider-gateway",
@@ -2381,6 +2382,12 @@ dependencies = [
 [[package]]
 name = "myharness-projects"
 version = "0.1.0"
+dependencies = [
+ "myharness-store",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "myharness-protocol-core"

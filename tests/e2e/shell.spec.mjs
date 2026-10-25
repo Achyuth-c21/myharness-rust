@@ -790,6 +790,245 @@ try {
     );
     await expectTrue(!page.url().includes("#settings"), `no settings hash after Back (was ${page.url()})`);
   });
+  await step("T39 projects preview is honest: captured copy, dialog flow, no invented rows", async () => {
+    await page.goto(`${BASE}/projects`);
+    await page.getByText("Looking to start a project?").waitFor();
+    await expectTrue(
+      (await page.locator(".project-row").count()) === 0,
+      "the preview must not invent project rows",
+    );
+    // One creation entry in the empty state (REQ-PROJ-01) plus the captured
+    // header button; both open the same dialog.
+    await expectTrue(
+      (await page.locator(".screen-empty").getByRole("button", { name: "New project" }).count()) === 1,
+      "the empty state must have exactly one creation entry",
+    );
+    await page.locator(".screen-empty").getByRole("button", { name: "New project" }).click();
+    await page.getByRole("dialog", { name: "Create a new project" }).waitFor();
+    await expectTrue(
+      await page.getByText("A dedicated place for ongoing work", { exact: false }).count() === 1,
+      "the choice dialog lede is the captured copy",
+    );
+    await page.getByRole("button", { name: "Start from scratch" }).click();
+    await page.getByRole("dialog", { name: "Start a new project" }).waitFor();
+    await expectTrue(
+      await page.getByPlaceholder("Project name").count() === 1 &&
+      await page.getByPlaceholder("Tell Claude how to work in this project (optional)").count() === 1 &&
+      await page.getByText("Select a folder...").count() === 1,
+      "the form fields are the captured fields",
+    );
+    await expectTrue(
+      await page.getByRole("button", { name: "Create" }).isDisabled(),
+      "Create stays disabled until the required fields are valid",
+    );
+    await page.getByRole("dialog", { name: "Start a new project" }).getByRole("button", { name: "Back" }).click();
+    await page.getByRole("button", { name: "Use an existing folder" }).click();
+    await page.getByRole("dialog", { name: "Start a new project" }).waitFor();
+    await page.keyboard.press("Escape");
+    await page.locator(".project-dialog").waitFor({ state: "detached" });
+    await expectTrue(
+      (await page.locator(".project-dialog").count()) === 0,
+      "Escape dismisses the dialog",
+    );
+  });
+
+  await step("T40 populated projects render only the supplied bridge data; detail edit/delete are honest", async () => {
+    const mockContext = await browser.newContext({
+      colorScheme: "dark",
+      viewport: { width: 1200, height: 900 },
+    });
+    const mockPage = await mockContext.newPage();
+    const now = Date.now();
+    const goodProject = {
+      id: "00000000-0000-0000-0000-00000000a001",
+      name: "Paper reviews",
+      instructions: "be concise",
+      cwd: "/tmp/papers",
+      memory_enabled: true,
+      createdAt: now - 100_000,
+      lastActivityAt: now - 50_000,
+      extra: {},
+      folderAvailable: true,
+    };
+    const lostProject = {
+      id: "00000000-0000-0000-0000-00000000a002",
+      name: "Moved folder",
+      instructions: null,
+      cwd: "/tmp/vanished",
+      memory_enabled: false,
+      createdAt: now - 200_000,
+      lastActivityAt: now - 60_000,
+      extra: {},
+      folderAvailable: false,
+    };
+    const sessions = [
+      {
+        id: "00000000-0000-0000-0000-00000000a003",
+        surface: "chat",
+        title: "Inside task",
+        cwd: "/tmp/papers",
+        model: "model-a",
+        effort: null,
+        permission_mode: null,
+        projectId: goodProject.id,
+        archived: false,
+        legal_hold: false,
+        createdAt: now - 90_000,
+        lastActivityAt: now - 40_000,
+        extra: {},
+      },
+    ];
+    await mockPage.addInitScript(
+      ({ goodProject, lostProject, sessions }) => {
+        window.__lastProjectCommand = null;
+        window.__TAURI_INTERNALS__ = {
+          invoke: async (cmd, args) => {
+            if (cmd !== "chat_command") throw new Error(`unexpected command ${cmd}`);
+            const command = args.command;
+            window.__lastProjectCommand = command;
+            if (command.type === "listProjects") {
+              return { type: "projects", projects: [goodProject, lostProject] };
+            }
+            if (command.type === "openProject") {
+              return {
+                type: "projectDetail",
+                project: command.id === goodProject.id ? goodProject : lostProject,
+                sessions: command.id === goodProject.id ? sessions : [],
+              };
+            }
+            if (command.type === "updateProject") {
+              return {
+                type: "project",
+                project: { ...goodProject, name: command.name, instructions: command.instructions, memory_enabled: command.memoryEnabled },
+              };
+            }
+            if (command.type === "deleteProject") {
+              return { type: "projectDeleted", orphanedSessions: 1 };
+            }
+            throw new Error(`unexpected chat command ${command.type}`);
+          },
+        };
+      },
+      { goodProject, lostProject, sessions },
+    );
+    await mockPage.goto(`${BASE}/projects`);
+    await mockPage.locator(".project-row", { hasText: "Paper reviews" }).waitFor();
+    await expectTrue(
+      (await mockPage.locator(".project-row").count()) === 2,
+      "the list renders exactly the supplied projects",
+    );
+    await expectTrue(
+      (await mockPage.locator(".project-row", { hasText: "Moved folder" }).innerText()).includes("Folder unavailable"),
+      "a missing folder is labelled unavailable, never hidden",
+    );
+    await mockPage.locator('input[aria-label="Search projects"]').fill("paper");
+    await expectTrue(
+      (await mockPage.locator(".project-row").count()) === 1,
+      "the search narrows the list client-side",
+    );
+    await mockPage.locator('input[aria-label="Search projects"]').fill("");
+    await mockPage.locator(".project-row", { hasText: "Paper reviews" }).click();
+    await mockPage.locator(".project-sessions", { hasText: "Inside task" }).waitFor();
+    await expectTrue(
+      (await mockPage.locator(".project-folder-card").innerText()).includes("/tmp/papers"),
+      "the detail shows the recorded folder",
+    );
+    await mockPage.locator(".project-detail-main input[type=text]").fill("Paper reviews 2");
+    await mockPage.getByRole("button", { name: "Save changes" }).click();
+    await mockPage.getByRole("heading", { name: "Paper reviews 2" }).waitFor();
+    await mockPage.getByRole("button", { name: "Delete…" }).click();
+    await expectTrue(
+      (await mockPage.locator(".confirm-block").innerText()).includes("files on disk are never touched") &&
+      (await mockPage.locator(".confirm-block").innerText()).includes("Project memory stores nothing"),
+      "the delete confirmation states the effects on tasks, files, and memory",
+    );
+    await mockPage.getByRole("button", { name: "Delete project" }).click();
+    await mockPage.waitForURL("**/projects");
+    await expectTrue(
+      true,
+      "deleting returns to the list",
+    );
+    await mockContext.close();
+  });
+
+  await step("T41 the composer chip binds a project or folder and sends the id to the bridge", async () => {
+    const mockContext = await browser.newContext({
+      colorScheme: "dark",
+      viewport: { width: 1200, height: 900 },
+    });
+    const mockPage = await mockContext.newPage();
+    const project = {
+      id: "00000000-0000-0000-0000-00000000b001",
+      name: "Bound project",
+      instructions: null,
+      cwd: "/tmp/bound",
+      memory_enabled: true,
+      createdAt: Date.now() - 100_000,
+      lastActivityAt: Date.now() - 50_000,
+      extra: {},
+      folderAvailable: true,
+    };
+    await mockPage.addInitScript(
+      ({ project }) => {
+        window.__lastCreate = null;
+        window.__TAURI_INTERNALS__ = {
+          invoke: async (cmd, args) => {
+            if (cmd === "pick_workspace_folder") return "/tmp/one-off";
+            if (cmd !== "chat_command") throw new Error(`unexpected command ${cmd}`);
+            const command = args.command;
+            if (command.type === "listProjects") {
+              return { type: "projects", projects: [project] };
+            }
+            if (command.type === "createSession") {
+              window.__lastCreate = command;
+              return {
+                type: "session",
+                session: {
+                  session: {
+                    id: "00000000-0000-0000-0000-00000000b002",
+                    surface: "chat",
+                    title: "t",
+                    cwd: null,
+                    model: "model-a",
+                    effort: null,
+                    permission_mode: null,
+                    projectId: command.projectId ?? null,
+                    archived: false,
+                    legal_hold: false,
+                    createdAt: Date.now(),
+                    lastActivityAt: Date.now(),
+                    extra: {},
+                  },
+                  turns: [],
+                },
+              };
+            }
+            throw new Error(`unexpected chat command ${command.type}`);
+          },
+        };
+      },
+      { project },
+    );
+    await mockPage.goto(`${BASE}/new`);
+    await mockPage.getByRole("button", { name: "Project or folder" }).click();
+    await mockPage.locator(".project-chip-menu", { hasText: "Bound project" }).waitFor();
+    await mockPage.locator(".project-chip-item", { hasText: "Bound project" }).click();
+    await expectTrue(
+      (await mockPage.locator(".project-chip").innerText()).includes("Bound project"),
+      "the chip shows the selected project",
+    );
+    await mockPage.locator("#composer").fill("hello there");
+    await mockPage.locator(".send-btn").click();
+    await mockPage.waitForFunction(() => window.__lastCreate !== null);
+    const sent = await mockPage.evaluate(() => window.__lastCreate);
+    await expectTrue(
+      sent.projectId === "00000000-0000-0000-0000-00000000b001",
+      "the send must carry the selected project id",
+    );
+    await mockPage.waitForURL("**/cowork/**");
+    await mockContext.close();
+  });
+
 } finally {
   await browser.close();
 }

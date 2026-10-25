@@ -28,6 +28,8 @@ export interface SessionRecord {
   effort: string | null;
   /** Stored permission spelling (e.g. `default`, `acceptEdits`). */
   permission_mode: string | null;
+  /** Soft project association; a deleted project id resolves to "missing". */
+  projectId: string | null;
   archived: boolean;
   /** Stored snake_case spelling (the row's wire contract). */
   legal_hold: boolean;
@@ -124,6 +126,25 @@ export interface UsageSummary {
 export type CodeRange = "7d" | "30d" | "all";
 export type CodePermissionMode = "default" | "acceptEdits" | "plan" | "bypass";
 
+/**
+ * A stored project row (`crates/store/src/repos_projects.rs` `ProjectRow`)
+ * plus the bridge-computed folder-availability fact. Field spellings follow
+ * the stored row's wire contract: `memory_enabled` is snake_case, the
+ * timestamps are camelCase (`docs/18` row-shape convention).
+ */
+export interface ProjectRecord {
+  id: string;
+  name: string;
+  instructions: string | null;
+  cwd: string;
+  memory_enabled: boolean;
+  createdAt: number;
+  lastActivityAt: number;
+  extra: unknown;
+  /** False when the folder no longer resolves to the recorded spelling. */
+  folderAvailable: boolean;
+}
+
 /** The effective Code policy; folder roots never cross the bridge. */
 export interface CodePolicyView {
   codeEnabled: boolean;
@@ -165,7 +186,31 @@ export interface CodeRepositoryView {
 
 export type ChatCommand =
   | { type: "listSessions"; archived?: boolean | null }
-  | { type: "createSession"; title?: string | null }
+  | {
+      type: "createSession";
+      title?: string | null;
+      /** Bind a project's working context at create time (REQ-PROJ-05). */
+      projectId?: string | null;
+      /** Bind a one-off folder; validated and canonicalized by the bridge. */
+      cwd?: string | null;
+    }
+  | { type: "listProjects" }
+  | {
+      type: "createProject";
+      name: string;
+      instructions?: string | null;
+      cwd: string;
+      memoryEnabled?: boolean | null;
+    }
+  | { type: "openProject"; id: string; archived?: boolean | null }
+  | {
+      type: "updateProject";
+      id: string;
+      name: string;
+      instructions?: string | null;
+      memoryEnabled?: boolean | null;
+    }
+  | { type: "deleteProject"; id: string }
   | { type: "listCodeSessions"; archived?: boolean | null }
   | {
       type: "createCodeSession";
@@ -212,13 +257,11 @@ export type ChatCommand =
 export type ChatResponse =
   | { type: "sessions"; sessions: SessionRecord[] }
   | { type: "session"; session: SessionView }
-  | {
-      type: "codeDashboard";
-      summary: CodeUsageSummary;
-      sessions: SessionRecord[];
-      repositories: CodeRepositoryView[];
-      policy: CodePolicyView;
-    }
+  | { type: "projects"; projects: ProjectRecord[] }
+  | { type: "project"; project: ProjectRecord }
+  | { type: "projectDetail"; project: ProjectRecord; sessions: SessionRecord[] }
+  | { type: "projectDeleted"; orphanedSessions: number }
+  | { type: "codeDashboard"; summary: CodeUsageSummary; sessions: SessionRecord[]; repositories: CodeRepositoryView[]; policy: CodePolicyView }
   | {
       type: "turn";
       sessionId: string;
@@ -416,6 +459,33 @@ export async function pickWorkspaceFolder(): Promise<FolderPickResult> {
                 : "The folder picker could not be opened.",
         retryable: true,
       },
+    };
+  }
+}
+
+/**
+ * Open a project/session folder in the OS file manager. The path is
+ * revalidated by the shell (absolute, existing, still canonical) before
+ * anything opens; a browser preview reports `BRIDGE_UNAVAILABLE`.
+ */
+export async function revealWorkspaceFolder(path: string): Promise<BridgeError | null> {
+  try {
+    await invoke("reveal_workspace_folder", { path });
+    return null;
+  } catch (error) {
+    const hostPresent =
+      typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+    const record =
+      typeof error === "object" && error !== null ? (error as { code?: unknown; message?: unknown }) : null;
+    return {
+      code: typeof record?.code === "string" ? record.code : hostPresent ? "FOLDER_UNAVAILABLE" : "BRIDGE_UNAVAILABLE",
+      message:
+        typeof record?.message === "string"
+          ? record.message
+          : typeof error === "string"
+            ? error
+            : "The folder could not be opened.",
+      retryable: false,
     };
   }
 }
