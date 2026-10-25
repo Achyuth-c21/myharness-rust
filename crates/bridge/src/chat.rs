@@ -1,5 +1,5 @@
-//! The `web.LocalAgentModeSessions` bridge namespace — roadmap Phase 4
-//! slice 3 (`docs/13` Phase 4; `docs/18` §4; `docs/11` §14).
+//! The `web.LocalAgentModeSessions` bridge namespace — roadmap Phases 4–5
+//! (`docs/13`; `docs/18` §4; `docs/11` §14).
 //!
 //! This module is the composition seam the agent loop deliberately leaves
 //! open: it resolves the **applied profile** to a native adapter (same

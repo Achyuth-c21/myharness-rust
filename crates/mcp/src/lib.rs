@@ -1,7 +1,7 @@
 //! MCP runtime — roadmap Phase 5 (`docs/13` §4 Phase 5; `docs/12` §5.1;
 //! `ARCH-PROC-08`).
 //!
-//! This slice is the transport-independent lifecycle foundation:
+//! This crate owns the transport-independent MCP runtime:
 //!
 //! - [`ServerConfig`] models stdio, Streamable HTTP, and legacy HTTP+SSE
 //!   definitions, with a `Debug` implementation that redacts credentials
@@ -13,7 +13,7 @@
 //!   servers (`TEST-MCP-009`); the caller can run [`McpManager::start_all`]
 //!   away from the app boot path.
 //!
-//! Deliberate limits of this slice, stated rather than implied:
+//! Deliberate limits of this crate, stated rather than implied:
 //!
 //! - stdio and Streamable HTTP use `rmcp` 3.7. The legacy HTTP+SSE transport is
 //!   modelled but returns [`McpError::UnsupportedTransport`]: the current SDK
@@ -23,7 +23,9 @@
 //!   The shipped authorization-code flow was not captured, so a server that
 //!   needs it surfaces `NeedsAuth` rather than a fabricated login.
 //! - Tool execution is exposed by the agent crate through an executor adapter;
-//!   renderer commands and skills/plugins are separate Phase 5 slices.
+//!   renderer commands, approval persistence, and skills/plugins compose this
+//!   crate at the bridge boundary (`crates/bridge/src/mcp.rs` and
+//!   `crates/bridge/src/catalog.rs`).
 //! - Tool descriptions and schemas are untrusted input (`docs/12` §5.1). They
 //!   are size-limited here and never interpreted as instructions.
 //!

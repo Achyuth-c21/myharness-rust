@@ -369,8 +369,9 @@ struct ArgumentKey {
 impl ApprovalStore {
     /// Store a session or persistent approval after an explicit user choice.
     ///
-    /// `Once` is rejected because it must not survive the call. Persistent
-    /// storage is in-memory here; the durable store is a later slice.
+    /// `Once` is rejected because it must not survive the call. This store is
+    /// in-memory; the bridge persists the records it needs across restarts
+    /// (`crates/bridge/src/mcp.rs`, `mcp/approvals.json`).
     pub fn grant(
         &mut self,
         context: &ApprovalContext,

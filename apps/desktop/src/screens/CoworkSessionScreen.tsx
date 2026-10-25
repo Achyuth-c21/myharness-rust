@@ -14,8 +14,9 @@
  * - renders reasoning behind a disclosure, partial output as stopped, and
  *   preserved non-`end_turn` stop reasons as a small status line.
  *
- * Not in this phase: tool-call blocks (tools arrive with MCP), the right
- * Progress/Context pane, attachments, and the model picker.
+ * Phase 5 adds tool-call/result rows, the approval modal, the per-session tool
+ * picker, and the skill picker. Not in this phase: the right Progress/Context
+ * pane, attachments, the model picker, and system-prompt assembly.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";

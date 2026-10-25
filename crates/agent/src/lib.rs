@@ -1,16 +1,14 @@
-//! The turn loop — roadmap Phase 4 slice 2 (`docs/13` Phase 4; `docs/12`
-//! §8.2–§8.3). This crate is the **agent layer** between a native provider
-//! adapter and the session service: it replays the transcript, asks the
-//! adapter for one turn, consumes the typed stream, and records what actually
-//! happened.
+//! The turn loop — roadmap Phases 4–5 (`docs/13`; `docs/12` §8.2–§8.3).
+//! This crate is the **agent layer** between a native provider adapter and the
+//! session service: it replays the transcript, asks the adapter for one turn,
+//! consumes the typed stream, and records what actually happened.
 //!
-//! Slice 2 is deliberately small and honest:
+//! The Phase 4 path is deliberately small and honest:
 //!
-//! - **One turn, no tools.** [`ProviderAdapter::create_turn`] receives the
-//!   replayed conversation plus the new user turn. Tool declarations are
-//!   refused ([`AgentError::Unsupported`]) rather than advertised while
-//!   nothing can execute them (`docs/14` §9: an unavailable capability is
-//!   stated, never emulated); tool execution belongs to the MCP phase.
+//! - **One turn at a time; the plain path has no tools.** [`run_turn`] refuses
+//!   tool declarations ([`AgentError::Unsupported`]) rather than advertising
+//!   something it cannot execute. Phase 5's [`run_turn_with_tools`] is the
+//!   explicit tool-enabled path, and it capability-gates the model first.
 //! - **No retries and no substitution.** A provider failure is persisted and
 //!   returned with its class and message unchanged (`TEST-AI-021`; `docs/12`
 //!   §4.2). Retry policy is unobserved, so none is invented here.

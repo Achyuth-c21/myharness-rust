@@ -12,6 +12,11 @@
 //! Phase 4 adds the chat subset of `web.LocalAgentModeSessions` ([`chat`]): the
 //! applied profile resolves to a native adapter, sessions restore from SQLite,
 //! turns stream through an observer, and stop is idempotent.
+//!
+//! Phase 5 adds the MCP/tool bridge ([`mcp`]) and the skills/plugins catalog
+//! ([`catalog`]): approval prompts and durable grants, frozen per-session tool
+//! snapshots, schema cache/tool search, per-server OAuth, and local plugin
+//! installs. MCP boot failure degrades MCP, never chat.
 
 use serde::{Deserialize, Serialize};
 
