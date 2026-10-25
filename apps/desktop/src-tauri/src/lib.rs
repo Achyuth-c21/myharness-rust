@@ -19,7 +19,7 @@ use myharness_bridge::chat::{
     ProfileTargets,
 };
 use myharness_bridge::mcp::{
-    BridgeApprovalPrompt, BuiltMcp, McpConfig, ReqwestOAuthHttp, ToolRuntime,
+    reqwest_oauth_http, BridgeApprovalPrompt, BuiltMcp, McpConfig, ToolRuntime,
 };
 use myharness_bridge::setup::{BridgeError, ConfigBackend, SetupCommand, SetupResponse};
 use myharness_provider_sdk::TurnEvent;
@@ -272,8 +272,8 @@ fn init_chat(app: &tauri::AppHandle) -> Result<Chat, String> {
     let oauth_store = myharness_bridge::mcp::keyring_oauth_store(Arc::new(
         myharness_secrets::KeyringStore::new(myharness_secrets::DEFAULT_SERVICE),
     ));
-    let oauth_http = match ReqwestOAuthHttp::with_egress(loaded.config.egress.clone()) {
-        Ok(client) => Arc::new(client) as Arc<dyn myharness_mcp::OAuthHttp>,
+    let oauth_http = match reqwest_oauth_http(loaded.config.egress.clone()) {
+        Ok(client) => client,
         Err(error) => {
             let mut warnings = loaded.warnings.clone();
             warnings.push(format!("OAuth is unavailable: {error}"));

@@ -1152,14 +1152,9 @@ pub fn keyring_oauth_store(store: Arc<dyn SecretStore>) -> Arc<dyn OAuthStore> {
     Arc::new(KeyringOAuthStore::new(store))
 }
 
-/// The OAuth HTTP client factory.
-pub fn reqwest_oauth_http() -> Result<Arc<dyn OAuthHttp>, OAuthError> {
-    reqwest_oauth_http_with_egress(None)
-}
-
-/// The OAuth HTTP client factory with the MCP host allowlist applied to the
-/// token endpoint.
-pub fn reqwest_oauth_http_with_egress(
+/// The OAuth HTTP client factory. The MCP host allowlist is applied to the
+/// token endpoint, and redirects are disabled.
+pub fn reqwest_oauth_http(
     egress: Option<EgressPolicy>,
 ) -> Result<Arc<dyn OAuthHttp>, OAuthError> {
     Ok(Arc::new(ReqwestOAuthHttp::with_egress(egress)?))
