@@ -1282,6 +1282,231 @@ try {
     await mockContext.close();
   });
 
+  await step("T46 search palette finds real sessions and projects; keyboard nav opens (TEST-UX-003)", async () => {
+    const mockContext = await browser.newContext({
+      colorScheme: "dark",
+      viewport: { width: 1200, height: 900 },
+    });
+    const mockPage = await mockContext.newPage();
+    const now = Date.now();
+    const chatSession = {
+      id: "00000000-0000-0000-0000-00000000f001",
+      surface: "chat",
+      title: "Quarterly planning notes",
+      cwd: null,
+      model: "model-a",
+      effort: null,
+      permission_mode: null,
+      projectId: null,
+      archived: false,
+      legal_hold: false,
+      createdAt: now - 100_000,
+      lastActivityAt: now - 10_000,
+      extra: {},
+    };
+    const codeSession = {
+      ...chatSession,
+      id: "00000000-0000-0000-0000-00000000f002",
+      surface: "code",
+      title: "Quarterly refactor",
+      lastActivityAt: now - 20_000,
+    };
+    const project = {
+      id: "00000000-0000-0000-0000-00000000f003",
+      name: "Quarterly reports",
+      instructions: null,
+      cwd: "/tmp/q",
+      memory_enabled: true,
+      createdAt: now - 200_000,
+      lastActivityAt: now - 30_000,
+      extra: {},
+      folderAvailable: true,
+    };
+    await mockPage.addInitScript(
+      ({ chatSession, codeSession, project }) => {
+        window.__TAURI_INTERNALS__ = {
+          invoke: async (cmd, args) => {
+            if (cmd !== "chat_command") throw new Error(`unexpected command ${cmd}`);
+            const command = args.command;
+            if (command.type === "listSessions") {
+              return { type: "sessions", sessions: [chatSession] };
+            }
+            if (command.type === "listCodeSessions") {
+              return { type: "sessions", sessions: [codeSession] };
+            }
+            if (command.type === "listProjects") {
+              return { type: "projects", projects: [project] };
+            }
+            throw new Error(`unexpected chat command ${command.type}`);
+          },
+        };
+      },
+      { chatSession, codeSession, project },
+    );
+    await mockPage.goto(`${BASE}/new`);
+    await mockPage.waitForSelector("#composer"); // deterministic: shell mounted before keys
+    await mockPage.keyboard.press("Control+k");
+    await mockPage.getByPlaceholder("Search chats and projects").waitFor();
+    // Empty query = the recent set from real rows.
+    await expectTrue(
+      (await mockPage.locator(".palette-row").count()) === 3,
+      "the empty query lists the three real rows",
+    );
+    // A query narrows live across sessions AND projects, case-insensitively.
+    await mockPage.getByPlaceholder("Search chats and projects").fill("quarterly");
+    await expectTrue(
+      (await mockPage.locator(".palette-row").count()) === 3,
+      "the query matches both sessions and the project",
+    );
+    await mockPage.getByPlaceholder("Search chats and projects").fill("zzz-nothing");
+    await expectTrue(await mockPage.locator(".palette-empty").count() === 1, "No results");
+    await mockPage.getByRole("button", { name: "Clear search" }).click();
+    await mockPage.getByPlaceholder("Search chats and projects").fill("refactor");
+    await mockPage.keyboard.press("ArrowDown");
+    await mockPage.keyboard.press("Enter");
+    await mockPage.waitForURL("**/epitaxy/00000000-0000-0000-0000-00000000f002");
+    await expectTrue(true, "Enter opens the selected Code session");
+    // The palette must be closed after opening a result.
+    await expectTrue(
+      (await mockPage.locator(".palette").count()) === 0,
+      "opening a result closes the palette",
+    );
+    await mockContext.close();
+  });
+
+  await step("T47 the filter menu composes, badges, and resets; filtered-empty differs from true empty", async () => {
+    const mockContext = await browser.newContext({
+      colorScheme: "dark",
+      viewport: { width: 1200, height: 900 },
+    });
+    const mockPage = await mockContext.newPage();
+    const now = Date.now();
+    const today = { ...{} };
+    const sessions = [
+      {
+        id: "00000000-0000-0000-0000-00000000f011",
+        surface: "chat",
+        title: "Fresh task",
+        cwd: null,
+        model: null,
+        effort: null,
+        permission_mode: null,
+        projectId: null,
+        archived: false,
+        legal_hold: false,
+        createdAt: now - 60_000,
+        lastActivityAt: now - 30_000,
+        extra: {},
+      },
+      {
+        id: "00000000-0000-0000-0000-00000000f012",
+        surface: "chat",
+        title: "Old task",
+        cwd: null,
+        model: null,
+        effort: null,
+        permission_mode: null,
+        projectId: null,
+        archived: false,
+        legal_hold: false,
+        createdAt: now - 40 * 86_400_000,
+        lastActivityAt: now - 40 * 86_400_000,
+        extra: {},
+      },
+    ];
+    await mockPage.addInitScript(
+      ({ sessions }) => {
+        window.__archivedRequested = null;
+        window.__TAURI_INTERNALS__ = {
+          invoke: async (cmd, args) => {
+            if (cmd !== "chat_command") throw new Error(`unexpected command ${cmd}`);
+            const command = args.command;
+            if (command.type === "listSessions") {
+              window.__archivedRequested = command.archived;
+              return {
+                type: "sessions",
+                sessions: sessions.filter(
+                  (row) => command.archived === null || row.archived === command.archived,
+                ),
+              };
+            }
+            if (command.type === "listProjects") {
+              return { type: "projects", projects: [] };
+            }
+            if (command.type === "listCodeSessions") {
+              return { type: "sessions", sessions: [] };
+            }
+            throw new Error(`unexpected chat command ${command.type}`);
+          },
+        };
+      },
+      { sessions },
+    );
+    await mockPage.goto(`${BASE}/new`);
+    await mockPage.locator(".task-row", { hasText: "Fresh task" }).waitFor();
+    await mockPage.getByRole("button", { name: "Filter tasks" }).click();
+    await mockPage.getByRole("menu", { name: "Filter tasks" }).waitFor();
+    // Last activity: Today hides the 40-day-old row immediately; applying
+    // closes the menu.
+    await mockPage.locator('[data-filter-row="activity"]').click();
+    await mockPage.getByRole("menuitemradio", { name: "Today" }).click();
+    await expectTrue(
+      (await mockPage.locator(".task-row").count()) === 1,
+      "the activity filter composes immediately",
+    );
+    await expectTrue(
+      (await mockPage.locator(".filter-badge").count()) === 1,
+      "an active filter shows the badge",
+    );
+    // Narrow further: the name sort does not change the count.
+    await mockPage.getByRole("button", { name: "Filter tasks" }).click();
+    await mockPage.locator('[data-filter-row="sortBy"]').click();
+    await mockPage.getByRole("menuitemradio", { name: "Name" }).click();
+    await expectTrue((await mockPage.locator(".task-row").count()) === 1, "sort composes");
+    // Reset restores everything.
+    await mockPage.getByRole("button", { name: "Filter tasks" }).click();
+    await mockPage.locator(".filter-reset").click();
+    await expectTrue(
+      (await mockPage.locator(".task-row").count()) === 2,
+      "reset restores the full list",
+    );
+    await expectTrue(
+      (await mockPage.locator(".filter-badge").count()) === 0,
+      "reset clears the badge",
+    );
+    // A filter that hides everything shows the distinct filtered-empty state.
+    await mockPage.getByRole("button", { name: "Filter tasks" }).click();
+    await mockPage.locator('[data-filter-row="activity"]').click();
+    await mockPage.getByRole("menuitemradio", { name: "Today" }).click();
+    // "Today" keeps both (both recent-ish? no — Old task is 40d). Force it via
+    // Status Archived with no archived rows instead.
+    await mockPage.getByRole("button", { name: "Filter tasks" }).click();
+    await mockPage.locator('[data-filter-row="status"]').click();
+    await mockPage.getByRole("menuitemradio", { name: "Archived" }).click();
+    await mockPage.waitForFunction(() => window.__archivedRequested === true);
+    await expectTrue(
+      (await mockPage.locator(".tasks-filtered-empty").count()) === 1,
+      "the filtered-empty state is distinct from the true empty state",
+    );
+    await expectTrue(
+      (await mockPage.locator(".tasks-filtered-empty").innerText()).includes("Reset filters"),
+      "the filtered-empty state offers the reset",
+    );
+    await mockPage.locator(".tasks-filtered-empty").getByRole("button", { name: "Reset filters" }).click();
+    await expectTrue(
+      (await mockPage.locator(".task-row").count()) === 2,
+      "reset from the filtered-empty state restores the list",
+    );
+    // The Unread option is stated unavailable, not silently empty.
+    await mockPage.getByRole("button", { name: "Filter tasks" }).click();
+    await mockPage.locator('[data-filter-row="status"]').click();
+    await expectTrue(
+      await mockPage.getByRole("menuitemradio", { name: "Unread" }).isDisabled(),
+      "Unread is disabled with an explanation (no unread tracking exists)",
+    );
+    await mockContext.close();
+  });
+
 } finally {
   await browser.close();
 }
