@@ -705,7 +705,7 @@ invented.
 
 ## 7j. Phase 5 slice 3 — tool turns, approvals, catalog, app integration (2026-10-25)
 
-Slice 3 (`03d5102`) completes Phase 5's local/stdio path. The lane is
+Slice 3 (`03d5102`, hardening `12d508a`) completes Phase 5's local/stdio path. The lane is
 `phase-5`; **nothing has been merged or pushed** — owner approval is required.
 
 - **Agent tool loop (`crates/agent`):** `run_turn_with_tools` is a bounded
@@ -742,8 +742,10 @@ Slice 3 (`03d5102`) completes Phase 5's local/stdio path. The lane is
 - **OAuth/schema/search (`crates/mcp`):** per-server token store; production
   keychain account `mcp-oauth/<server>`; refresh is rebuild-defined OAuth 2.0
   (`grant_type=refresh_token`, form-encoded) behind an injectable `OAuthHttp`;
-  an explicit configured `Authorization` header wins over OAuth. No
-  authorization-code/PKCE flow — a server needing it surfaces `NeedsAuth`.
+  the production refresh client applies the egress allowlist to the token URL
+  and disables redirects; an explicit configured `Authorization` header wins
+  over OAuth. No authorization-code/PKCE flow — a server needing it surfaces
+  `NeedsAuth`.
   Schema cache is `mcp/schemas.json` (atomic, 0600); cached tools are
   metadata-only. Tool search is deterministic; `toolSearchEnabled` defaults
   `false`; `McpTools` bypasses the flag for the session picker but filters
@@ -773,7 +775,7 @@ Slice 3 (`03d5102`) completes Phase 5's local/stdio path. The lane is
   is a rebuild-defined placeholder key; `skills`/`plugins` stand in for the
   uncaptured Customize route; `connectors` stays disabled. Browser preview
   reports `BRIDGE_UNAVAILABLE` and never fakes rows/totals.
-- **Gates:** bridge 54 unit + 11 chat + 4 `mcp_tools`; MCP 25 unit + 22
+- **Gates:** bridge 55 unit + 11 chat + 4 `mcp_tools`; MCP 25 unit + 22
   manager + 2 real-stdio (`--features fixture-server`); agent 57; skills 7;
   plugins 7; provider wire batteries unchanged; `cargo check -p
   myharness-desktop`; `tsc --noEmit`; `vite build`; browser E2E 38/38; clippy
@@ -781,8 +783,10 @@ Slice 3 (`03d5102`) completes Phase 5's local/stdio path. The lane is
 - **Traps:** `run_turn` holds one global approval mutex across a turn, so tool
   turns serialize across sessions; a pending approval can be lost if the
   renderer navigates away; no default MCP start/tool-call timeout
-  (`None` unless configured); HTTP redirects are followed by the transport and
-  not re-checked by egress; stdio is not inspected; legacy SSE is explicitly
+  (`None` unless configured); the pinned `rmcp` transport follows only
+  same-origin 307/308 redirects and refuses cross-origin hops, and the
+  production OAuth refresh client applies the allowlist and disables redirects;
+  stdio is not inspected; DNS/IP egress is not checked; legacy SSE is explicitly
   unsupported; tool schema validation is a bounded subset (`pattern`,
   `format`, external `$ref` not enforced); no live HTTP MCP fixture or live
   OAuth/keychain exercise; no marketplace/signature verification; no
