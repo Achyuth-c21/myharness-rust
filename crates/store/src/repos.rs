@@ -180,6 +180,29 @@ pub struct UsageEventRow {
     pub timestamp: i64,
 }
 
+/// What the tombstone sweep did (Phase 7; `docs/11` §13).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TombstoneReport {
+    /// Blob files removed because no surviving turn references them.
+    pub swept_blobs: usize,
+    /// Tombstone rows pruned after their sweep completed.
+    pub pruned_tombstones: usize,
+}
+
+/// Local row counts for the diagnostic bundle (Phase 7). Counts only — the
+/// bundle never reads content (`docs/features/updates-telemetry-privacy.md`
+/// §3, §7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticCounts {
+    pub sessions: i64,
+    pub cowork_sessions: i64,
+    pub code_sessions: i64,
+    pub turns: i64,
+    pub usage_events: i64,
+}
+
 /// One user/assistant turn on the Code surface, used by the Code dashboard's
 /// message count. Only the fields the aggregate needs are selected; transcript
 /// content stays behind its blob reference.
@@ -635,6 +658,17 @@ impl Store {
             rows
         };
         let tx = conn.transaction()?;
+        // The tombstone records what this delete owned, in the same
+        // transaction that removes the rows (`docs/11` §13): a crash between
+        // the row deletion and the blob sweep leaves a recoverable marker
+        // instead of orphaned content. The sweep prunes it.
+        tx.execute(
+            "INSERT OR REPLACE INTO deleted_sessions (session_id, deleted_at, content_refs) \
+             VALUES (?1, ?2, ?3)",
+            params![id, now_ms(), serde_json::to_string(&refs).map_err(|_| {
+                StoreError::Validation("the tombstone refs could not be serialized")
+            })?],
+        )?;
         tx.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
         tx.commit()?;
         // Content is addressed by hash, so two sessions can reference the same
@@ -656,6 +690,63 @@ impl Store {
         }
         drop(conn);
         Ok(removed)
+    }
+
+    /// Finish interrupted deletions and prune their tombstones
+    /// (`docs/11` §13: tombstones plus a garbage collector). For every
+    /// tombstone, each recorded blob ref that no surviving turn still needs
+    /// is deleted from the blob store; the marker is then removed. Idempotent
+    /// by construction — a completed delete leaves nothing to sweep — so it
+    /// runs at every boot without a schedule.
+    pub fn sweep_tombstones(&self) -> Result<TombstoneReport, StoreError> {
+        struct Marker {
+            session_id: String,
+            refs: Vec<String>,
+        }
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        let markers: Vec<Marker> = {
+            let mut stmt = conn.prepare(
+                "SELECT session_id, content_refs FROM deleted_sessions ORDER BY deleted_at ASC",
+            )?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok(Marker {
+                        session_id: row.get(0)?,
+                        refs: serde_json::from_str(&row.get::<_, String>(1)?)
+                            .map_err(|_| rusqlite::Error::FromSqlConversionFailure(
+                                1,
+                                rusqlite::types::Type::Text,
+                                "the tombstone refs are not a JSON array".into(),
+                            ))?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows
+        };
+        let mut report = TombstoneReport {
+            swept_blobs: 0,
+            pruned_tombstones: 0,
+        };
+        for marker in markers {
+            for item in &marker.refs {
+                let still_referenced: Option<i64> = conn
+                    .query_row(
+                        "SELECT 1 FROM turns WHERE content_ref = ?1 LIMIT 1",
+                        params![item],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                if still_referenced.is_none() && self.files.delete(item).is_ok() {
+                    report.swept_blobs += 1;
+                }
+            }
+            conn.execute(
+                "DELETE FROM deleted_sessions WHERE session_id = ?1",
+                params![marker.session_id],
+            )?;
+            report.pruned_tombstones += 1;
+        }
+        Ok(report)
     }
 
     /// Bump `last_activity_at` (the agent loop calls this per turn).
@@ -1061,6 +1152,56 @@ impl Store {
         ))?;
         let rows: Vec<UsageEventRow> = stmt
             .query_map(params![from_ms, to_ms], usage_from_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(stmt);
+        Ok(rows)
+    }
+
+    /// Count sessions by surface, turns, and usage events for the diagnostic
+    /// bundle (Phase 7). Pure counts; no title, content, or model name is
+    /// read (`docs/features/updates-telemetry-privacy.md` §3, §7).
+    pub fn diagnostic_counts(&self) -> Result<DiagnosticCounts, StoreError> {
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        let scalar = |sql: &str| -> Result<i64, StoreError> {
+            Ok(conn.query_row(sql, [], |row| row.get(0))?)
+        };
+        Ok(DiagnosticCounts {
+            sessions: scalar("SELECT COUNT(*) FROM sessions")?,
+            cowork_sessions: scalar("SELECT COUNT(*) FROM sessions WHERE surface = 'chat'")?,
+            code_sessions: scalar("SELECT COUNT(*) FROM sessions WHERE surface = 'code'")?,
+            turns: scalar("SELECT COUNT(*) FROM turns")?,
+            usage_events: scalar("SELECT COUNT(*) FROM usage_events")?,
+        })
+    }
+
+    /// Usage events of one surface (Phase 7's split usage view). Same shape
+    /// and bounds as [`Store::list_usage_between`]; the join carries the
+    /// surface scoping so the combined totals can be split honestly.
+    pub fn list_surface_usage_between(
+        &self,
+        surface: &str,
+        from_ms: i64,
+        to_ms: i64,
+    ) -> Result<Vec<UsageEventRow>, StoreError> {
+        if to_ms < from_ms {
+            return Err(StoreError::Validation(
+                "the usage window ends before it starts",
+            ));
+        }
+        if surface.trim().is_empty() || surface.contains('\0') {
+            return Err(StoreError::Validation("the surface name is invalid"));
+        }
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {} FROM usage_events u
+             JOIN sessions s ON s.id = u.session_id
+             WHERE s.surface = ?1
+               AND u.timestamp >= ?2 AND u.timestamp <= ?3
+             ORDER BY u.timestamp ASC, u.id ASC",
+            usage_columns_qualified()
+        ))?;
+        let rows: Vec<UsageEventRow> = stmt
+            .query_map(params![surface, from_ms, to_ms], usage_from_row)?
             .collect::<Result<Vec<_>, _>>()?;
         drop(stmt);
         Ok(rows)

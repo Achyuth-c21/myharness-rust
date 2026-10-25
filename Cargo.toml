@@ -8,6 +8,7 @@ members = [
   "crates/bridge",
   "crates/config",
   "crates/mcp",
+  "crates/memory",
   "crates/plugins",
   "crates/projects",
   "crates/protocol-core",

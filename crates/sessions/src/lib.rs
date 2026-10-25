@@ -48,7 +48,7 @@ pub mod usage;
 pub use retention::{RetentionPolicy, RetentionReport};
 pub use usage::{
     summarize_code_usage, summarize_usage, CodeModelUsage, CodeRange, CodeUsageSummary, DailyUsage,
-    UsageSummary, UsageTotals,
+    SplitUsageSummary, SurfaceUsage, UsageSummary, UsageTotals,
 };
 
 use std::collections::HashMap;

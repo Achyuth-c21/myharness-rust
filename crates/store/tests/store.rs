@@ -75,8 +75,9 @@ fn migrations_are_forward_only_and_idempotent() {
     // The crate exposes no down path: the supported height is a forward-only
     // constant, and the ledger keeps one row per applied revision. Revision 3
     // is Phase 6 slice 2 (projects + sessions.project_id); revision 4 is
-    // slice 4 (scheduled tasks + runs).
-    assert_eq!(myharness_store::LATEST_SCHEMA_VERSION, 4);
+    // slice 4 (scheduled tasks + runs); revision 5 is Phase 7 (delete
+    // tombstones for the blob GC).
+    assert_eq!(myharness_store::LATEST_SCHEMA_VERSION, 5);
 }
 
 /// The `payload` passthrough preserves unknown keys across a close/reopen
@@ -371,6 +372,48 @@ fn delete_removes_rows_and_content_blobs_of_one_session() {
     assert_eq!(probe.store.list_sessions(None).unwrap().len(), 1);
 }
 
+/// A delete records a tombstone in the same transaction as the row removal
+/// (`docs/11` §13); the sweep is idempotent crash recovery — a completed
+/// delete leaves nothing to sweep, a shared blob survives until its last
+/// referent is gone, and the marker is pruned either way.
+#[test]
+fn a_delete_records_a_tombstone_the_sweep_finishes_and_prunes() {
+    let probe = TestStore::new();
+    let first = probe.fresh_session("tombstone-first");
+    let second = probe.fresh_session("tombstone-second");
+    let shared_text = b"content both tombstones point at";
+    let first_turn = probe
+        .store
+        .put_turn(&first.id, 0, TurnRole::User, TurnStatus::Complete, shared_text, None, None, None)
+        .unwrap();
+    let second_turn = probe
+        .store
+        .put_turn(&second.id, 0, TurnRole::User, TurnStatus::Complete, shared_text, None, None, None)
+        .unwrap();
+    assert_eq!(first_turn.content_ref, second_turn.content_ref);
+
+    // First delete: the shared blob must survive (the neighbor needs it),
+    // and the sweep must not remove it either.
+    probe.store.delete_session(&first.id).unwrap();
+    let report = probe.store.sweep_tombstones().unwrap();
+    assert_eq!(report.pruned_tombstones, 1);
+    assert_eq!(report.swept_blobs, 0);
+    assert!(probe.store.files.read(&first_turn.content_ref).unwrap().is_some());
+
+    // Second delete: the blob is now unreferenced. The sweep — possibly in a
+    // later process, so prove it across a reopen — finishes the job.
+    probe.store.delete_session(&second.id).unwrap();
+    let reopened = Store::open(&probe.db_path, &probe.files_dir).unwrap();
+    let report = reopened.sweep_tombstones().unwrap();
+    assert_eq!(report.pruned_tombstones, 1);
+    assert_eq!(report.swept_blobs, 1);
+    assert!(reopened.files.read(&second_turn.content_ref).unwrap().is_none());
+    // Idempotent: the second sweep has nothing left.
+    let again = reopened.sweep_tombstones().unwrap();
+    assert_eq!(again.pruned_tombstones, 0);
+    assert_eq!(again.swept_blobs, 0);
+}
+
 /// A turn sequence is a slot, not an overwrite target: double-appending is a
 /// caller mistake and is refused.
 #[test]
@@ -605,6 +648,84 @@ fn usage_events_are_selectable_in_a_window() {
         .is_empty());
     assert!(matches!(
         probe.store.list_usage_between(10, 5, None),
+        Err(StoreError::Validation(_))
+    ));
+}
+
+/// The Phase-7 split view's store query: a surface window carries only that
+/// surface's events, and its bounds/surface validation matches the combined
+/// query's (`docs/screens/settings.md` §Usage).
+#[test]
+fn surface_usage_events_are_scoped_to_their_surface() {
+    let probe = TestStore::new();
+    let chat = probe.fresh_session("usage-split-chat");
+    let code = probe
+        .store
+        .create_session(NewSession {
+            project_id: None,
+            surface: "code",
+            title: "usage-split-code",
+            ..Default::default()
+        })
+        .unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    probe
+        .store
+        .record_usage_at(
+            &chat.id,
+            NewUsageEvent {
+                model: "model-a",
+                input_tokens: 3,
+                output_tokens: 1,
+                ..Default::default()
+            },
+            now - 100,
+        )
+        .unwrap();
+    probe
+        .store
+        .record_usage_at(
+            &code.id,
+            NewUsageEvent {
+                model: "model-a",
+                input_tokens: 5,
+                output_tokens: 2,
+                search_requests: 1,
+                ..Default::default()
+            },
+            now - 50,
+        )
+        .unwrap();
+
+    let code_rows = probe
+        .store
+        .list_surface_usage_between("code", 0, now)
+        .unwrap();
+    assert_eq!(code_rows.len(), 1);
+    assert_eq!(code_rows[0].input_tokens, 5);
+    assert_eq!(code_rows[0].search_requests, 1);
+    let chat_rows = probe
+        .store
+        .list_surface_usage_between("chat", 0, now)
+        .unwrap();
+    assert_eq!(chat_rows.len(), 1);
+    assert_eq!(chat_rows[0].input_tokens, 3);
+    // A surface with no sessions is an empty window, not an error.
+    assert!(probe
+        .store
+        .list_surface_usage_between("vault", 0, now)
+        .unwrap()
+        .is_empty());
+    // The window bounds and the surface name validate like the combined query.
+    assert!(matches!(
+        probe.store.list_surface_usage_between("code", 10, 5),
+        Err(StoreError::Validation(_))
+    ));
+    assert!(matches!(
+        probe.store.list_surface_usage_between("  ", 0, now),
         Err(StoreError::Validation(_))
     ));
 }

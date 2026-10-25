@@ -9,6 +9,7 @@ async-trait = { workspace = true }
 myharness-agent = { path = "../agent" }
 myharness-config = { path = "../config" }
 myharness-mcp = { path = "../mcp" }
+myharness-memory = { path = "../memory" }
 myharness-plugins = { path = "../plugins" }
 myharness-projects = { path = "../projects" }
 myharness-scheduler = { path = "../scheduler" }
@@ -21,6 +22,7 @@ myharness-provider-sdk = { path = "../provider-sdk" }
 myharness-secrets = { path = "../secrets" }
 myharness-sessions = { path = "../sessions" }
 myharness-store = { path = "../store" }
+myharness-telemetry = { path = "../telemetry" }
 rand = { workspace = true }
 reqwest = { workspace = true }
 secrecy = { workspace = true }

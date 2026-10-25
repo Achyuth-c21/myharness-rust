@@ -99,6 +99,37 @@ pub trait ChatTargetResolver: Send + Sync {
     fn code_policy(&self) -> Result<CodePolicy, BridgeError> {
         Ok(CodePolicy::default())
     }
+
+    /// Effective memory policy (Phase 7). The production resolver reads the
+    /// merged profile; absence keeps memory enabled (the captured default).
+    fn memory_policy(&self) -> Result<crate::policy::MemoryPolicy, BridgeError> {
+        Ok(crate::policy::MemoryPolicy::default())
+    }
+
+    /// Effective telemetry policy (Phase 7; `REQ-PRIV-02`). The production
+    /// resolver reads the merged profile; nothing in this build emits, so
+    /// the policy is display and diagnostic-bundle input.
+    fn telemetry_policy(
+        &self,
+    ) -> Result<myharness_telemetry::TelemetryPolicy, BridgeError> {
+        Ok(myharness_telemetry::TelemetryPolicy::default())
+    }
+
+    /// The applied profile for the diagnostic bundle, still unredacted (the
+    /// builder redacts it). `None` means the resolver has no profile to
+    /// include; the bundle then states that the configuration was omitted.
+    fn diagnostic_profile(
+        &self,
+    ) -> Result<Option<myharness_config::ProfileDocument>, BridgeError> {
+        Ok(None)
+    }
+
+    /// Effective retention settings (Phase 7; `TEST-CFG-009`). The default
+    /// configures nothing: automatic deletion runs only when a profile
+    /// explicitly sets retention days.
+    fn retention_settings(&self) -> Result<crate::policy::RetentionSettings, BridgeError> {
+        Ok(crate::policy::RetentionSettings::default())
+    }
 }
 
 /// Production resolver over the same backend the setup window uses.
@@ -127,6 +158,42 @@ impl ChatTargetResolver for ProfileTargets {
             .lock()
             .map_err(|_| BridgeError::new("CONFIG_IO", "the configuration lock is unavailable"))?;
         backend.code_policy()
+    }
+
+    fn memory_policy(&self) -> Result<crate::policy::MemoryPolicy, BridgeError> {
+        let backend = self
+            .backend
+            .lock()
+            .map_err(|_| BridgeError::new("CONFIG_IO", "the configuration lock is unavailable"))?;
+        backend.memory_policy()
+    }
+
+    fn telemetry_policy(
+        &self,
+    ) -> Result<myharness_telemetry::TelemetryPolicy, BridgeError> {
+        let backend = self
+            .backend
+            .lock()
+            .map_err(|_| BridgeError::new("CONFIG_IO", "the configuration lock is unavailable"))?;
+        backend.telemetry_policy()
+    }
+
+    fn diagnostic_profile(
+        &self,
+    ) -> Result<Option<myharness_config::ProfileDocument>, BridgeError> {
+        let backend = self
+            .backend
+            .lock()
+            .map_err(|_| BridgeError::new("CONFIG_IO", "the configuration lock is unavailable"))?;
+        backend.diagnostic_profile()
+    }
+
+    fn retention_settings(&self) -> Result<crate::policy::RetentionSettings, BridgeError> {
+        let backend = self
+            .backend
+            .lock()
+            .map_err(|_| BridgeError::new("CONFIG_IO", "the configuration lock is unavailable"))?;
+        backend.retention_settings()
     }
 }
 
@@ -711,6 +778,32 @@ pub enum ChatCommand {
         #[serde(default)]
         count: Option<usize>,
     },
+    /// Memory (Phase 7; `docs/11` §5). The effective `memoryEnabled`
+    /// capability gates every mutating and listing command; the overview
+    /// always answers so the panel can explain a disabled state.
+    MemoryOverview,
+    ListMemoryEntries,
+    CreateMemoryEntry {
+        content: String,
+    },
+    UpdateMemoryEntry {
+        id: String,
+        content: String,
+    },
+    DeleteMemoryEntry {
+        id: String,
+    },
+    /// The explicit "Reset/delete memory" action (`docs/11` §5: explicit and
+    /// auditable). The renderer confirms before sending this.
+    ResetMemory,
+    /// The diagnostic bundle (Phase 7; `docs/features/updates-telemetry-privacy.md`
+    /// §7). The preview enumerates exactly what a bundle would include; the
+    /// build requires explicit consent and redacts. There is no upload in
+    /// this build — the bundle stays on the device.
+    DiagnosticsPreview,
+    DiagnosticsBuild {
+        consent: bool,
+    },
 }
 
 /// One command's answer.
@@ -804,12 +897,41 @@ pub enum ChatResponse {
     SchedulePreview {
         times: Vec<i64>,
     },
+    MemoryOverview {
+        policy: crate::policy::MemoryPolicyView,
+        baseline_hash: Option<String>,
+        baseline_changed: bool,
+        count: usize,
+    },
+    MemoryEntries {
+        entries: Vec<myharness_memory::MemoryEntry>,
+    },
+    MemoryEntry {
+        entry: myharness_memory::MemoryEntry,
+    },
+    MemoryReset {
+        deleted: usize,
+    },
+    /// What a diagnostic bundle would include. No file is written.
+    DiagnosticsPreview {
+        entries: Vec<String>,
+    },
+    /// The built bundle. `file` names the redacted document under the
+    /// app-managed diagnostics directory; `entries` is the same manifest the
+    /// preview showed.
+    DiagnosticsBundle {
+        file: String,
+        entries: Vec<String>,
+    },
     Stopped {
         stopped: bool,
     },
     Ack,
     Usage {
         summary: UsageSummary,
+        /// The Cowork/Code shares (Phase 7's split view). Present since the
+        /// split view; renderers that only need the combined totals ignore it.
+        surfaces: Vec<myharness_sessions::SurfaceUsage>,
     },
     Error {
         error: BridgeError,
@@ -930,6 +1052,18 @@ fn session_failure(error: impl std::fmt::Display) -> ChatFailure {
     ChatFailure::before_send(BridgeError::new("SESSION_ERROR", error.to_string()))
 }
 
+/// Map a memory-layer failure onto the wire. A corrupt entry file is its
+/// own visible code — "unreadable and set aside" — never a generic error.
+fn memory_failure(error: myharness_memory::MemoryError) -> ChatFailure {
+    let code = match &error {
+        myharness_memory::MemoryError::NotFound => "MEMORY_MISSING",
+        myharness_memory::MemoryError::Validation(_) => "CONFIG_VALIDATION",
+        myharness_memory::MemoryError::Corrupt(_) => "MEMORY_CORRUPT",
+        myharness_memory::MemoryError::Io(_) => "CONFIG_IO",
+    };
+    ChatFailure::before_send(BridgeError::new(code, error.to_string()))
+}
+
 /// A cron parse failure is always the caller's input problem.
 fn schedule_failure(error: myharness_scheduler::CronError) -> ChatFailure {
     ChatFailure::before_send(BridgeError::new(
@@ -966,6 +1100,8 @@ pub struct ChatService<K: AuditKeyStore, R: ChatTargetResolver> {
     running: Mutex<HashMap<String, CancellationToken>>,
     tools: Option<std::sync::Arc<ToolRuntime>>,
     catalog: Option<std::sync::Arc<CatalogRuntime>>,
+    memory: Option<std::sync::Arc<myharness_memory::MemoryStore>>,
+    diagnostics_dir: Option<std::path::PathBuf>,
 }
 
 impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
@@ -976,6 +1112,8 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
             running: Mutex::new(HashMap::new()),
             tools: None,
             catalog: None,
+            memory: None,
+            diagnostics_dir: None,
         }
     }
 
@@ -989,6 +1127,25 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
     /// Attach the skills/plugins catalog.
     pub fn with_catalog(mut self, catalog: std::sync::Arc<CatalogRuntime>) -> ChatService<K, R> {
         self.catalog = Some(catalog);
+        self
+    }
+
+    /// Attach the memory store. `None` (a broken memory directory) makes
+    /// every memory command an explicit `UNSUPPORTED` — memory degrades,
+    /// never chat (the MCP posture).
+    pub fn with_memory(
+        mut self,
+        memory: Option<std::sync::Arc<myharness_memory::MemoryStore>>,
+    ) -> ChatService<K, R> {
+        self.memory = memory;
+        self
+    }
+
+    /// Attach the diagnostics directory (Phase 7). `None` makes the
+    /// diagnostic commands an explicit `UNSUPPORTED` — diagnostics degrade,
+    /// never chat. Bundles are written here and never leave the device.
+    pub fn with_diagnostics(mut self, dir: Option<std::path::PathBuf>) -> ChatService<K, R> {
+        self.diagnostics_dir = dir;
         self
     }
 
@@ -1280,6 +1437,16 @@ async fn run<K: AuditKeyStore, R: ChatTargetResolver>(
         ChatCommand::PreviewSchedule { cron, count } => {
             service.preview_schedule(&cron, count.unwrap_or(3))
         }
+        ChatCommand::MemoryOverview => service.memory_overview(),
+        ChatCommand::ListMemoryEntries => service.list_memory_entries(),
+        ChatCommand::CreateMemoryEntry { content } => service.create_memory_entry(&content),
+        ChatCommand::UpdateMemoryEntry { id, content } => {
+            service.update_memory_entry(&id, &content)
+        }
+        ChatCommand::DeleteMemoryEntry { id } => service.delete_memory_entry(&id),
+        ChatCommand::ResetMemory => service.reset_memory(),
+        ChatCommand::DiagnosticsPreview => service.diagnostics_preview(),
+        ChatCommand::DiagnosticsBuild { consent } => service.diagnostics_build(consent),
     }
 }
 
@@ -2046,6 +2213,325 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
         notes
     }
 
+    // -----------------------------------------------------------------------
+    // Memory (Phase 7; docs/11 §5, REQ-PRIV-04's store half)
+    // -----------------------------------------------------------------------
+
+    /// The memory store, or the honest `UNSUPPORTED` when the directory
+    /// could not be opened (memory degrades, chat does not).
+    fn memory(
+        &self,
+    ) -> Result<&std::sync::Arc<myharness_memory::MemoryStore>, ChatFailure> {
+        self.memory.as_ref().ok_or_else(|| {
+            ChatFailure::before_send(BridgeError::new(
+                "UNSUPPORTED",
+                "memory is not configured in this build",
+            ))
+        })
+    }
+
+    /// The gate every memory command runs through: the effective
+    /// `memoryEnabled` capability is re-resolved per call, so disabling
+    /// memory actually prevents the prohibited operations rather than
+    /// changing a UI preference.
+    fn memory_gate(&self) -> Result<(), ChatFailure> {
+        let policy = self.targets.memory_policy()?;
+        if !policy.enabled {
+            return Err(ChatFailure::before_send(BridgeError::new(
+                "MEMORY_DISABLED",
+                "memory is disabled by the applied configuration",
+            )));
+        }
+        Ok(())
+    }
+
+    fn memory_overview(&self) -> Result<ChatResponse, ChatFailure> {
+        let policy = self.targets.memory_policy()?;
+        if self.memory.is_none() {
+            return Ok(ChatResponse::MemoryOverview {
+                policy: policy.view(),
+                baseline_hash: None,
+                baseline_changed: false,
+                count: 0,
+            });
+        }
+        let store = self.memory.as_ref().expect("checked above");
+        let entries = store.list().map_err(memory_failure)?;
+        Ok(ChatResponse::MemoryOverview {
+            policy: policy.view(),
+            baseline_hash: Some(store.baseline_hash().map_err(memory_failure)?),
+            baseline_changed: store.baseline_changed().map_err(memory_failure)?,
+            count: entries.len(),
+        })
+    }
+
+    fn list_memory_entries(&self) -> Result<ChatResponse, ChatFailure> {
+        self.memory_gate()?;
+        let entries = self.memory()?.list().map_err(memory_failure)?;
+        Ok(ChatResponse::MemoryEntries { entries })
+    }
+
+    fn create_memory_entry(&self, content: &str) -> Result<ChatResponse, ChatFailure> {
+        self.memory_gate()?;
+        let entry = self
+            .memory()?
+            .create(content, now_ms())
+            .map_err(memory_failure)?;
+        Ok(ChatResponse::MemoryEntry { entry })
+    }
+
+    fn update_memory_entry(&self, id: &str, content: &str) -> Result<ChatResponse, ChatFailure> {
+        self.memory_gate()?;
+        let entry = self
+            .memory()?
+            .update(id, content, now_ms())
+            .map_err(memory_failure)?;
+        Ok(ChatResponse::MemoryEntry { entry })
+    }
+
+    fn delete_memory_entry(&self, id: &str) -> Result<ChatResponse, ChatFailure> {
+        self.memory_gate()?;
+        self.memory()?.delete(id).map_err(memory_failure)?;
+        Ok(ChatResponse::Ack)
+    }
+
+    fn reset_memory(&self) -> Result<ChatResponse, ChatFailure> {
+        self.memory_gate()?;
+        let deleted = self.memory()?.reset().map_err(memory_failure)?;
+        Ok(ChatResponse::MemoryReset { deleted })
+    }
+
+    /// Run the configured retention sweeps (Phase 7; `TEST-CFG-009`,
+    /// `REQ-PRIV-04`). Only the surfaces a profile explicitly configures are
+    /// swept; the hold suspends everything. Called at boot — the shipped
+    /// schedule was never observed (`docs/14` §9), so there is no timer
+    /// beyond that.
+    pub fn retention_sweep(
+        &self,
+        now_ms: i64,
+    ) -> Result<Vec<myharness_sessions::RetentionReport>, BridgeError> {
+        let settings = self.targets.retention_settings()?;
+        let mut reports = Vec::new();
+        for (surface, days) in [("chat", settings.cowork_days), ("code", settings.code_days)] {
+            let Some(days) = days else { continue };
+            let policy = myharness_sessions::RetentionPolicy {
+                surface,
+                older_than_days: days,
+                hold: settings.hold,
+                now_ms,
+            };
+            reports.push(self.sessions.sweep_retention(&policy).map_err(|error| {
+                BridgeError::new("CONFIG_IO", format!("the retention sweep failed: {error}"))
+            })?);
+        }
+        Ok(reports)
+    }
+
+    /// The manifest of what a diagnostic bundle includes
+    /// (`docs/features/updates-telemetry-privacy.md` §7: enumerate exactly).
+    fn diagnostics_manifest(&self) -> Result<Vec<String>, ChatFailure> {
+        let mut entries = vec![
+            "Application version, platform, and the time of generation".to_string(),
+        ];
+        if self.targets.diagnostic_profile()?.is_some() {
+            entries.push(
+                "The effective configuration, with secrets, credential handles, and private \
+                 hosts redacted"
+                    .to_string(),
+            );
+        } else {
+            entries.push("No applied profile was available; the configuration is omitted"
+                .to_string());
+        }
+        entries.push(
+            "Local counts: sessions by surface, turns, usage events, memory entries".to_string(),
+        );
+        entries.push("The effective telemetry policy state".to_string());
+        entries.push(
+            "Never included: transcripts, prompts, completions, attachments, tool results, \
+             memory content, credentials, or workspace file contents"
+                .to_string(),
+        );
+        Ok(entries)
+    }
+
+    fn diagnostics_preview(&self) -> Result<ChatResponse, ChatFailure> {
+        // The preview answers even without a directory: it enumerates, it
+        // writes nothing.
+        Ok(ChatResponse::DiagnosticsPreview {
+            entries: self.diagnostics_manifest()?,
+        })
+    }
+
+    fn diagnostics_build(&self, consent: bool) -> Result<ChatResponse, ChatFailure> {
+        let dir = self.diagnostics_dir.as_ref().ok_or_else(|| {
+            ChatFailure::before_send(BridgeError::new(
+                "UNSUPPORTED",
+                "diagnostics are not configured in this build",
+            ))
+        })?;
+        // Explicit consent is the gate (`TEST-PRIV-003`, `REQ-PRIV-03`).
+        // There is no upload in this build; the bundle stays on the device.
+        if !consent {
+            return Err(ChatFailure::before_send(BridgeError::new(
+                "CONSENT_REQUIRED",
+                "building a diagnostic bundle requires your explicit consent",
+            )));
+        }
+        let entries = self.diagnostics_manifest()?;
+        let document = self.render_diagnostic_bundle()?;
+        std::fs::create_dir_all(dir).map_err(|_| {
+            ChatFailure::before_send(BridgeError::new(
+                "CONFIG_IO",
+                "the diagnostics directory is not writable",
+            ))
+        })?;
+        let file = format!("bundle-{}.md", now_ms());
+        let path = dir.join(&file);
+        std::fs::write(&path, document).map_err(|_| {
+            ChatFailure::before_send(BridgeError::new(
+                "CONFIG_IO",
+                "the diagnostic bundle could not be written",
+            ))
+        })?;
+        self.append_diagnostics_log(dir, &file)?;
+        Ok(ChatResponse::DiagnosticsBundle { file, entries })
+    }
+
+    /// Render the redacted bundle document. Every section the manifest names
+    /// appears here; the configuration section passes the export redaction
+    /// and then the free-text redaction as defense in depth.
+    fn render_diagnostic_bundle(&self) -> Result<String, ChatFailure> {
+        let store = self.sessions.store();
+        let counts = store.diagnostic_counts().map_err(session_failure)?;
+        let policy = self.targets.telemetry_policy()?;
+        let mut out = String::new();
+        out.push_str("# Diagnostic bundle\n\n");
+        out.push_str(&format!(
+            "Generated: {} ms since epoch\n",
+            now_ms()
+        ));
+        out.push_str(&format!(
+            "Application: myharness-desktop {}\n",
+            env!("CARGO_PKG_VERSION")
+        ));
+        out.push_str(&format!(
+            "Platform: {}/{} (family {})\n",
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+            std::env::consts::FAMILY
+        ));
+        out.push_str("\n## What is included\n\n");
+        for entry in self.diagnostics_manifest()? {
+            out.push_str(&format!("- {entry}\n"));
+        }
+        out.push_str("\n## Local counts\n\n");
+        out.push_str(&format!(
+            "- sessions: {} (cowork {}, code {})\n",
+            counts.sessions, counts.cowork_sessions, counts.code_sessions
+        ));
+        out.push_str(&format!("- turns: {}\n", counts.turns));
+        out.push_str(&format!("- usage events: {}\n", counts.usage_events));
+        let memory_entries = match self.memory.as_ref() {
+            Some(store) => store.list().map_err(memory_failure)?.len(),
+            None => 0,
+        };
+        out.push_str(&format!("- memory entries: {memory_entries}\n"));
+        out.push_str("\n## Effective configuration\n\n");
+        match self.targets.diagnostic_profile()? {
+            Some(profile) => {
+                let redacted = myharness_config::export::redact_document_for(
+                    &profile,
+                    myharness_config::export::RedactTarget::Export,
+                );
+                // Defense in depth: the export redaction already ran; the
+                // free-text pass strips credential shapes that a custom
+                // header value or error string could carry.
+                let text = serde_json::to_string_pretty(&redacted).map_err(|_| {
+                    ChatFailure::before_send(BridgeError::new(
+                        "CONFIG_IO",
+                        "the configuration could not be serialized",
+                    ))
+                })?;
+                out.push_str("```json\n");
+                out.push_str(&myharness_telemetry::redact_text(&text));
+                out.push_str("\n```\n");
+            }
+            None => out.push_str("Not available from this resolver.\n"),
+        }
+        out.push_str("\n## Telemetry policy\n\n");
+        out.push_str(&format!(
+            "- essential telemetry blocked: {}\n",
+            policy.essential_blocked
+        ));
+        out.push_str(&format!(
+            "- nonessential telemetry blocked: {}\n",
+            policy.nonessential_blocked
+        ));
+        out.push_str(&format!(
+            "- nonessential services blocked: {}\n",
+            if policy.blocked_nonessential_services.is_empty() {
+                "none".to_string()
+            } else {
+                policy.blocked_nonessential_services.join(", ")
+            }
+        ));
+        out.push_str(&format!(
+            "- usage metrics switch: {}\n",
+            if policy.usage_metrics_enabled {
+                "on"
+            } else {
+                "off"
+            }
+        ));
+        match policy.otlp_endpoint {
+            Some(endpoint) => {
+                out.push_str(&format!(
+                    "- OpenTelemetry endpoint configured (not dialed by this build): {}\n",
+                    myharness_telemetry::redact_url(&endpoint)
+                ));
+            }
+            None => out.push_str("- no OpenTelemetry endpoint configured\n"),
+        }
+        Ok(out)
+    }
+
+    /// Append the no-contents action line to `diagnostics/log.jsonl`
+    /// (`docs/features/updates-telemetry-privacy.md` §7: log the action
+    /// without contents). The log is bounded; a full log never blocks the
+    /// bundle itself.
+    fn append_diagnostics_log(&self, dir: &std::path::Path, file: &str) -> Result<(), ChatFailure> {
+        let log_path = dir.join("log.jsonl");
+        if let Ok(meta) = std::fs::metadata(&log_path) {
+            if meta.len() > 2 * 1024 * 1024 {
+                return Ok(());
+            }
+        }
+        use std::io::Write;
+        let line = format!(
+            "{{\"at\":{},\"action\":\"bundle-built\",\"file\":\"{}\"}}\n",
+            now_ms(),
+            file.replace('"', "'")
+        );
+        let mut log = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .map_err(|_| {
+                ChatFailure::before_send(BridgeError::new(
+                    "CONFIG_IO",
+                    "the diagnostics log is not writable",
+                ))
+            })?;
+        log.write_all(line.as_bytes()).map_err(|_| {
+            ChatFailure::before_send(BridgeError::new(
+                "CONFIG_IO",
+                "the diagnostics log could not be written",
+            ))
+        })?;
+        Ok(())
+    }
+
     fn catalog(&self) -> Result<&std::sync::Arc<CatalogRuntime>, ChatFailure> {
         self.catalog.as_ref().ok_or_else(|| {
             ChatFailure::before_send(BridgeError::new(
@@ -2723,11 +3209,14 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
     ) -> Result<ChatResponse, ChatFailure> {
         let days = days.unwrap_or(DEFAULT_USAGE_DAYS);
         let tz = fixed_offset(utc_offset_minutes)?;
-        let summary = self
+        let split = self
             .sessions
-            .usage_summary(None, days, tz, now_ms())
+            .usage_summary_split(days, tz, now_ms())
             .map_err(session_failure)?;
-        Ok(ChatResponse::Usage { summary })
+        Ok(ChatResponse::Usage {
+            summary: split.combined,
+            surfaces: split.surfaces,
+        })
     }
 }
 

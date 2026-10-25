@@ -155,6 +155,7 @@ pub fn tab_schema(tab: SetupTab) -> TabSchema {
             switch("chatTabEnabled", "Chat"),
             switch("coworkTabEnabled", "Cowork"),
             switch("isClaudeCodeForDesktopEnabled", "Code"),
+            switch("memoryEnabled", "Memory"),
             switch("scheduledTasksEnabled", "Scheduled tasks"),
             switch("quickWriteEnabled", "Quick write"),
             switch("developerModeEnabled", "Developer mode"),

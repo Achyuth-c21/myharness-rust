@@ -493,6 +493,87 @@ Traps carried forward from this batch (all hit for real):
   everywhere `NewSession` is constructed — the compiler catches struct
   literals, but the E2E mocks had to add `projectId` to their fixtures.
 
+## 7m. Phase 7 complete on the lane — memory, usage, privacy, updates, retention (2026-10-26)
+
+The `phase-7` lane (cut from `dev` @ `178cb09`) implements all six build
+areas of `docs/13` Phase 7 ("Memory, usage, privacy, updates") in five
+commits: `4d18d87` memory · `7aa5dfe` usage split view · `0f76676`
+privacy/diagnostics · `6b3fe47` retention + tombstone GC · `aa1337e` update
+lifecycle. **Nothing is merged to `dev` or pushed — owner approval required,
+per the standing pattern.** The Phase 7 exit criteria hold: legal hold
+prevents deletion (boot-enforced), the diagnostic bundle enumerates and
+redacts, and an update failure leaves the old version runnable (the
+verification gate refuses every bundle).
+
+- **Memory (`crates/memory`, `4d18d87`):** Markdown entries are the truth;
+  `index.json` is a derived cache that heals on open; a corrupt (non-UTF-8)
+  file is renamed aside (`.corrupt-<ms>`) and named in `events.jsonl`, never
+  served or deleted; content bounds are refused, not truncated; the sha256
+  baseline hash refreshes only on app-managed mutations so external edits stay
+  detectable via `baseline_changed`; reset is explicit and audited. The bridge
+  reads `memoryEnabled` fail-closed from the merged profile **per command**
+  (absent = on, the captured default; explicit false/malformed = off); a broken
+  memory directory degrades memory to `UNSUPPORTED`, never chat.
+- **The usage split view:** store `list_surface_usage_between(surface, from,
+  to)` joins `sessions` for the surface scoping (the ledger itself still has
+  no surface column; the FK is `ON DELETE CASCADE`, so the shares always sum
+  to the combined totals for app-written rows). Sessions'
+  `usage_summary_split` returns combined + per-surface `SurfaceUsage
+  { surface, totals }` — **totals only**: an earlier draft's `messages` field
+  actually carried `totals.events` (a labeling fudge) and `sessions` was
+  unused by any consumer; both were cut. Bridge `ChatResponse::Usage` carries
+  `surfaces: Vec<SurfaceUsage>` alongside `summary` (a renderer that only
+  reads `summary` is unaffected). The Settings usage panel renders Cowork/Code
+  cards between "Tokens" and "Daily"; the old "no surface column" caveat is
+  gone.
+- **Traps hit in this slice:** the other model's edit had spliced the new
+  types into the middle of `summarize_usage`'s doc comment — the doc text
+  silently attached to the wrong item; check comment seams when inserting
+  above a `pub fn`. The `Usage` response gained a field, so every
+  `let ChatResponse::Usage { summary } = ...` destructure had to widen
+  (the compiler catches struct literals, **not** pattern destructures in
+  tests — grep for them). `surface` has no CHECK constraint on spellings
+  (only `NOT NULL`); the split covers `chat`/`code` and combined folds
+  everything — recorded as `docs/14` §9 item 68.
+- **Diagnostics (`0f76676`):** `crates/telemetry` ships **no emitter** — no
+  crash reporter, no analytics, no OTel exporter; the policy reads the
+  merged `telemetry` section fail-closed (each block switch independent;
+  malformed → blocked; the `disableNonessentialServices` list fails closed
+  to the three known services; `otlpContentCapture` is refused at apply and
+  surfaced anyway). Redaction is additive (Bearer/Basic schemes, token
+  prefixes `sk-ant-/sk-/ghp_/github_pat_/xoxb-/xoxa-/AKIA/eyJ`, URL
+  userinfo/query/fragment) — prompt-like text passes through unchanged. The
+  bundle needs explicit consent (`CONSENT_REQUIRED`), passes the export
+  redaction then the free-text pass, and logs `bundle-built` to
+  `diagnostics/log.jsonl` with no contents (2 MiB bound). No upload exists
+  and the Privacy pane says so.
+- **Retention/GC (`6b3fe47`):** schema v5 `deleted_sessions` tombstones —
+  the delete records its blob refs in the delete transaction;
+  `sweep_tombstones` finishes crash-interrupted sweeps (reference-checked,
+  so a shared blob survives until its last referent dies), prunes markers,
+  idempotent across reopens. `RetentionSettings`: absent/malformed days =
+  **no automatic deletion** (a guessed default for a destructive sweep is
+  the worst invention); malformed hold = hold; `coworkSessionRetentionDays`
+  governs the single chat surface and the shipped `chatSessionRetentionDays`
+  is NOT silently mapped. Boot runs retention + tombstone sweeps; no timer.
+- **Updates (`aa1337e`):** `crates/updates` — `UpdatePolicy` (72 h/24 h
+  defaults, `0` = immediate, malformed keeps the default, never shortens),
+  the lifecycle state machine (staged-only install; failed health check →
+  `RolledBack`; a refused verification returns to `Running`), the
+  enforcement window, and the streaming-task session guard. The production
+  verifier `NoTrustAnchor` refuses EVERY bundle — the feed's wire format and
+  public key were never captured, so the old version stays runnable by
+  construction. The System pane states the no-feed posture; E2E T49.
+- **Gates at phase end:** workspace 527 cargo tests / 0 failed; clippy `-D
+  warnings` on store/sessions/bridge/telemetry/updates/desktop;
+  `cargo metadata`; `tsc --noEmit`; `vite build`; E2E `shell.spec.mjs` ALL
+  PASS (T01–T49; T48 privacy, T49 system/update posture).
+- **Docs on disk:** `docs/04` §3.1 rows Phase 7/1–5; `docs/17` §4.17 (the
+  full status table); `docs/18` diagnostics contract + the retention note +
+  the memory table + usage `surfaces`; `docs/14` §9 items 66–70.
+  `apps/desktop/src/components/Untitled-1` remains untracked and untouched
+  (owner decision pending).
+
 ## 8. Status vocabulary (`docs/17`)
 
 `Available` · `Available, unexercised` · `Partial` · `Policy-disabled` · `Unavailable` ·

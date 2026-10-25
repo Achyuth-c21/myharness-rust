@@ -119,8 +119,26 @@ fn local_window_start_ms(
     Ok(start.timestamp_millis())
 }
 
-/// Fold ledger rows into local-day buckets. Pure: the caller supplies `now`
-/// and the offset, so timezone-boundary behavior is directly testable.
+/// One surface's share of the split usage view (Phase 7). The totals are the
+/// same fold the combined view uses — only the query's surface scoping
+/// differs — so a surface's numbers always add up against the combined
+/// window. A surface with no rows in the window is a zero summary, never a
+/// missing field.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SurfaceUsage {
+    pub surface: String,
+    pub totals: UsageTotals,
+}
+
+/// The combined window plus the per-surface shares.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SplitUsageSummary {
+    pub combined: UsageSummary,
+    pub surfaces: Vec<SurfaceUsage>,
+}
+
 pub fn summarize_usage(
     events: &[UsageEventRow],
     days: u32,
@@ -460,6 +478,36 @@ impl<K: AuditKeyStore> SessionService<K> {
         let from_ms = window_start_ms(days, tz, now_ms)?;
         let events = self.store.list_usage_between(from_ms, now_ms, session_id)?;
         summarize_usage(&events, days, tz, now_ms)
+    }
+
+    /// The split usage view (Phase 7): the combined window plus the Cowork
+    /// and Code shares, so the usage page can show both summaries the screen
+    /// spec names (`docs/screens/settings.md` §Usage). The combined totals
+    /// fold every surface; a surface with no rows is a zero summary, never a
+    /// missing field.
+    pub fn usage_summary_split(
+        &self,
+        days: u32,
+        tz: FixedOffset,
+        now_ms: i64,
+    ) -> Result<SplitUsageSummary, SessionError> {
+        let combined = self.usage_summary(None, days, tz, now_ms)?;
+        let from_ms = window_start_ms(days, tz, now_ms)?;
+        let mut surfaces = Vec::new();
+        for surface in ["chat", "code"] {
+            let events = self
+                .store
+                .list_surface_usage_between(surface, from_ms, now_ms)?;
+            let summary = summarize_usage(&events, days, tz, now_ms)?;
+            surfaces.push(SurfaceUsage {
+                surface: surface.to_string(),
+                totals: summary.totals,
+            });
+        }
+        Ok(SplitUsageSummary {
+            combined,
+            surfaces,
+        })
     }
 
     /// Code-only usage for the dashboard. The event and turn queries join on

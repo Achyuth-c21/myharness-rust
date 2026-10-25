@@ -1507,6 +1507,61 @@ try {
     await mockContext.close();
   });
 
+  await step("T48 privacy pane states the captured disclosure and the honest diagnostics boundary", async () => {
+    await page.goto(`${BASE}/#settings/data-privacy-controls`);
+    await page.waitForSelector("[role=dialog][aria-label=Settings]");
+    // The captured disclosure copy (docs/09 §1.3) is the trust boundary.
+    await page.getByText("Inference requests go to the configured third-party provider", { exact: false }).waitFor();
+    await expectTrue(
+      await page.getByText("Anthropic may still receive crash and performance reports", { exact: false }).count() === 1,
+      "the what-Anthropic-may-receive statement is present",
+    );
+    await expectTrue(
+      await page.getByText("nonessential services and may be blocked by policy", { exact: false }).count() === 1,
+      "the nonessential-services statement is present",
+    );
+    // The rebuild's own posture is stated, never implied.
+    await expectTrue(
+      await page.getByText("no crash reporter, no analytics pipeline", { exact: false }).count() === 1,
+      "the no-emitter posture is stated",
+    );
+    // Browser preview: the diagnostic action is the honest desktop-only state,
+    // never a fabricated contents list or an enabled build button.
+    await page.getByText("Diagnostics are available in the desktop app.", { exact: false }).waitFor();
+    await expectTrue(
+      (await page.locator("[data-testid=diagnostics-contents]").count()) === 0,
+      "the preview must not fabricate the bundle contents",
+    );
+    await expectTrue(
+      (await page.getByRole("button", { name: "Build diagnostic bundle" }).count()) === 0,
+      "no build button without the bridge",
+    );
+    await page.keyboard.press("Escape");
+  });
+
+  await step("T49 system pane reports the version boundary and the honest update posture", async () => {
+    await page.goto(`${BASE}/#settings/desktop`);
+    await page.waitForSelector("[role=dialog][aria-label=Settings]");
+    // Browser preview: no shell to ask for a version, and the pane says so
+    // instead of inventing one.
+    await page.getByText("The running version is reported by the desktop app.", { exact: false }).waitFor();
+    await expectTrue(
+      (await page.locator("[data-testid=system-version] .usage-value").innerText()) === "—",
+      "the preview must not fabricate a version",
+    );
+    // The update posture is the recorded unavailability, never a fake feed
+    // or a fake banner.
+    await expectTrue(
+      await page.getByText("This build has no update feed", { exact: false }).count() === 1,
+      "the no-feed posture is stated",
+    );
+    await expectTrue(
+      await page.getByText("never replaced by an unverified bundle", { exact: false }).count() === 1,
+      "the verification guarantee is stated",
+    );
+    await page.keyboard.press("Escape");
+  });
+
 } finally {
   await browser.close();
 }

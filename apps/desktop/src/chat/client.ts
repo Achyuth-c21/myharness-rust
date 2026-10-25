@@ -123,6 +123,16 @@ export interface UsageSummary {
   daily: DailyUsage[];
 }
 
+/**
+ * One surface's share of the split usage view (`crates/sessions`
+ * `SurfaceUsage`, Phase 7). `surface` is the stored spelling: `"chat"`
+ * (Cowork) or `"code"`.
+ */
+export interface SurfaceUsage {
+  surface: string;
+  totals: UsageTotals;
+}
+
 export type CodeRange = "7d" | "30d" | "all";
 export type CodePermissionMode = "default" | "acceptEdits" | "plan" | "bypass";
 
@@ -176,6 +186,17 @@ export interface ScheduledRunRecord {
   reason: string | null;
   sessionId: string | null;
   finishedAt: number | null;
+}
+
+/**
+ * One stored memory entry (`crates/memory` `MemoryEntry`): Markdown content
+ * with its timestamps. Content is personal and local-only.
+ */
+export interface MemoryEntryRecord {
+  id: string;
+  content: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 /** One captured template card (name + schedule label are the captured copy). */
@@ -269,6 +290,14 @@ export type ChatCommand =
   | { type: "deleteScheduledTask"; id: string }
   | { type: "runScheduledTaskNow"; id: string }
   | { type: "previewSchedule"; cron: string; count?: number | null }
+  | { type: "memoryOverview" }
+  | { type: "listMemoryEntries" }
+  | { type: "createMemoryEntry"; content: string }
+  | { type: "updateMemoryEntry"; id: string; content: string }
+  | { type: "deleteMemoryEntry"; id: string }
+  | { type: "resetMemory" }
+  | { type: "diagnosticsPreview" }
+  | { type: "diagnosticsBuild"; consent: boolean }
   | { type: "listCodeSessions"; archived?: boolean | null }
   | {
       type: "createCodeSession";
@@ -327,6 +356,18 @@ export type ChatResponse =
   | { type: "scheduledRun"; run: ScheduledRunRecord }
   | { type: "templates"; templates: ScheduledTemplateCard[] }
   | { type: "schedulePreview"; times: number[] }
+  | {
+      type: "memoryOverview";
+      policy: { memoryEnabled: boolean };
+      baselineHash: string | null;
+      baselineChanged: boolean;
+      count: number;
+    }
+  | { type: "memoryEntries"; entries: MemoryEntryRecord[] }
+  | { type: "memoryEntry"; entry: MemoryEntryRecord }
+  | { type: "memoryReset"; deleted: number }
+  | { type: "diagnosticsPreview"; entries: string[] }
+  | { type: "diagnosticsBundle"; file: string; entries: string[] }
   | { type: "codeDashboard"; summary: CodeUsageSummary; sessions: SessionRecord[]; repositories: CodeRepositoryView[]; policy: CodePolicyView }
   | {
       type: "turn";
@@ -348,7 +389,7 @@ export type ChatResponse =
     }
   | { type: "stopped"; stopped: boolean }
   | { type: "ack" }
-  | { type: "usage"; summary: UsageSummary }
+  | { type: "usage"; summary: UsageSummary; surfaces: SurfaceUsage[] }
   | { type: "mcpStatus"; servers: McpServerView[]; warnings: string[] }
   | { type: "toolSearch"; hits: ToolSearchHit[]; enabled: boolean }
   | { type: "mcpTools"; tools: ToolDescriptor[] }

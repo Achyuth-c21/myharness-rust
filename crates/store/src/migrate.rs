@@ -178,12 +178,30 @@ CREATE TABLE scheduled_runs (
 CREATE INDEX idx_runs_task ON scheduled_runs(task_id, started_at DESC);
 "#,
     },
+    // Revision 5 (Phase 7): delete tombstones. `docs/11` §13: "The rebuild
+    // should use tombstones and a garbage collector rather than recursive
+    // deletes during UI interaction." A delete records the transcript blob
+    // refs it owned in the same transaction that removes the rows, so a
+    // crash between the row deletion and the blob sweep leaves a recoverable
+    // marker instead of orphaned content; `Store::sweep_tombstones` finishes
+    // the sweep and prunes the marker.
+    Migration {
+        version: 5,
+        name: "phase7_delete_tombstones",
+        sql: r#"
+CREATE TABLE deleted_sessions (
+    session_id TEXT PRIMARY KEY,
+    deleted_at INTEGER NOT NULL,
+    content_refs TEXT NOT NULL
+);
+"#,
+    },
 ];
 
 /// The newest schema revision this binary understands. Kept as a flat constant
 /// (const-eval cannot iterate the table); the unit test below pins it to the
 /// last migration so the two can never drift apart.
-pub const LATEST_SCHEMA_VERSION: i64 = 4;
+pub const LATEST_SCHEMA_VERSION: i64 = 5;
 
 /// Apply every missing migration inside one transaction each, recording the
 /// version row together with the schema it belongs to. Idempotent: an already
