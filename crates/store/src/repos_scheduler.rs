@@ -250,6 +250,32 @@ impl Store {
         Ok(out)
     }
 
+    /// One run row by id (the terminal-row response of `runScheduledTaskNow`
+    /// reads exactly the row it recorded, never "the latest").
+    pub fn read_scheduled_run(&self, run_id: &str) -> Result<ScheduledRunRow, StoreError> {
+        if !is_uuid(run_id) {
+            return Err(StoreError::Validation("the run id is not a uuid"));
+        }
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        let raw = conn
+            .query_row(
+                &format!("SELECT {} FROM scheduled_runs WHERE id = ?1", run_columns()),
+                params![run_id],
+                run_from_row,
+            )
+            .optional()?;
+        match raw {
+            Some(row) => {
+                valid_run(&row).map_err(|_| StoreError::QuarantinedRecord {
+                    source_table: "scheduled_runs",
+                    source_id: row.id.clone(),
+                })?;
+                Ok(row)
+            }
+            None => Err(StoreError::NotFound),
+        }
+    }
+
     /// Enabled tasks whose armed occurrence is due (`armed_at <= now`). The
     /// engine's whole queue is this query — there is no second bookkeeping.
     pub fn due_scheduled_tasks(&self, now: i64) -> Result<Vec<ScheduledTaskRow>, StoreError> {
@@ -412,7 +438,12 @@ impl Store {
         Ok(id)
     }
 
-    /// The most recent run rows for one task, newest first.
+    /// The most recent run rows for one task, newest first. Ties on
+    /// `started_at` (the `running` and terminal rows of one occurrence share
+    /// it) order by insert time (`rowid`), so the terminal row of an
+    /// occurrence is always the newest — a random-uuid tie-break would make
+    /// `lastRun` a coin flip (the same trap `MEMORY.md` §7f fixed for
+    /// sessions).
     pub fn list_scheduled_runs(
         &self,
         task_id: &str,
@@ -424,7 +455,7 @@ impl Store {
         let conn = self.conn.lock().expect("store mutex poisoned");
         let mut stmt = conn.prepare(&format!(
             "SELECT {} FROM scheduled_runs WHERE task_id = ?1
-             ORDER BY started_at DESC, id ASC LIMIT ?2",
+             ORDER BY started_at DESC, rowid DESC LIMIT ?2",
             run_columns()
         ))?;
         let rows: Vec<ScheduledRunRow> = stmt

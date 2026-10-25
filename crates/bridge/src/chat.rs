@@ -1880,11 +1880,13 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
     /// Execute one occurrence: run row, a normal session, the terminal run
     /// row. Used by the background tick and `RunScheduledTaskNow` alike, so
     /// history and usage are auditable in exactly one shape (`TEST-SCHED-004`).
+    /// Returns `(session_id, terminal_run_id)` on success; the failed
+    /// occurrence's terminal run row is still recorded.
     async fn execute_scheduled_occurrence(
         &self,
         task: &myharness_store::ScheduledTaskRow,
         started_at: i64,
-    ) -> Result<String, ChatFailure> {
+    ) -> Result<(String, String), ChatFailure> {
         let run_id = self
             .sessions
             .store()
@@ -1892,7 +1894,8 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
             .map_err(session_failure)?;
         match self.run_scheduled_session(task, &run_id).await {
             Ok(session_id) => {
-                self.sessions
+                let terminal = self
+                    .sessions
                     .store()
                     .record_scheduled_run(
                         &task.id,
@@ -1903,7 +1906,7 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
                         Some(now_ms()),
                     )
                     .map_err(session_failure)?;
-                Ok(session_id)
+                Ok((session_id, terminal))
             }
             Err(failure) => {
                 self.sessions
@@ -1936,25 +1939,15 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
             )));
         }
         let started_at = now_ms();
-        let session_id = self.execute_scheduled_occurrence(&task, started_at).await?;
-        // The response carries the terminal run row so the renderer can show
-        // the outcome without a second read.
+        let (_session_id, terminal_run_id) =
+            self.execute_scheduled_occurrence(&task, started_at).await?;
+        // The response carries the terminal run row — the exact row this run
+        // recorded, never "whatever sorts latest".
         let run = self
             .sessions
             .store()
-            .list_scheduled_runs(id, 1)
-            .map_err(session_failure)?
-            .into_iter()
-            .next()
-            .unwrap_or_else(|| myharness_store::ScheduledRunRow {
-                id: String::new(),
-                task_id: id.to_string(),
-                started_at,
-                status: "completed".into(),
-                reason: None,
-                session_id: Some(session_id),
-                finished_at: Some(now_ms()),
-            });
+            .read_scheduled_run(&terminal_run_id)
+            .map_err(session_failure)?;
         Ok(ChatResponse::ScheduledRun { run })
     }
 
@@ -2011,7 +2004,9 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
                 crate::scheduler::Occurrence::Run => {
                     let outcome = self.execute_scheduled_occurrence(&task, armed_at).await;
                     notes.push(match &outcome {
-                        Ok(session_id) => format!("task {} ran in session {session_id}", task.id),
+                        Ok((session_id, _)) => {
+                            format!("task {} ran in session {session_id}", task.id)
+                        }
                         Err(failure) => format!("task {} failed: {}", task.id, failure.error.message),
                     });
                 }
