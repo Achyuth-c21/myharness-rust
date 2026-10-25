@@ -282,10 +282,24 @@ pub(crate) fn descriptor_from_row(
     row: &Value,
 ) -> Option<myharness_provider_sdk::ModelDescriptor> {
     let id = model_id(row)?;
+    let tools_supported = row
+        .get("capabilities")
+        .and_then(|capabilities| {
+            capabilities
+                .get("tool_use")
+                .or_else(|| capabilities.get("tools"))
+        })
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        || row
+            .get("supports_tools")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
     let capabilities = myharness_provider_sdk::ModelCapabilities {
         // The rows' capability fields were not captured in any spelling the
         // rebuild can cite (`docs/14` §9); a row carries what it carries, and
         // unknown metadata stays unsupported rather than optimistic.
+        tools_supported,
         ..Default::default()
     };
     Some(myharness_provider_sdk::ModelDescriptor {

@@ -13,6 +13,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { SETTINGS_GROUPS } from "../routes";
 import { applyMode, loadMode, type ThemeMode } from "../theme";
 import { UsagePanel } from "../settings/UsagePanel";
+import { DeveloperPanel } from "../settings/DeveloperPanel";
+import { PluginsPanel } from "../settings/PluginsPanel";
+import { SkillsPanel } from "../settings/SkillsPanel";
 import { useFocusTrap } from "./focusTrap";
 
 interface Props {
@@ -181,6 +184,12 @@ export function SettingsModal({ section, onSection, onClose }: Props) {
               </>
             ) : section === "usage" ? (
               <UsagePanel />
+            ) : section === "developer" ? (
+              <DeveloperPanel />
+            ) : section === "skills" ? (
+              <SkillsPanel />
+            ) : section === "plugins" ? (
+              <PluginsPanel />
             ) : (
               <p className="settings-note">
                 This section is specified in docs/09-settings-and-configuration.md and is wired in a later

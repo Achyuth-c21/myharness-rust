@@ -1,16 +1,14 @@
-//! The turn loop — roadmap Phase 4 slice 2 (`docs/13` Phase 4; `docs/12`
-//! §8.2–§8.3). This crate is the **agent layer** between a native provider
-//! adapter and the session service: it replays the transcript, asks the
-//! adapter for one turn, consumes the typed stream, and records what actually
-//! happened.
+//! The turn loop — roadmap Phases 4–5 (`docs/13`; `docs/12` §8.2–§8.3).
+//! This crate is the **agent layer** between a native provider adapter and the
+//! session service: it replays the transcript, asks the adapter for one turn,
+//! consumes the typed stream, and records what actually happened.
 //!
-//! Slice 2 is deliberately small and honest:
+//! The Phase 4 path is deliberately small and honest:
 //!
-//! - **One turn, no tools.** [`ProviderAdapter::create_turn`] receives the
-//!   replayed conversation plus the new user turn. Tool declarations are
-//!   refused ([`AgentError::Unsupported`]) rather than advertised while
-//!   nothing can execute them (`docs/14` §9: an unavailable capability is
-//!   stated, never emulated); tool execution belongs to the MCP phase.
+//! - **One turn at a time; the plain path has no tools.** [`run_turn`] refuses
+//!   tool declarations ([`AgentError::Unsupported`]) rather than advertising
+//!   something it cannot execute. Phase 5's [`run_turn_with_tools`] is the
+//!   explicit tool-enabled path, and it capability-gates the model first.
 //! - **No retries and no substitution.** A provider failure is persisted and
 //!   returned with its class and message unchanged (`TEST-AI-021`; `docs/12`
 //!   §4.2). Retry policy is unobserved, so none is invented here.
@@ -38,6 +36,29 @@
 //! a [`ProviderAdapter`]), the renderer bridge, usage aggregation, retention,
 //! and drafts. Those compose this loop from `myharness-bridge`; the loop stays
 //! free of transport and UI decisions.
+//!
+//! Phase 5 adds [`tool_policy`] and [`tool_exec`] (the allow/ask/deny engine
+//! and the one execution gate) plus [`run_turn_with_tools`], the multi-round
+//! loop that makes them real:
+//!
+//! - tools are filtered by policy **before** the request is built, so an
+//!   unconditionally denied tool never reaches the provider (`TEST-AI-019`);
+//! - each model tool call is validated against its declared schema and then
+//!   passes the execution gate; a denial is a model-visible error result, not
+//!   an execution;
+//! - the assistant tool-use turn and the matching tool-result turn are both
+//!   persisted, so replay after a restart keeps the provider's grammar valid;
+//! - the loop is bounded by a caller-chosen round limit (`Unknown` in the
+//!   shipped app; the rebuild default is 16) and never invents a retry.
+//!
+//! A tool result is data. It is inserted only as a `ToolResult` content block;
+//! no result can add a tool, change policy, or approve itself.
+
+pub mod tool_exec;
+pub mod tool_policy;
+pub mod tool_schema;
+
+use std::collections::{BTreeMap, BTreeSet};
 
 use futures::StreamExt;
 use myharness_provider_sdk::{
@@ -47,7 +68,20 @@ use myharness_provider_sdk::{
 use myharness_sessions::{AuditKeyStore, SessionError, SessionService};
 use myharness_store::{NewUsageEvent, StoreError, TurnRole, TurnRow, TurnStatus};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
+
+use crate::tool_exec::{
+    execute_tool_call, ApprovalPrompt, ApprovalRequest, ToolCallRequest, ToolExecution,
+    ToolExecutor, ToolOutput,
+};
+use crate::tool_policy::{ApprovalContext, ApprovalScope, ApprovalStore, ToolPolicy};
+use crate::tool_schema::validate_arguments;
+
+/// The rebuild's default tool-round bound. The shipped value was not
+/// observed (`docs/14` §9); a caller may lower or raise it explicitly.
+pub const DEFAULT_MAX_TOOL_ROUNDS: usize = 16;
 
 /// The replayed conversation, in the sdk's message shape.
 type Messages = Vec<(Role, Vec<ContentPart>)>;
@@ -76,8 +110,9 @@ pub struct TurnInput {
     pub stop_sequences: Vec<String>,
     pub thinking: Option<ThinkingConfig>,
     pub betas: Vec<String>,
-    /// Must stay empty in this slice: declared tools are refused, never
-    /// ignored (Phase 5 adds execution with the MCP layer).
+    /// Tools advertised to the provider. [`run_turn`] refuses a non-empty
+    /// list because it has no executor; [`run_turn_with_tools`] accepts and
+    /// filters it. Declared tools are never silently ignored.
     pub tools: Vec<ToolSpec>,
 }
 
@@ -102,7 +137,7 @@ impl TurnInput {
         }
     }
 
-    fn validate(&self, adapter_id: &str) -> Result<(), AgentError> {
+    fn validate(&self, adapter_id: &str, tools_supported: bool) -> Result<(), AgentError> {
         if self.model.provider_id != adapter_id {
             return Err(AgentError::ProviderMismatch {
                 model_provider: self.model.provider_id.clone(),
@@ -120,9 +155,9 @@ impl TurnInput {
         if self.user.is_empty() {
             return Err(AgentError::Validation("the turn has no user content"));
         }
-        if !self.tools.is_empty() {
+        if !self.tools.is_empty() && !tools_supported {
             return Err(AgentError::Unsupported(
-                "tool declarations arrive with the MCP phase; declaring tools the loop cannot execute is refused",
+                "this entry point has no tool executor; use run_turn_with_tools rather than advertising tools that cannot run",
             ));
         }
         Ok(())
@@ -209,6 +244,16 @@ pub enum AgentError {
     /// report the user's message as recorded.
     #[error("the turn was cancelled before it started")]
     CancelledBeforeSend,
+    /// The model kept requesting tools after the bounded number of rounds.
+    /// Every requested tool call was executed (or refused) and persisted
+    /// before this is returned, so the transcript can still be replayed.
+    #[error("the tool loop reached its {rounds}-round limit")]
+    ToolLoopLimit { rounds: usize },
+    /// The host could not record an approval the user granted. This is a host
+    /// failure, not a policy denial; the turn stops rather than executing on
+    /// an unrecorded grant.
+    #[error("the tool approval could not be recorded: {0}")]
+    Approval(String),
     #[error("the provider failed ({:?}): {}", .0.class, .0.message)]
     Provider(ProviderError),
 }
@@ -290,9 +335,7 @@ pub struct TurnOutcome {
 /// - Cancellation finishes the live turn as `partial` (empty when no delta
 ///   arrived) and writes a usage event marked cancelled, then returns
 ///   [`AgentError::Cancelled`].
-pub async fn run_turn<K: AuditKeyStore>(
-    run: TurnRun<'_, K>,
-) -> Result<TurnOutcome, AgentError> {
+pub async fn run_turn<K: AuditKeyStore>(run: TurnRun<'_, K>) -> Result<TurnOutcome, AgentError> {
     let TurnRun {
         sessions,
         adapter,
@@ -303,7 +346,7 @@ pub async fn run_turn<K: AuditKeyStore>(
         observer,
     } = run;
 
-    input.validate(adapter.id())?;
+    input.validate(adapter.id(), false)?;
 
     // A turn stopped before anything was sent leaves no trace at all: there
     // was no attempt to record.
@@ -321,12 +364,6 @@ pub async fn run_turn<K: AuditKeyStore>(
         next_seq + 1,
         &encode(&TurnContent::default()),
     )?;
-    let recorder = Recorder {
-        sessions,
-        session_id,
-        assistant,
-        model_id: &input.model.model_id,
-    };
 
     // The user turn is the one thing that must survive whatever follows.
     let user_content = TurnContent {
@@ -346,19 +383,60 @@ pub async fn run_turn<K: AuditKeyStore>(
 
     let mut messages = history;
     push_message(&mut messages, Role::User, input.user.clone());
-    let request = NativeTurnRequest {
-        model: input.model.clone(),
-        system: input.system.clone(),
-        messages,
-        tools: Vec::new(),
-        max_tokens: input.max_tokens,
-        temperature: input.temperature,
-        top_p: input.top_p,
-        top_k: input.top_k,
-        stop_sequences: input.stop_sequences.clone(),
-        thinking: input.thinking,
-        betas: input.betas.clone(),
-        stream: true,
+    let request = build_request(&input, messages, Vec::new());
+    let outcome = execute_round(
+        sessions,
+        adapter,
+        auth,
+        session_id,
+        assistant,
+        &input.model.model_id,
+        request,
+        &BTreeMap::new(),
+        cancel,
+        observer,
+    )
+    .await?;
+
+    Ok(TurnOutcome {
+        user_turn,
+        assistant_turn: outcome.assistant_turn,
+        stop_reason: outcome.stop,
+        usage: outcome.usage.unwrap_or_default(),
+    })
+}
+
+/// The result of one provider round, before a tool loop decides whether the
+/// round is final.
+struct RoundOutcome {
+    assistant_turn: TurnRow,
+    content: TurnContent,
+    stop: NativeStopReason,
+    usage: Option<Usage>,
+}
+
+/// Send one request and finish exactly one live assistant turn.
+///
+/// This is the shared engine for both the plain turn and each round of the
+/// tool loop. It performs no policy or tool decisions: the caller owns those.
+#[allow(clippy::too_many_arguments)]
+async fn execute_round<K: AuditKeyStore>(
+    sessions: &SessionService<K>,
+    adapter: &dyn ProviderAdapter,
+    auth: &AuthContext,
+    session_id: &str,
+    assistant: TurnRow,
+    model_id: &str,
+    request: NativeTurnRequest,
+    wire_to_internal: &BTreeMap<String, String>,
+    cancel: &CancellationToken,
+    observer: Option<&(dyn Fn(&TurnEvent) + Send + Sync)>,
+) -> Result<RoundOutcome, AgentError> {
+    let recorder = Recorder {
+        sessions,
+        session_id,
+        assistant,
+        model_id,
     };
 
     // Shape/liveness check only; the adapter performs no network round-trip
@@ -402,7 +480,8 @@ pub async fn run_turn<K: AuditKeyStore>(
                         failure = Some(error);
                         break;
                     }
-                    Some(Ok(event)) => {
+                    Some(Ok(mut event)) => {
+                        map_wire_tool_call(&mut event, wire_to_internal);
                         if let Some(observer) = observer {
                             observer(&event);
                         }
@@ -447,12 +526,466 @@ pub async fn run_turn<K: AuditKeyStore>(
     )?;
     recorder.record_usage(usage.as_ref(), None)?;
 
-    Ok(TurnOutcome {
-        user_turn,
+    Ok(RoundOutcome {
         assistant_turn,
-        stop_reason: stop,
-        usage: usage.unwrap_or_default(),
+        content,
+        stop,
+        usage,
     })
+}
+
+/// The provider-safe name for an internal MCP tool name.
+///
+/// Internal names are `<server>:<tool>` (`docs/12` §5.1), but Anthropic and
+/// OpenAI-compatible wires only accept `[A-Za-z0-9_-]` and bound the length.
+/// The mapping keeps a readable prefix and appends a stable hash so distinct
+/// internal names cannot collapse to one wire name. It is rebuild-defined
+/// because the shipped wire spelling was not captured (`docs/14` §9); the
+/// internal name remains the policy, snapshot, and transcript identity.
+pub fn wire_tool_name(internal: &str) -> String {
+    let mut prefix: String = internal
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '_' || character == '-' {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if prefix.is_empty() {
+        prefix.push_str("tool");
+    }
+    if prefix.len() > 40 {
+        prefix.truncate(40);
+    }
+    let digest = Sha256::digest(internal.as_bytes());
+    let hash: String = digest
+        .iter()
+        .take(8)
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    format!("mcp_{prefix}_{hash}")
+}
+
+fn wire_tool_names(tools: &[ToolSpec]) -> BTreeMap<String, String> {
+    tools
+        .iter()
+        .map(|tool| (wire_tool_name(&tool.name), tool.name.clone()))
+        .collect()
+}
+
+fn map_wire_tool_call(event: &mut TurnEvent, wire_to_internal: &BTreeMap<String, String>) {
+    if let TurnEvent::ToolCall { name, .. } = event {
+        if let Some(internal) = wire_to_internal.get(name) {
+            *name = internal.clone();
+        }
+    }
+}
+
+fn wire_content_part(part: ContentPart) -> ContentPart {
+    match part {
+        ContentPart::ToolUse { id, name, input } => ContentPart::ToolUse {
+            id,
+            name: wire_tool_name(&name),
+            input,
+        },
+        other => other,
+    }
+}
+
+fn build_request(input: &TurnInput, messages: Messages, tools: Vec<ToolSpec>) -> NativeTurnRequest {
+    let messages = messages
+        .into_iter()
+        .map(|(role, parts)| (role, parts.into_iter().map(wire_content_part).collect()))
+        .collect();
+    let tools = tools
+        .into_iter()
+        .map(|mut tool| {
+            tool.name = wire_tool_name(&tool.name);
+            tool
+        })
+        .collect();
+    NativeTurnRequest {
+        model: input.model.clone(),
+        system: input.system.clone(),
+        messages,
+        tools,
+        max_tokens: input.max_tokens,
+        temperature: input.temperature,
+        top_p: input.top_p,
+        top_k: input.top_k,
+        stop_sequences: input.stop_sequences.clone(),
+        thinking: input.thinking,
+        betas: input.betas.clone(),
+        stream: true,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The tool loop
+// ---------------------------------------------------------------------------
+
+/// Everything one tool-enabled turn needs.
+pub struct ToolTurnRun<'a, K: AuditKeyStore> {
+    /// The base turn: transcript, adapter, model, and the user's content.
+    pub run: TurnRun<'a, K>,
+    /// The one policy authority for visibility and execution.
+    pub policy: &'a ToolPolicy,
+    /// Approvals the host has already granted for this session.
+    pub approvals: &'a mut ApprovalStore,
+    /// Session/policy facts (including whether a persistent scope is offered).
+    pub context: ApprovalContext,
+    /// The executor that receives only calls the gate allowed.
+    pub executor: &'a dyn ToolExecutor,
+    /// The UI/headless prompt used when the policy says `Ask`.
+    pub prompt: &'a dyn ApprovalPrompt,
+    /// Epoch seconds for approval records. Supplied by the host so tests are
+    /// deterministic and no clock is invented in the core.
+    pub now: u64,
+    /// Bound on provider rounds. Defaults to [`DEFAULT_MAX_TOOL_ROUNDS`].
+    pub max_rounds: usize,
+}
+
+impl<'a, K: AuditKeyStore> ToolTurnRun<'a, K> {
+    pub fn new(
+        run: TurnRun<'a, K>,
+        policy: &'a ToolPolicy,
+        approvals: &'a mut ApprovalStore,
+        context: ApprovalContext,
+        executor: &'a dyn ToolExecutor,
+        prompt: &'a dyn ApprovalPrompt,
+        now: u64,
+    ) -> ToolTurnRun<'a, K> {
+        ToolTurnRun {
+            run,
+            policy,
+            approvals,
+            context,
+            executor,
+            prompt,
+            now,
+            max_rounds: DEFAULT_MAX_TOOL_ROUNDS,
+        }
+    }
+
+    pub fn with_max_rounds(mut self, max_rounds: usize) -> ToolTurnRun<'a, K> {
+        self.max_rounds = max_rounds;
+        self
+    }
+}
+
+/// What a tool-enabled turn produced.
+#[derive(Debug)]
+pub struct ToolTurnOutcome {
+    pub user_turn: TurnRow,
+    /// Every assistant round, oldest first. The last one is the final reply
+    /// when `final_stop_reason` is not `tool_use`.
+    pub assistant_turns: Vec<TurnRow>,
+    /// Every tool-result row, oldest first. Each row may hold several result
+    /// blocks when the model issued parallel calls in one round.
+    pub tool_turns: Vec<TurnRow>,
+    pub final_stop_reason: NativeStopReason,
+    /// One entry per provider round, in order. The ledger already received
+    /// each round separately; the bridge uses this for the response surface.
+    pub usages: Vec<Usage>,
+}
+
+/// Run one tool-enabled turn: persist the user turn, advertise only the tools
+/// policy allows, then alternate provider rounds and gated tool execution
+/// until the model stops without a tool call or the round bound is reached.
+///
+/// Every assistant tool-use turn is followed by a persisted tool-result turn
+/// before the next request, including when a call is denied, invalid, fails,
+/// or is cancelled. That is what keeps the next replay valid.
+///
+/// The host must confirm the model advertises tool use before calling this
+/// entry point (`AI-PROVIDER-05`); the agent validates the request shape but
+/// does not perform provider discovery.
+pub async fn run_turn_with_tools<K: AuditKeyStore>(
+    run: ToolTurnRun<'_, K>,
+) -> Result<ToolTurnOutcome, AgentError> {
+    let ToolTurnRun {
+        run,
+        policy,
+        approvals,
+        context,
+        executor,
+        prompt,
+        now,
+        max_rounds,
+    } = run;
+    let TurnRun {
+        sessions,
+        adapter,
+        auth,
+        session_id,
+        input,
+        cancel,
+        observer,
+    } = run;
+
+    if max_rounds == 0 {
+        return Err(AgentError::Validation(
+            "the tool round limit must be greater than zero",
+        ));
+    }
+    input.validate(adapter.id(), true)?;
+    if cancel.is_cancelled() {
+        return Err(AgentError::CancelledBeforeSend);
+    }
+    // Expired grants are never offered again, and they do not linger in the
+    // durable approval file after the next turn.
+    approvals.revoke_expired(now);
+    sessions.recover_interrupted(session_id)?;
+    let (history, next_seq) = replay(sessions, session_id)?;
+
+    // The provider sees only tools whose policy effect is not an
+    // unconditional deny (`TEST-AI-019`). The full schema map is kept so a
+    // stale/undeclared call can be refused by the gate with a useful message.
+    let visible: BTreeSet<String> = policy
+        .visible_tool_names(input.tools.iter().map(|tool| tool.name.as_str()), &context)
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    let schemas: BTreeMap<String, Value> = input
+        .tools
+        .iter()
+        .map(|tool| (tool.name.clone(), tool.input_schema.clone()))
+        .collect();
+    let tools: Vec<ToolSpec> = input
+        .tools
+        .iter()
+        .filter(|tool| visible.contains(&tool.name))
+        .cloned()
+        .collect();
+    let wire_to_internal = wire_tool_names(&tools);
+
+    // The crash marker is opened before the user row, exactly as in the
+    // plain turn, so a crash between the two cannot duplicate the user turn.
+    let mut assistant = sessions.begin_assistant_turn(
+        session_id,
+        next_seq + 1,
+        &encode(&TurnContent::default()),
+    )?;
+
+    let user_content = TurnContent {
+        parts: input.user.clone(),
+        citations: Vec::new(),
+    };
+    let user_turn = sessions.append_turn(
+        session_id,
+        next_seq,
+        TurnRole::User,
+        TurnStatus::Complete,
+        &encode(&user_content),
+        None,
+        None,
+        None,
+    )?;
+
+    let mut messages = history;
+    push_message(&mut messages, Role::User, input.user.clone());
+
+    // Row sequence: user = next_seq, first assistant = next_seq + 1, first
+    // tool row = next_seq + 2, next assistant = next_seq + 3, ...
+    let mut seq = next_seq + 2;
+    let mut assistant_turns = Vec::new();
+    let mut tool_turns = Vec::new();
+    let mut usages = Vec::new();
+
+    for round in 0..max_rounds {
+        let request = build_request(&input, messages.clone(), tools.clone());
+        let outcome = execute_round(
+            sessions,
+            adapter,
+            auth,
+            session_id,
+            assistant,
+            &input.model.model_id,
+            request,
+            &wire_to_internal,
+            cancel,
+            observer,
+        )
+        .await?;
+
+        usages.push(outcome.usage.clone().unwrap_or_default());
+        assistant_turns.push(outcome.assistant_turn);
+
+        if outcome.stop != NativeStopReason::ToolUse {
+            return Ok(ToolTurnOutcome {
+                user_turn,
+                assistant_turns,
+                tool_turns,
+                final_stop_reason: outcome.stop,
+                usages,
+            });
+        }
+
+        let calls: Vec<ToolCallRequest> = outcome
+            .content
+            .parts
+            .iter()
+            .filter_map(ToolCallRequest::from_tool_use)
+            .collect();
+        if calls.is_empty() {
+            return Err(AgentError::Protocol(
+                "the provider stopped for a tool call but sent no tool_use block",
+            ));
+        }
+
+        let mut result_parts = Vec::with_capacity(calls.len());
+        let mut cancelled_during_tools = false;
+        for call in &calls {
+            if cancel.is_cancelled() {
+                cancelled_during_tools = true;
+            }
+            let output = if cancelled_during_tools {
+                ToolOutput::error("the turn was cancelled before this tool call ran")
+            } else {
+                execute_one_tool(
+                    policy,
+                    approvals,
+                    &context,
+                    executor,
+                    prompt,
+                    now,
+                    session_id,
+                    call,
+                    schemas.get(&call.name),
+                    cancel,
+                )
+                .await?
+            };
+            let output = output.sanitize().unwrap_or_else(ToolOutput::error);
+            if let Some(observer) = observer {
+                observer(&TurnEvent::ToolResult {
+                    id: call.id.clone(),
+                    parts: output.content.clone(),
+                });
+            }
+            result_parts.push(ContentPart::ToolResult {
+                tool_use_id: call.id.clone(),
+                content: output.content,
+                is_error: output.is_error,
+                cache_control: None,
+            });
+            if cancel.is_cancelled() {
+                cancelled_during_tools = true;
+            }
+        }
+
+        let tool_content = TurnContent {
+            parts: result_parts.clone(),
+            citations: Vec::new(),
+        };
+        let tool_turn = sessions.append_turn(
+            session_id,
+            seq,
+            TurnRole::Tool,
+            TurnStatus::Complete,
+            &encode(&tool_content),
+            None,
+            None,
+            None,
+        )?;
+        tool_turns.push(tool_turn);
+
+        if cancelled_during_tools {
+            return Err(AgentError::Cancelled);
+        }
+
+        // The next request needs both halves of the exchange: the assistant's
+        // tool_use blocks and the matching tool_result blocks.
+        push_message(&mut messages, Role::Assistant, outcome.content.parts);
+        push_message(&mut messages, Role::User, result_parts);
+
+        if round + 1 == max_rounds {
+            return Err(AgentError::ToolLoopLimit { rounds: max_rounds });
+        }
+
+        assistant =
+            sessions.begin_assistant_turn(session_id, seq + 1, &encode(&TurnContent::default()))?;
+        seq += 2;
+    }
+
+    // The loop always returns inside the body; this is unreachable but keeps
+    // the type checker honest about the bound.
+    Err(AgentError::ToolLoopLimit { rounds: max_rounds })
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn execute_one_tool(
+    policy: &ToolPolicy,
+    approvals: &mut ApprovalStore,
+    context: &ApprovalContext,
+    executor: &dyn ToolExecutor,
+    prompt: &dyn ApprovalPrompt,
+    now: u64,
+    session_id: &str,
+    call: &ToolCallRequest,
+    schema: Option<&Value>,
+    cancel: &CancellationToken,
+) -> Result<ToolOutput, AgentError> {
+    let Some(schema) = schema else {
+        return Ok(ToolOutput::error(
+            "the tool is not declared in this session and was not executed",
+        ));
+    };
+    if let Err(reason) = validate_arguments(schema, &call.arguments) {
+        return Ok(ToolOutput::error(format!(
+            "invalid tool arguments: {reason}"
+        )));
+    }
+
+    match execute_tool_call(policy, approvals, context, call, executor, now).await {
+        ToolExecution::Completed(output) => Ok(output),
+        ToolExecution::Denied { reason } => {
+            // A denial is a result, not an execution: the model sees why
+            // the call did not run, and the executor was never contacted.
+            Ok(ToolOutput::error(format!(
+                "the tool call was denied by policy: {reason}"
+            )))
+        }
+        ToolExecution::NeedsApproval { allowed_scopes } => {
+            let choice = prompt
+                .approve(
+                    ApprovalRequest {
+                        session_id,
+                        call_id: &call.id,
+                        tool: &call.name,
+                        arguments: &call.arguments,
+                        allowed_scopes: &allowed_scopes,
+                    },
+                    cancel,
+                )
+                .await;
+            let Some(scope) = choice else {
+                return Ok(ToolOutput::error(
+                    "the tool call was denied by the user or the approval request was cancelled",
+                ));
+            };
+            if !allowed_scopes.contains(&scope) {
+                return Ok(ToolOutput::error(
+                    "the host returned an approval scope that was not offered",
+                ));
+            }
+            if scope != ApprovalScope::Once {
+                approvals
+                    .grant(context, &call.name, &call.arguments, scope, now)
+                    .map_err(|error| AgentError::Approval(error.to_string()))?;
+            }
+            // The user approved this exact call. Execute it directly:
+            // re-evaluating would prompt again for `Once` (which is
+            // deliberately never stored) and would make an approval
+            // useless for the call that produced it.
+            match executor.execute(&call.name, call.arguments.clone()).await {
+                Ok(output) => Ok(output),
+                Err(message) => Ok(ToolOutput::error(message)),
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -463,8 +996,10 @@ pub async fn run_turn<K: AuditKeyStore>(
 ///
 /// Rules, in order:
 ///
-/// - Only `user` and `assistant` turns become messages; `system`/`tool` rows
-///   are not request messages in this slice.
+/// - `user` turns become user messages; `assistant` turns become assistant
+///   messages; `tool` turns become **user** messages carrying
+///   `ToolResult` blocks (the provider grammar places tool results in the
+///   user role). `system` rows are not transcript messages.
 /// - Empty turns (an error turn that never received content) are skipped —
 ///   there is nothing to replay.
 /// - Consecutive same-role turns are merged. A failed send leaves two user
@@ -483,16 +1018,20 @@ fn replay<K: AuditKeyStore>(
     for turn in &turns {
         let role = match turn.role.as_str() {
             "user" => Role::User,
+            // Tool results are user-role blocks in every native provider
+            // grammar the sdk models (`docs/12` §8.2).
+            "tool" => Role::User,
             "assistant" => Role::Assistant,
             _ => continue,
         };
-        let bytes = sessions
-            .store()
-            .files
-            .read(&turn.content_ref)?
-            .ok_or(AgentError::Transcript(
-                "a stored turn's content blob is missing",
-            ))?;
+        let bytes =
+            sessions
+                .store()
+                .files
+                .read(&turn.content_ref)?
+                .ok_or(AgentError::Transcript(
+                    "a stored turn's content blob is missing",
+                ))?;
         let content: TurnContent = serde_json::from_slice(&bytes).map_err(|_| {
             AgentError::Transcript("a stored turn's content is not in the transcript shape")
         })?;
@@ -509,11 +1048,7 @@ fn replay<K: AuditKeyStore>(
 /// Consecutive same-role turns are a normal outcome of a failed send; the
 /// Messages grammar wants one message per role run, and merging keeps every
 /// block instead of choosing one to drop.
-fn push_message(
-    messages: &mut Messages,
-    role: Role,
-    parts: Vec<ContentPart>,
-) {
+fn push_message(messages: &mut Messages, role: Role, parts: Vec<ContentPart>) {
     match messages.last_mut() {
         Some((last_role, last_parts)) if *last_role == role => last_parts.extend(parts),
         _ => messages.push((role, parts)),
@@ -543,9 +1078,8 @@ impl<K: AuditKeyStore> Recorder<'_, K> {
         error: Option<&str>,
         stop: Option<&NativeStopReason>,
     ) -> Result<TurnRow, SessionError> {
-        let usage_json = usage.map(|usage| {
-            serde_json::to_value(usage).unwrap_or(serde_json::Value::Null)
-        });
+        let usage_json =
+            usage.map(|usage| serde_json::to_value(usage).unwrap_or(serde_json::Value::Null));
         self.sessions.finish_turn(
             self.session_id,
             &self.assistant.id,
@@ -593,8 +1127,13 @@ impl<K: AuditKeyStore> Recorder<'_, K> {
         usage: Option<&Usage>,
         error: &ProviderError,
     ) -> Result<TurnRow, SessionError> {
-        let turn =
-            self.record_assistant(TurnStatus::Error, content, usage, Some(&error.message), None)?;
+        let turn = self.record_assistant(
+            TurnStatus::Error,
+            content,
+            usage,
+            Some(&error.message),
+            None,
+        )?;
         self.record_usage(usage, Some(&error.message))?;
         Ok(turn)
     }
@@ -700,8 +1239,11 @@ impl Accumulator {
                     input,
                 });
             }
-            // Terminal bookkeeping is handled by the loop.
-            TurnEvent::Usage { .. }
+            // Terminal/bookkeeping events are handled by the loop. A
+            // `ToolResult` is emitted by the loop itself and is not stream
+            // content to accumulate.
+            TurnEvent::ToolResult { .. }
+            | TurnEvent::Usage { .. }
             | TurnEvent::Stop { .. }
             | TurnEvent::Error { .. }
             | TurnEvent::Done => {}

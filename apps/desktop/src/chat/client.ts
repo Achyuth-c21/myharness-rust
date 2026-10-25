@@ -55,7 +55,7 @@ export interface TurnContent {
 export interface TurnSummary {
   id: string;
   seq: number;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system" | "tool";
   status: "complete" | "partial" | "error";
   stopReason: string | null;
   error: string | null;
@@ -89,6 +89,7 @@ export type TurnEvent =
       arguments_delta?: string | null;
       arguments?: unknown;
     }
+  | { type: "tool_result"; id: string; parts: ContentPart[] }
   | { type: "usage"; usage: Usage }
   | { type: "stop"; reason: unknown }
   // Provider errors on the stream carry the provider's class/status/message;
@@ -129,7 +130,28 @@ export type ChatCommand =
   | { type: "renameSession"; id: string; title: string }
   | { type: "archiveSession"; id: string; archived: boolean }
   | { type: "deleteSession"; id: string }
-  | { type: "usageSummary"; days?: number | null; utcOffsetMinutes?: number | null };
+  | { type: "usageSummary"; days?: number | null; utcOffsetMinutes?: number | null }
+  | { type: "mcpStatus" }
+  | { type: "mcpTools" }
+  | { type: "mcpSearchTools"; query: string; limit?: number | null }
+  | { type: "setSessionTools"; sessionId: string; tools: string[] }
+  | {
+      type: "respondToolApproval";
+      approvalId: string;
+      decision: "allow" | "deny";
+      scope?: ApprovalScope | null;
+    }
+  | { type: "retryMcpServer"; server: string }
+  | { type: "forgetMcpOAuth"; server: string }
+  | { type: "listSkills" }
+  | { type: "selectSkill"; name: string }
+  | { type: "setSkillEnabled"; name: string; enabled: boolean }
+  | { type: "setSkillCreationEnabled"; enabled: boolean }
+  | { type: "listPlugins" }
+  | { type: "installPlugin"; path: string }
+  | { type: "uninstallPlugin"; name: string }
+  | { type: "setPluginEnabled"; name: string; enabled: boolean }
+  | { type: "setPluginSignaturePolicy"; policy: SignaturePolicy };
 
 export type ChatResponse =
   | { type: "sessions"; sessions: SessionRecord[] }
@@ -142,10 +164,117 @@ export type ChatResponse =
       stopReason: string | null;
       usage: Usage | null;
     }
+  | {
+      type: "toolTurn";
+      sessionId: string;
+      userTurn: TurnSummary;
+      assistantTurns: TurnSummary[];
+      toolTurns: TurnSummary[];
+      stopReason: string | null;
+      usage: Usage | null;
+      warnings: string[];
+    }
   | { type: "stopped"; stopped: boolean }
   | { type: "ack" }
   | { type: "usage"; summary: UsageSummary }
+  | { type: "mcpStatus"; servers: McpServerView[]; warnings: string[] }
+  | { type: "toolSearch"; hits: ToolSearchHit[]; enabled: boolean }
+  | { type: "mcpTools"; tools: ToolDescriptor[] }
+  | { type: "skills"; view: SkillsView }
+  | { type: "skillSelection"; selection: { name: string; instructions: string } }
+  | { type: "plugins"; view: PluginsView }
+  | { type: "pluginInstalled"; plugin: PluginView }
   | { type: "error"; error: BridgeError; userTurnRecorded: boolean };
+
+
+/** Approval lifetime offered by the core (`agent::tool_policy::ApprovalScope`). */
+export type ApprovalScope = "once" | "session" | "persistent";
+
+/** One `chat://tool-approval` payload. Arguments are a redacted preview. */
+export interface ToolApprovalEvent {
+  id: string;
+  sessionId: string;
+  callId: string;
+  toolName: string;
+  displayName: string;
+  argumentsPreview: unknown;
+  allowedScopes: ApprovalScope[];
+}
+
+/** One MCP server state (`mcp::ServerStatus`). */
+export type ServerStatus =
+  | { state: "stopped" }
+  | { state: "starting" }
+  | { state: "connected"; server: unknown; toolCount: number }
+  | { state: "failed"; message: string }
+  | { state: "needsAuth"; message: string };
+
+export interface McpServerView {
+  name: string;
+  status: ServerStatus;
+  error?: string | null;
+}
+
+/** One namespaced tool (`mcp::ToolDescriptor`). Schemas are untrusted. */
+export interface ToolDescriptor {
+  name: string;
+  server: string;
+  tool: string;
+  title?: string | null;
+  description?: string | null;
+  inputSchema: unknown;
+  outputSchema?: unknown;
+}
+
+export interface ToolSearchHit {
+  tool: ToolDescriptor;
+  score: number;
+  cached: boolean;
+}
+
+export type SkillSource = "org" | "user" | "plugin" | "bundled";
+
+export interface SkillView {
+  name: string;
+  displayName: string;
+  description: string;
+  version: string;
+  source: SkillSource;
+  runnable: boolean;
+  hasScript: boolean;
+}
+
+export interface SkillsView {
+  skills: SkillView[];
+  disabled: string[];
+  creationEnabled: boolean;
+  warnings: string[];
+}
+
+export type PluginSource = "marketplace" | "org" | "local";
+export type SignatureStatus = "unsigned" | "unverified";
+export type SignaturePolicy = "optional" | "required";
+
+export interface PluginView {
+  name: string;
+  displayName: string;
+  version: string;
+  description: string;
+  source: PluginSource;
+  readOnly: boolean;
+  signature: SignatureStatus;
+  permissions: string[];
+  servers: string[];
+  skills: string[];
+  commands: string[];
+}
+
+export interface PluginsView {
+  plugins: PluginView[];
+  disabled: string[];
+  signaturePolicy: SignaturePolicy;
+  warnings: string[];
+}
 
 /** Send one command. A missing Tauri host is reported, never faked. */
 export async function chat(command: ChatCommand): Promise<ChatResponse> {
@@ -193,6 +322,34 @@ export async function onTurnEvent(
   }
 }
 
+/** Approval requests from the core. No-op without a Tauri host. */
+export async function onToolApproval(
+  handler: (event: ToolApprovalEvent) => void,
+): Promise<UnlistenFn> {
+  try {
+    return await listen<ToolApprovalEvent>("chat://tool-approval", (payload) =>
+      handler(payload.payload),
+    );
+  } catch {
+    return () => {};
+  }
+}
+
+/** Background MCP boot/retry status. No-op without a Tauri host. */
+export async function onMcpStatus(
+  handler: (payload: {
+    summary?: unknown;
+    servers?: McpServerView[];
+    warnings?: string[];
+  }) => void,
+): Promise<UnlistenFn> {
+  try {
+    return await listen("chat://mcp-status", (payload) => handler(payload.payload as never));
+  } catch {
+    return () => {};
+  }
+}
+
 /** Window event fired after any command that changes the session list. */
 export const SESSIONS_CHANGED = "myharness:sessions-changed";
 
@@ -206,6 +363,38 @@ export function plainText(content: TurnContent): string {
     .filter((part): part is ContentPart & { type: "text"; text: string } => part.type === "text")
     .map((part) => part.text)
     .join("");
+}
+
+/** Tool calls in stored order (`ContentPart::ToolUse`). */
+export function toolUses(
+  content: TurnContent,
+): { id: string; name: string; input: unknown }[] {
+  return content.parts
+    .filter(
+      (part): part is ContentPart & { type: "tool_use"; id: string; name: string; input: unknown } =>
+        part.type === "tool_use" && typeof part.id === "string" && typeof part.name === "string",
+    )
+    .map((part) => ({ id: part.id, name: part.name, input: part.input }));
+}
+
+/** Tool results in stored order (`ContentPart::ToolResult`). */
+export function toolResults(
+  content: TurnContent,
+): { toolUseId: string; parts: ContentPart[]; isError: boolean }[] {
+  return content.parts
+    .filter(
+      (part): part is ContentPart & {
+        type: "tool_result";
+        tool_use_id: string;
+        content?: ContentPart[];
+        is_error?: boolean;
+      } => part.type === "tool_result" && typeof part.tool_use_id === "string",
+    )
+    .map((part) => ({
+      toolUseId: part.tool_use_id,
+      parts: Array.isArray(part.content) ? part.content : [],
+      isError: part.is_error === true,
+    }));
 }
 
 /** Reasoning blocks in stored order (rendered behind a disclosure). */

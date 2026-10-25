@@ -350,9 +350,32 @@ fn encode(value: &str) -> String {
 /// capability fields; absent metadata stays unsupported, never optimistic).
 pub(crate) fn descriptor_from_row(row: &Value) -> Option<myharness_provider_sdk::ModelDescriptor> {
     let id = model_id(row)?;
+    let tools_supported = row
+        .get("capabilities")
+        .and_then(|capabilities| {
+            capabilities
+                .as_array()
+                .map(|values| {
+                    values.iter().any(|value| {
+                        matches!(value.as_str(), Some("tools" | "tool_use" | "tool-use"))
+                    })
+                })
+                .or_else(|| {
+                    capabilities
+                        .get("tools")
+                        .or_else(|| capabilities.get("tool_use"))
+                        .and_then(Value::as_bool)
+                })
+        })
+        .unwrap_or(false)
+        || row
+            .get("supports_tools")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
     let capabilities = myharness_provider_sdk::ModelCapabilities {
         context_window: row.get("context_window").and_then(Value::as_u64),
         max_output_tokens: row.get("max_output_tokens").and_then(Value::as_u64),
+        tools_supported,
         ..Default::default()
     };
     Some(myharness_provider_sdk::ModelDescriptor {

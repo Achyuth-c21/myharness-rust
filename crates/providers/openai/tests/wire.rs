@@ -39,22 +39,14 @@ struct SsePiece {
 enum Canned {
     /// A complete JSON response.
     Json(u16, Value),
-    /// A bare status with no body.
-    Bare(u16),
     /// A chunked stream: the pieces are written in order (each inside its
     /// own chunked-encoding frame), and the connection stays open until the
     /// client drops it.
-    Sse {
-        status: u16,
-        pieces: Vec<SsePiece>,
-    },
+    Sse { status: u16, pieces: Vec<SsePiece> },
     /// A drip: keep-alive frames every interval, forever, carrying exactly
     /// one content frame first — the idle-window fixture (`TEST-AI-016`
     /// reading).
-    Drip {
-        interval_ms: u64,
-        first: String,
-    },
+    Drip { interval_ms: u64, first: String },
 }
 
 /// A recorded request (head + body).
@@ -183,7 +175,7 @@ fn serve(
             continue; // no canned behavior: close the connection
         }
         match &canned[next] {
-            Canned::Json(..) | Canned::Bare(..) => {
+            Canned::Json(..) => {
                 let _ = stream.write_all(&canned_response(&canned[next]));
                 let _ = stream.flush();
             }
@@ -233,10 +225,6 @@ fn canned_response(canned: &Canned) -> Vec<u8> {
             "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
             body.to_string().len(),
             body
-        )
-        .into_bytes(),
-        Canned::Bare(status) => format!(
-            "HTTP/1.1 {status} OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
         )
         .into_bytes(),
         // Streamed shapes are written connection-wise inside `serve`.
@@ -330,7 +318,10 @@ fn custom_adapter(base: String, idle: Duration) -> OpenAiCompatAdapter {
 }
 
 fn auth(value: &str) -> AuthContext {
-    AuthContext::new(SecretString::from(value.to_string()), "synthetic static key")
+    AuthContext::new(
+        SecretString::from(value.to_string()),
+        "synthetic static key",
+    )
 }
 
 /// An empty credential — the `custom` family's keyless case, the `openai`
@@ -479,8 +470,14 @@ async fn a_streamed_turn_speaks_the_native_wire() {
     );
     assert_eq!(body["messages"][1]["role"], "user");
     assert!(body.get("top_k").is_none(), "no top_k spelling (recorded)");
-    assert!(body.get("stream_options").is_none(), "no stream_options (recorded)");
-    assert!(body.get("thinking").is_none(), "no thinking spelling (recorded)");
+    assert!(
+        body.get("stream_options").is_none(),
+        "no stream_options (recorded)"
+    );
+    assert!(
+        body.get("thinking").is_none(),
+        "no thinking spelling (recorded)"
+    );
 }
 
 /// `AI-MM-01` — a document part is refused before anything is sent, with
@@ -555,7 +552,9 @@ async fn history_replays_with_tool_messages_and_omits_reasoning() {
                     thinking: "private scratch".to_string(),
                     signature: None,
                 },
-                ContentPart::RedactedThinking { data: json!({ "x": 1 }) },
+                ContentPart::RedactedThinking {
+                    data: json!({ "x": 1 }),
+                },
             ],
         ),
         (
@@ -563,13 +562,15 @@ async fn history_replays_with_tool_messages_and_omits_reasoning() {
             vec![
                 ContentPart::ToolResult {
                     tool_use_id: "call_1".to_string(),
-                    content: vec![
-                        ContentPart::Text { text: "404 — not found".to_string() },
-                    ],
+                    content: vec![ContentPart::Text {
+                        text: "404 — not found".to_string(),
+                    }],
                     is_error: true,
                     cache_control: None,
                 },
-                ContentPart::Text { text: "try again".to_string() },
+                ContentPart::Text {
+                    text: "try again".to_string(),
+                },
             ],
         ),
     ];
@@ -586,8 +587,7 @@ async fn history_replays_with_tool_messages_and_omits_reasoning() {
     assert_eq!(assistant["tool_calls"][0]["id"], "call_1");
     assert_eq!(assistant["tool_calls"][0]["function"]["name"], "find");
     assert_eq!(
-        assistant["tool_calls"][0]["function"]["arguments"],
-        r#"{"q":"docs"}"#,
+        assistant["tool_calls"][0]["function"]["arguments"], r#"{"q":"docs"}"#,
         "arguments travel as the JSON encoding"
     );
     let serialized = assistant.to_string();
@@ -654,7 +654,12 @@ async fn reasoning_deltas_arrive_under_both_spellings() {
         }
     );
     let third = StreamExt::next(&mut stream).await.unwrap().unwrap();
-    assert_eq!(third, TurnEvent::TextDelta { text: "answer".to_string() });
+    assert_eq!(
+        third,
+        TurnEvent::TextDelta {
+            text: "answer".to_string()
+        }
+    );
 }
 
 /// `AI-TOOL-01` — tool calls stream: the opening fragment announces the id
@@ -678,7 +683,10 @@ async fn tool_calls_stream_and_close() {
         ),
         terminate(),
     ];
-    let host = endpoint(vec![Canned::Sse { status: 200, pieces }]);
+    let host = endpoint(vec![Canned::Sse {
+        status: 200,
+        pieces,
+    }]);
     let adapter = openai_adapter(host.base.clone());
     let mut request = stream_request("gpt-4o");
     request.tools = vec![ToolSpec {
@@ -691,7 +699,10 @@ async fn tool_calls_stream_and_close() {
         .create_turn(&auth("sk-EXAMPLE"), &request)
         .await
         .expect("the tools stream");
-    let events: Vec<TurnEvent> = stream.map(|result| result.unwrap()).collect::<Vec<_>>().await;
+    let events: Vec<TurnEvent> = stream
+        .map(|result| result.unwrap())
+        .collect::<Vec<_>>()
+        .await;
 
     let opening = TurnEvent::ToolCall {
         id: "call_1".to_string(),
@@ -761,13 +772,19 @@ async fn continuation_fragments_without_ids_keep_the_recorded_synthetic_id() {
         ),
         terminate(),
     ];
-    let host = endpoint(vec![Canned::Sse { status: 200, pieces }]);
+    let host = endpoint(vec![Canned::Sse {
+        status: 200,
+        pieces,
+    }]);
     let adapter = openai_adapter(host.base.clone());
     let stream = adapter
         .create_turn(&auth("sk-EXAMPLE"), &stream_request("gpt-4o"))
         .await
         .expect("the fragments stream");
-    let events: Vec<TurnEvent> = stream.map(|result| result.unwrap()).collect::<Vec<_>>().await;
+    let events: Vec<TurnEvent> = stream
+        .map(|result| result.unwrap())
+        .collect::<Vec<_>>()
+        .await;
     let expected_id = "chatcmpl-abc-0";
     assert!(
         events.iter().any(|event| matches!(
@@ -841,9 +858,7 @@ async fn provider_error_classes_are_distinguishable() {
     let host = endpoint(vec![Canned::Sse {
         status: 200,
         pieces: vec![
-            chunk(
-                r#"{"error":{"message":"Rate limit exceeded","type":"rate_limit_error"}}"#,
-            ),
+            chunk(r#"{"error":{"message":"Rate limit exceeded","type":"rate_limit_error"}}"#),
             terminate(),
         ],
     }]);
@@ -918,7 +933,10 @@ async fn usage_maps_off_the_wire_names() {
         ),
         terminate(),
     ];
-    let host = endpoint(vec![Canned::Sse { status: 200, pieces }]);
+    let host = endpoint(vec![Canned::Sse {
+        status: 200,
+        pieces,
+    }]);
     let adapter = openai_adapter(host.base.clone());
     let events: Vec<TurnEvent> = adapter
         .create_turn(&auth("sk-EXAMPLE"), &stream_request("gpt-4o"))
@@ -988,8 +1006,13 @@ async fn a_dated_revision_tolerates_the_echo() {
         .create_turn(&auth("sk-EXAMPLE"), &request)
         .await
         .expect("a dated revision is the requested model");
-    let events: Vec<TurnEvent> = stream.map(|result| result.unwrap()).collect::<Vec<_>>().await;
-    assert!(events.contains(&TurnEvent::TextDelta { text: "pong".to_string() }));
+    let events: Vec<TurnEvent> = stream
+        .map(|result| result.unwrap())
+        .collect::<Vec<_>>()
+        .await;
+    assert!(events.contains(&TurnEvent::TextDelta {
+        text: "pong".to_string()
+    }));
     assert!(host.requests()[0].body()["stream"].as_bool() == Some(false));
 }
 
@@ -1013,7 +1036,12 @@ async fn a_pigeonhole_stream_times_out_at_the_idle_window() {
         .await
         .expect("the stream opens");
     let first = StreamExt::next(&mut stream).await.unwrap().unwrap();
-    assert_eq!(first, TurnEvent::TextDelta { text: "first".to_string() });
+    assert_eq!(
+        first,
+        TurnEvent::TextDelta {
+            text: "first".to_string()
+        }
+    );
     let error = StreamExt::next(&mut stream)
         .await
         .unwrap()
@@ -1054,7 +1082,12 @@ async fn dropping_the_stream_cancels_it() {
         .await
         .unwrap();
     let first = StreamExt::next(&mut stream).await.unwrap().unwrap();
-    assert_eq!(first, TurnEvent::TextDelta { text: "first".to_string() });
+    assert_eq!(
+        first,
+        TurnEvent::TextDelta {
+            text: "first".to_string()
+        }
+    );
     // Drop = cancel. The connection must close; the server thread notices.
     drop(stream);
     // The partial output the caller already has is exactly what it emitted;
@@ -1086,7 +1119,6 @@ async fn the_probe_inference_is_real() {
     assert_eq!(status.stop_reason.as_deref(), Some("end_turn"));
     assert_eq!(status.input_tokens, 3);
     assert_eq!(status.output_tokens, 1);
-    assert!(status.latency_ms <= u64::MAX);
     let body = host.requests()[0].body();
     assert_eq!(body["model"], "gpt-4o");
     assert_eq!(body["max_tokens"], 1);

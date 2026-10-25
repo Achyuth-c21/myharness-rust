@@ -157,7 +157,9 @@ fn user_part(part: &ContentPart) -> Result<Option<Value>, ProviderError> {
 /// text itself carries the failure to the model.
 fn tool_message(part: &ContentPart) -> Result<Option<Value>, ProviderError> {
     let ContentPart::ToolResult {
-        tool_use_id, content, ..
+        tool_use_id,
+        content,
+        ..
     } = part
     else {
         return Ok(None);
@@ -362,7 +364,9 @@ pub(crate) fn error_from_envelope(status: Option<u16>, body: &Value) -> Provider
         Some("authentication_error") | Some("permission_error") => ErrorClass::Auth,
         Some("not_found_error") => ErrorClass::ModelNotFound,
         Some("rate_limit_error") | Some("insufficient_quota") => ErrorClass::Quota,
-        Some("overloaded_error") | Some("api_error") | Some("server_error") => ErrorClass::Transient,
+        Some("overloaded_error") | Some("api_error") | Some("server_error") => {
+            ErrorClass::Transient
+        }
         _ => {
             if quota {
                 ErrorClass::Quota
@@ -370,7 +374,7 @@ pub(crate) fn error_from_envelope(status: Option<u16>, body: &Value) -> Provider
                 ErrorClass::ContextLength
             } else {
                 status
-                .map(crate::adapter::status_class)
+                    .map(crate::adapter::status_class)
                     .unwrap_or(ErrorClass::InvalidRequest)
             }
         }
@@ -386,7 +390,11 @@ pub(crate) fn error_from_envelope(status: Option<u16>, body: &Value) -> Provider
     } else {
         text
     };
-    ProviderError { class, status, message }
+    ProviderError {
+        class,
+        status,
+        message,
+    }
 }
 
 /// Parse a non-success response when no envelope can be read.
@@ -550,7 +558,10 @@ impl ChunkParser {
         {
             Ok(StreamEvent::Delta {
                 completion_id: body.get("id").and_then(Value::as_str).map(str::to_string),
-                model: body.get("model").and_then(Value::as_str).map(str::to_string),
+                model: body
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
                 delta: choice.get("delta").cloned().unwrap_or_else(|| json!({})),
                 finish_reason: choice
                     .get("finish_reason")
@@ -572,7 +583,9 @@ impl ChunkParser {
                 class: ErrorClass::InvalidRequest,
                 status: None,
                 message: match keys {
-                    Some(keys) => format!("the stream carried a data frame with keys {keys:?} of an unhandled shape"),
+                    Some(keys) => format!(
+                        "the stream carried a data frame with keys {keys:?} of an unhandled shape"
+                    ),
                     None => "the stream carried a data frame of an unhandled shape".to_string(),
                 },
             })
@@ -669,13 +682,12 @@ struct NonStreamTop {
 /// (`n` is never requested above one); the shape reading mirrors the chunk
 /// parser (`reasoning_content` first, `reasoning` as fallback).
 pub(crate) fn parse_completion(body: &Value) -> Result<NonStreamCompletion, ProviderError> {
-    let top: NonStreamTop = serde_json::from_value(body.clone()).map_err(|error| {
-        ProviderError {
+    let top: NonStreamTop =
+        serde_json::from_value(body.clone()).map_err(|error| ProviderError {
             class: ErrorClass::InvalidRequest,
             status: None,
             message: format!("the completion answer was not a readable shape: {error}"),
-        }
-    })?;
+        })?;
     let choice = choice(&top)?;
     let message = choice.message.unwrap_or(NonStreamMessage {
         content: None,
@@ -695,7 +707,10 @@ pub(crate) fn parse_completion(body: &Value) -> Result<NonStreamCompletion, Prov
         .into_iter()
         .map(|call| NonStreamToolCall {
             id: call.id,
-            name: call.function.as_ref().and_then(|function| function.name.clone()),
+            name: call
+                .function
+                .as_ref()
+                .and_then(|function| function.name.clone()),
             arguments: call
                 .function
                 .and_then(|function| function.arguments)

@@ -392,9 +392,7 @@ impl OpenAiCompatAdapter {
         Ok(ProbeStatus {
             ok: true,
             model: ran,
-            stop_reason: completion
-                .finish_reason
-                .map(|raw| stop_reason(&raw).wire()),
+            stop_reason: completion.finish_reason.map(|raw| stop_reason(&raw).wire()),
             input_tokens: completion
                 .usage
                 .as_ref()
@@ -604,8 +602,9 @@ impl TurnStreamImpl {
             .and_then(Value::as_str)
             .filter(|text| !text.is_empty())
         {
-            self.outbox
-                .push_back(Ok(TurnEvent::TextDelta { text: text.to_string() }));
+            self.outbox.push_back(Ok(TurnEvent::TextDelta {
+                text: text.to_string(),
+            }));
         }
         // Reasoning: DeepSeek-compatible servers spell
         // `reasoning_content`; others spell `reasoning` — read both, never
@@ -677,8 +676,7 @@ impl TurnStreamImpl {
                 }
             }
         } else {
-            let id =
-                id.unwrap_or_else(|| self.synthetic_tool_id(index));
+            let id = id.unwrap_or_else(|| self.synthetic_tool_id(index));
             self.tools.insert(
                 index,
                 ToolBlockState {

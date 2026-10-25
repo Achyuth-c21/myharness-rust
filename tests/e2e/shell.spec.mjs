@@ -449,6 +449,39 @@ try {
     await page.keyboard.press("Escape");
   });
 
+  await step("T36 skills settings pane reports the desktop-only boundary", async () => {
+    await page.goto(`${BASE}/#settings/skills`);
+    await page.waitForSelector("[role=dialog][aria-label=Settings]");
+    await page.getByText("BRIDGE_UNAVAILABLE", { exact: false }).first().waitFor();
+    await expectTrue(
+      (await page.locator(".settings-row").count()) === 0,
+      "the browser preview must not invent skill rows",
+    );
+    await page.keyboard.press("Escape");
+  });
+
+  await step("T37 plugins settings pane reports the desktop-only boundary", async () => {
+    await page.goto(`${BASE}/#settings/plugins`);
+    await page.waitForSelector("[role=dialog][aria-label=Settings]");
+    await page.getByText("BRIDGE_UNAVAILABLE", { exact: false }).first().waitFor();
+    await expectTrue(
+      (await page.locator(".settings-row").count()) === 0,
+      "the browser preview must not invent plugin rows",
+    );
+    await page.keyboard.press("Escape");
+  });
+
+  await step("T38 developer settings pane reports the desktop-only boundary", async () => {
+    await page.goto(`${BASE}/#settings/developer`);
+    await page.waitForSelector("[role=dialog][aria-label=Settings]");
+    await page.getByText("BRIDGE_UNAVAILABLE", { exact: false }).first().waitFor();
+    await expectTrue(
+      (await page.getByText("No MCP servers are configured.").count()) === 0,
+      "the browser preview must not claim an empty live MCP catalog",
+    );
+    await page.keyboard.press("Escape");
+  });
+
   await step("T34 back/forward grey at history ends; Forward navigates (UI-INT-003, report A1)", async () => {
     await page.goto(BASE);
     await page.waitForSelector("a.nav-item");

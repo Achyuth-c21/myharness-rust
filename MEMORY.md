@@ -3,7 +3,7 @@
 **Facts that are true, would be expensive to rediscover, and should survive across sessions.**
 Everything here is sourced. If you cannot cite a source for an entry, it does not belong here.
 
-Last verified against the repository: **2026-10-20**.
+Last verified against the repository: **2026-10-24**.
 
 ---
 
@@ -586,5 +586,212 @@ The full lane is `phase-4`; `dev` stays untouched until the owner says merge/pus
   root `npx tsc`; `Usage` serializes camelCase (`cacheRead`), `ContentPart` keeps snake_case
   fields, `SessionRow` keeps `legal_hold`/`permission_mode`, `TurnSummary` is camelCase.
 
-Next: Phase 5 (tools/approvals/MCP) or the deferred retention timer/UI, retry, picker,
-attachments, per-surface usage — all recorded as unknown/deferred, not invented.
+## 7h. Phase 5 slice 1 — MCP lifecycle foundation (2026-10-24)
+
+`crates/mcp` is no longer a scaffold. It owns the transport-independent MCP
+lifecycle (`docs/13` Phase 5; `docs/12` §5.1; `TEST-MCP-001/002/009/010`):
+
+- **SDK:** `rmcp` 3.7 with `client`, `transport-child-process`,
+  `transport-streamable-http-client-reqwest`; `default-features = false` so the
+  production crate does not compile the server/macro surface. The test-only
+  `fixture-server` feature adds `server`, `macros`, `transport-io`, `schemars`
+  and builds `mcp-echo-server` from `tests/fixtures/echo_server.rs`; a normal
+  `cargo test -p myharness-mcp` does not build it.
+- **Transports:** stdio (`TokioChildProcess`) and Streamable HTTP
+  (`StreamableHttpClientTransport`) are real. Legacy HTTP+SSE is *modelled* in
+  `ServerConfig::Sse` but returns `UnsupportedTransport` — rmcp 3.7 carries SSE
+  inside Streamable HTTP, and the legacy client was not available. This is an
+  explicit limitation, not a silent fallback.
+- **Manager:** `McpManager` over an injectable `McpConnector`/`McpSession`.
+  `start_all` records per-server failures and continues; an optional
+  `with_start_timeout` bounds connect/list-tools so a hanging server cannot
+  block the rest. A dead transport (`McpSession::is_closed`) is reconnected on
+  the next `start`, and the tool cache is rebuilt. `shutdown` collects
+  per-server failures and is idempotent.
+- **Names and snapshots:** server names are `[A-Za-z0-9._-]`, at most 64 bytes,
+  and may not contain `:`; tool names may contain `:` and are split on the
+  first colon. The registry key is `<server>:<tool>`. A session snapshots the
+  enabled subset; `missing` names stay visible; duplicate requested names are
+  collapsed. Empty `enabled` means an empty snapshot, not "all".
+- **Calls:** `McpManager::call_tool(snapshot, name, arguments, timeout)` refuses
+  a tool absent from the frozen snapshot *before* touching the session. The
+  caller supplies the timeout because the shipped `mcpToolTimeoutSec` default
+  was not captured. Text, images, audio, embedded text/blob resources, resource
+  links, and structured content are preserved; an unknown content block is a
+  visible `UnsupportedContent` error, never a silent drop.
+- **Trust:** `ServerConfig`'s `Debug` prints env/header **keys only**, redacts
+  URL userinfo and query, and `redact()` removes env/header values, URL
+  passwords, and query strings from stored errors. Schemas are bounded at
+  4,096 tools/server and 256 KiB/schema — rebuild-defined resource bounds
+  (`docs/14` §9), not observed shipped caps.
+- **Tests/gates:** 2 unit + 15 manager + 2 real-stdio = 19 passing with
+  `--features fixture-server`; `cargo clippy -p myharness-mcp --all-targets
+  --features fixture-server -- -D warnings`; `cargo check --workspace`;
+  `cargo metadata`. The stdio test spawns the fixture, lists `echo:echo`, calls
+  it, and shuts the child down; a broken command does not stop the healthy
+  server.
+- **Traps:** in rmcp 3.7 `RunningService::peer_info()` exposes
+  `server_info: Option<Implementation>` (not a bare `Implementation`);
+  `StreamableHttpClientTransportConfig` is `#[non_exhaustive]`, so use
+  `with_uri(...)` and assign `custom_headers`; `ContentBlock` and
+  `ResourceContents` are `#[non_exhaustive]`, so a wildcard arm is mandatory.
+  Do not add `reqwest`/`tracing` directly to `crates/mcp` unless used; the
+  transport's reqwest type is inferred by `from_config`.
+- **Not done in this slice:** OAuth/token storage; tool policy/approvals
+  (allow/ask/deny, argument scopes, persistent approvals); egress policy; tool
+  search/on-demand schemas; skills; plugins; bridge commands; renderer/UI;
+  app-boot wiring; durable schema cache; tool-call audit-chain integration;
+  health probing beyond `is_closed`; legacy SSE. `TEST-AI-019/020` are not
+  satisfied by this crate alone.
+
+## 7i. Phase 5 slice 2 — policy, approvals, egress, execution gate (2026-10-24)
+
+The policy layer is now real, still **not wired into `run_turn`**. Tools are
+refused by `TurnInput::validate` until the loop slice exists.
+
+- **Policy (`crates/agent/src/tool_policy.rs`):** allow/ask/deny with
+  argument-scoped rules. The rule serialization, fail-closed precedence
+  (`deny > ask > allow > default`), subset argument match, default `Ask`, and
+  SHA-256 canonical argument fingerprint are **rebuild-defined** because the
+  shipped shapes were not captured (`docs/14` §9). Deny wins regardless of
+  rule order; an approval can turn `Ask` into `Allow` but can never override
+  `Deny`.
+- **Scopes:** `Once` is never stored; `Session` and `Persistent` are stored.
+  `Persistent` is refused when the context's `persistent_allowed` is false
+  (resolved from `mcpPersistentAlwaysAllowEnabled`). A scheduled task with
+  `scheduled_lifetime_days == 0` offers only `Once`; otherwise session and
+  persistent grants expire at `now + days*86_400`. `ApprovalStore` is
+  **in-memory** in this slice; durable persistence and the session-metadata
+  audit write are later.
+- **Visibility:** `ToolPolicy::hides_tool` / `visible_tool_names` remove only
+  **unconditional** denies. An argument-scoped deny leaves the tool declared
+  (otherwise the allowed argument sets would be unreachable) and is enforced
+  at execution. This is the `TEST-AI-019` provider-side filter primitive, but
+  the provider request is not wired yet.
+- **Execution gate (`crates/agent/src/tool_exec.rs`):**
+  `execute_tool_call(policy, store, context, call, executor, now)` returns
+  `Completed`, `Denied`, or `NeedsApproval { allowed_scopes }`. The executor
+  is policy-blind; a denied call never reaches it. An executor error becomes a
+  model-visible `ToolOutput { is_error: true }`, never an empty success.
+  `ToolOutput` uses the provider SDK's `ContentPart`, so text/images/documents
+  survive without a `myharness-mcp` dependency in the agent crate.
+- **Egress (`crates/mcp/src/egress.rs`):** fail-closed **when configured**;
+  exact case-insensitive host match; only `http`/`https`; empty allowlist
+  denies all; `allow_all` is explicit. `McpManager::with_egress` checks before
+  `connect`, so a denied HTTP/SSE host is recorded as a failure with **zero**
+  connector calls (`TEST-AI-020` at the manager boundary). **stdio is not
+  inspected** — a child can open its own sockets; that is an OS/proxy
+  boundary, not this layer. A denied host is not echoed in `Display`.
+- **Tests/gates:** agent 13 policy + 8 execution + 15 turn = 36;
+  mcp 8 unit + 18 manager + 2 stdio = 28; clippy `-D warnings` on both crates
+  with the fixture feature for mcp; `cargo check --workspace`.
+- **Traps:** `ToolPattern`/`ArgumentMatch` serialize as
+  `{"kind":"exact","value":...}` / `{"kind":"server","value":...}`; the
+  approval fingerprint is over **exact arguments**, so an approval for
+  `{"repo":"prod"}` does not cover `{"repo":"dev"}`; `ApprovalStore` never
+  sees policy, so a grant for a denied tool is possible but cannot unlock it
+  at the gate; `ToolOutput` has no audio variant (provider SDK gap) — an MCP
+  audio result must become an explicit error until the SDK carries it.
+- **Not done:** wiring the gate into `run_turn` (multi-round tool loop and
+  tool-row replay), renderer approval prompt/events, durable approvals and
+  audit-chain records, tool-search/on-demand schemas, OAuth, skills, plugins,
+  bridge commands, app-boot MCP initialization. `TEST-AI-019` is only a
+  primitive until the provider request uses `visible_tool_names`.
+
+Next: Phase 5 slice 3 (agent tool loop + MCP executor adapter + bridge
+approval events) or skills/plugin discovery. The deferred retention timer/UI,
+retry, picker, attachments, and per-surface usage remain unknown/deferred, not
+invented.
+
+## 7j. Phase 5 slice 3 — tool turns, approvals, catalog, app integration (2026-10-25)
+
+Slice 3 (`03d5102`, hardening `12d508a`, `b8391ae`) completes Phase 5's local/stdio path. The lane is
+`phase-5`; **nothing has been merged or pushed** — owner approval is required.
+
+- **Agent tool loop (`crates/agent`):** `run_turn_with_tools` is a bounded
+  multi-round executor (`DEFAULT_MAX_TOOL_ROUNDS = 16`). It replays `tool` rows
+  as provider tool-result messages (`Role::User` + `ContentPart::ToolResult`),
+  filters unconditional denies before the request, validates arguments against
+  the tool schema, maps internal `<server>:<tool>` names to provider-safe
+  `mcp_<sanitized-prefix>_<16-hex-sha256>` names and back, persists each tool
+  result, and emits `TurnEvent::ToolResult`. A policy-denied call becomes a
+  model-visible tool error so the transcript stays grammatically valid; this
+  denial-result gate is **rebuild-defined** because the shipped behavior was
+  not observed. Output is sanitized to text/images/documents, capped at
+  `MAX_TOOL_OUTPUT_BYTES = 1 MiB`; audio is an explicit error (no provider SDK
+  audio part). A tool-enabled send calls `list_models`, then
+  `adapter.capabilities`; absent `tools_supported` fails `MODEL_UNSUPPORTED`
+  and no tools are sent.
+- **Policy/approvals (`crates/agent/src/tool_policy.rs`):** `Once` is never
+  stored; `Session`/`Persistent` are durable. `Persistent` needs
+  `context.persistent_allowed` (`mcpPersistentAlwaysAllowEnabled`); a scheduled
+  task with lifetime `0` offers only `Once` and never inherits an interactive
+  grant with no expiry. `ApprovalStore::restore` skips expired/`Once` records.
+  Fingerprints are canonical SHA-256 over exact arguments.
+- **Bridge (`crates/bridge/src/mcp.rs`):** `McpConfig::load(root)` reads
+  `root/servers.json` (bounded at 2 MiB); `McpConfig::build` returns
+  `BuiltMcp { manager, config, warnings }`. `ToolRuntime` holds the manager
+  behind `Arc<tokio::sync::Mutex<_>>`, the policy, approvals, prompt, frozen
+  snapshots, OAuth store, and warnings. `set_session_tools` validates live
+  names, persists `extra.mcpTools`, then installs the snapshot; a missing name
+  fails before storage/send; a running turn refuses changes
+  (`TURN_IN_PROGRESS`). `snapshot_for` freezes on first send. `clear_session`
+  drops the snapshot and session grants but keeps persistent grants.
+  Approvals persist to `mcp/approvals.json` (0600, bounded 2 MiB); new grants
+  are chained as `mcp.tool.approved` with tool name + fingerprint only.
+- **OAuth/schema/search (`crates/mcp`):** per-server token store; production
+  keychain account `mcp-oauth/<server>`; refresh is rebuild-defined OAuth 2.0
+  (`grant_type=refresh_token`, form-encoded) behind an injectable `OAuthHttp`;
+  the production refresh client applies the egress allowlist to the token URL
+  and disables redirects; an explicit configured `Authorization` header wins
+  over OAuth. No authorization-code/PKCE flow — a server needing it surfaces
+  `NeedsAuth`.
+  Schema cache is `mcp/schemas.json` (atomic, 0600); cached tools are
+  metadata-only. Tool search is deterministic; `toolSearchEnabled` defaults
+  `false`; `McpTools` bypasses the flag for the session picker but filters
+  disabled and policy-hidden tools.
+- **Skills (`crates/skills`):** directory + `manifest.json`; precedence
+  `Org > User > Plugin > Bundled`; bundled placeholders are non-runnable;
+  scripts never execute; assets are declared-only, path-confined, capped;
+  symlinked directories rejected; truncation is UTF-8-safe.
+- **Plugins (`crates/plugins`):** local `plugin.json` install into a managed
+  root; org bundles read-only; no network marketplace. Signature verification
+  is **not implemented**: `Required` refuses every install; `Optional` accepts
+  unsigned/unverified and reports `Unverified`. Plugin MCP servers are
+  namespaced `<plugin>.<server>` and use normal MCP policy/approval; a server
+  name collision is skipped with a warning; disabled plugins contribute
+  nothing. Enablement changes apply on next app start, never to a frozen
+  session snapshot.
+- **Catalog (`crates/bridge/src/catalog.rs`):** root `app_data/catalog`;
+  `skills.json`/`plugins.json` plus `skills/`, `plugins/`, `org/skills/`,
+  `org/plugins/`. Lock ordering matters: catalog settings first, then MCP
+  config; never hold both across an await.
+- **App boot / renderer:** `apps/desktop/src-tauri/src/lib.rs` builds the
+  catalog, appends plugin servers, builds MCP, starts `start_all` in the
+  background, emits `chat://mcp-status` and `chat://tool-approval`, and wires
+  `ToolRuntime`/`CatalogRuntime`. A broken MCP directory degrades MCP, never
+  chat. Renderer: approval modal, live tool status, session tool picker, skill
+  picker, `SkillsPanel`/`PluginsPanel`/`DeveloperPanel`. `#settings/developer`
+  is a rebuild-defined placeholder key; `skills`/`plugins` stand in for the
+  uncaptured Customize route; `connectors` stays disabled. Browser preview
+  reports `BRIDGE_UNAVAILABLE` and never fakes rows/totals.
+- **Gates:** bridge 55 unit + 11 chat + 4 `mcp_tools`; MCP 25 unit + 22
+  manager + 2 real-stdio (`--features fixture-server`); agent 57; skills 7;
+  plugins 7; provider wire batteries unchanged; `cargo check -p
+  myharness-desktop`; `tsc --noEmit`; `vite build`; browser E2E 38/38; clippy
+  `-D warnings` on affected crates.
+- **Traps:** `run_turn` holds one global approval mutex across a turn, so tool
+  turns serialize across sessions; a pending approval can be lost if the
+  renderer navigates away; no default MCP start/tool-call timeout
+  (`None` unless configured); the pinned `rmcp` transport follows only
+  same-origin 307/308 redirects and refuses cross-origin hops, and the
+  production OAuth refresh client applies the allowlist and disables redirects;
+  stdio is not inspected; DNS/IP egress is not checked; legacy SSE is explicitly
+  unsupported; tool schema validation is a bounded subset (`pattern`,
+  `format`, external `$ref` not enforced); no live HTTP MCP fixture or live
+  OAuth/keychain exercise; no marketplace/signature verification; no
+  persistent actionable failure toast; no model-driven on-demand tool search.
+- **Docs:** `docs/17` §4.16, `docs/14` §9 items 44–52, `docs/18` §4.5, `docs/19`
+  IMP-31..37, `docs/04` Phase 5 row 3. `docs/**` is modified on disk only and is
+  **never committed**. `apps/desktop/src/components/Untitled-1` remains untracked and
+  untouched. Do not run `cargo fmt --all` (it churns unrelated baseline files).

@@ -496,6 +496,15 @@ pub enum TurnEvent {
         arguments_delta: Option<String>,
         arguments: Option<serde_json::Value>,
     },
+    /// A tool result produced by the agent loop, not by a provider stream.
+    /// `parts` are text/images/documents only; a tool result is data and never
+    /// a model-issued block. The bridge forwards this to the renderer.
+    ToolResult {
+        /// Provider tool-call id this result answers.
+        id: String,
+        /// Model-visible result parts.
+        parts: Vec<ContentPart>,
+    },
     /// Usage as reported (`AI-USAGE-01`); emitted once, from the final events.
     Usage {
         usage: Usage,

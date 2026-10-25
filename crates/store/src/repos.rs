@@ -454,7 +454,10 @@ impl Store {
             session_columns()
         ))?;
         let raws: Vec<SessionRowParsed> = stmt
-            .query_map(params![archived.map(|a| a as i64)], SessionRowParsed::from_row)?
+            .query_map(
+                params![archived.map(|a| a as i64)],
+                SessionRowParsed::from_row,
+            )?
             .collect::<Result<Vec<_>, _>>()?;
         drop(stmt);
 
@@ -527,6 +530,29 @@ impl Store {
         let changed = conn.execute(
             "UPDATE sessions SET title = ?2 WHERE id = ?1",
             params![id, title],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::NotFound);
+        }
+        Ok(())
+    }
+
+    /// Replace a session's `extra` object. `extra` carries renderer-safe
+    /// metadata (tool selection, approval references); it is never a place for
+    /// credentials, and the bridge redacts before writing.
+    pub fn set_session_extra(&self, id: &str, extra: &serde_json::Value) -> Result<(), StoreError> {
+        if !is_uuid(id) {
+            return Err(StoreError::Validation("the session id is not a uuid"));
+        }
+        if !extra.is_object() {
+            return Err(StoreError::Validation(
+                "session extra must be a JSON object",
+            ));
+        }
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        let changed = conn.execute(
+            "UPDATE sessions SET payload = ?2 WHERE id = ?1",
+            params![id, extra.to_string()],
         )?;
         if changed == 0 {
             return Err(StoreError::NotFound);
@@ -747,7 +773,9 @@ impl Store {
             return Err(StoreError::NotFound);
         };
         if row_session_id != session_id {
-            return Err(StoreError::Validation("the turn belongs to another session"));
+            return Err(StoreError::Validation(
+                "the turn belongs to another session",
+            ));
         }
         if current_status != TurnStatus::Partial.as_stored() || current_error.is_some() {
             return Err(StoreError::Validation("the turn is already finished"));

@@ -28,7 +28,8 @@ export const NAV_ITEMS: ScreenDef[] = [
 /**
  * Settings sections — docs/06 §1 hash list AND docs/screens/settings.md §Left navigation
  * (hash slugs are the verified contract; display labels + groups are the verified UI copy).
- * `developer` has no captured hash — rendered disabled until evidenced (docs/06 §1 list).
+ * `developer` has no captured hash; Phase 5 renders a rebuild-defined pane behind
+ * the placeholder key `developer` and labels it as unobserved.
  */
 export const SETTINGS_GROUPS: {
   group: string;
@@ -50,18 +51,19 @@ export const SETTINGS_GROUPS: {
     sections: [
       { key: "desktop", label: "System" },
       // Hash never captured (settings.md lists the section; docs/06 §1 lists hashes).
-      { key: "developer", label: "Developer", disabled: true },
+      { key: "developer", label: "Developer" },
     ],
   },
   {
     // These three are shortcuts to the Customize route, not settings panes
     // (docs/screens/settings.md §Left navigation); the Customize route was never
-    // captured (docs/06 §1), so they render disabled until it is specified.
+    // captured (docs/06 §1). Skills and Plugins open rebuild-defined panes here
+    // for Phase 5; Connectors still has no implementation and stays disabled.
     group: "Customize",
     sections: [
-      { key: "skills", label: "Skills", disabled: true },
+      { key: "skills", label: "Skills" },
       { key: "connectors", label: "Connectors", disabled: true },
-      { key: "plugins", label: "Plugins", disabled: true },
+      { key: "plugins", label: "Plugins" },
     ],
   },
 ];
