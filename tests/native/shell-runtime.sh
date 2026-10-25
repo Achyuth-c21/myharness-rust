@@ -17,6 +17,11 @@ BIN=/home/manjula/myharness-rust/target/debug/myharness-desktop
 DIST=/home/manjula/myharness-rust/apps/desktop/dist
 LOG=/tmp/opencode/myharness-fixture.log
 
+# The log directory is not the script's own; a missing parent makes every
+# launch's redirect fail silently and every case time out waiting on a log
+# that can never appear.
+mkdir -p "$(dirname "$LOG")"
+
 pass=0; fail=0
 
 launch() { # launch <args...>  -> primary in background, logs to $LOG

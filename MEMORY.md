@@ -568,6 +568,17 @@ verification gate refuses every bundle).
   warnings` on store/sessions/bridge/telemetry/updates/desktop;
   `cargo metadata`; `tsc --noEmit`; `vite build`; E2E `shell.spec.mjs` ALL
   PASS (T01–T49; T48 privacy, T49 system/update posture).
+- **Pre-Phase-8 verification sweep (2026-10-26, merged `dev` @ `db0116e`):**
+  `cargo metadata`; workspace **527 cargo tests / 0 failed**; clippy
+  `--workspace --all-targets -D warnings` clean; `tsc --noEmit`; `vite build`;
+  E2E `shell.spec.mjs` ALL PASS (T01–T49), `setup-window.spec.mjs` 16/16;
+  native `shell-runtime.sh` **19/19 after a harness fix** — the script's
+  hardcoded `LOG=/tmp/opencode/...` pointed into a directory that no longer
+  existed, so every primary launch's redirect failed silently and the cases
+  cascaded into timeouts with a stray app instance holding the single-instance
+  lock; the script now `mkdir -p`s its log directory. Toolchain note: a
+  background `tail` pipe buffers the fixture's PASS lines until it exits —
+  do not read emptiness mid-run as failure.
 - **Docs on disk:** `docs/04` §3.1 rows Phase 7/1–5; `docs/17` §4.17 (the
   full status table); `docs/18` diagnostics contract + the retention note +
   the memory table + usage `surfaces`; `docs/14` §9 items 66–70.
