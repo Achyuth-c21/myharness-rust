@@ -11,6 +11,7 @@ myharness-config = { path = "../config" }
 myharness-mcp = { path = "../mcp" }
 myharness-plugins = { path = "../plugins" }
 myharness-projects = { path = "../projects" }
+myharness-scheduler = { path = "../scheduler" }
 myharness-skills = { path = "../skills" }
 myharness-provider-anthropic = { path = "../providers/anthropic" }
 myharness-provider-bedrock = { path = "../providers/bedrock" }

@@ -145,6 +145,47 @@ export interface ProjectRecord {
   folderAvailable: boolean;
 }
 
+/**
+ * A stored scheduled task (`crates/store/src/repos_scheduler.rs`
+ * `ScheduledTaskRow`) plus the bridge-derived summary and last run.
+ * `armedAt` is the single pending occurrence; `null` while disabled.
+ */
+export interface ScheduledTaskRecord {
+  id: string;
+  name: string;
+  prompt: string;
+  cron: string;
+  enabled: boolean;
+  projectId: string | null;
+  cwd: string | null;
+  createdAt: number;
+  armedAt: number | null;
+  lastRunAt: number | null;
+  extra: unknown;
+  scheduleSummary: string;
+  lastRun: ScheduledRunRecord | null;
+  contextUnavailable: boolean;
+}
+
+/** One recorded run (or skip) of a scheduled task. */
+export interface ScheduledRunRecord {
+  id: string;
+  taskId: string;
+  startedAt: number;
+  status: "running" | "completed" | "failed" | "skipped";
+  reason: string | null;
+  sessionId: string | null;
+  finishedAt: number | null;
+}
+
+/** One captured template card (name + schedule label are the captured copy). */
+export interface ScheduledTemplateCard {
+  name: string;
+  prompt: string;
+  cron: string;
+  scheduleLabel: string;
+}
+
 /** The effective Code policy; folder roots never cross the bridge. */
 export interface CodePolicyView {
   codeEnabled: boolean;
@@ -212,6 +253,22 @@ export type ChatCommand =
     }
   | { type: "deleteProject"; id: string }
   | { type: "createArtifactTask" }
+  | { type: "listScheduledTasks" }
+  | { type: "scheduledTemplates" }
+  | {
+      type: "createScheduledTask";
+      name: string;
+      prompt: string;
+      cron: string;
+      projectId?: string | null;
+      cwd?: string | null;
+      enabled?: boolean | null;
+    }
+  | { type: "updateScheduledTask"; id: string; name: string; prompt: string; cron: string }
+  | { type: "setScheduledTaskEnabled"; id: string; enabled: boolean }
+  | { type: "deleteScheduledTask"; id: string }
+  | { type: "runScheduledTaskNow"; id: string }
+  | { type: "previewSchedule"; cron: string; count?: number | null }
   | { type: "listCodeSessions"; archived?: boolean | null }
   | {
       type: "createCodeSession";
@@ -262,6 +319,14 @@ export type ChatResponse =
   | { type: "project"; project: ProjectRecord }
   | { type: "projectDetail"; project: ProjectRecord; sessions: SessionRecord[] }
   | { type: "projectDeleted"; orphanedSessions: number }
+  | {
+      type: "scheduledTasks";
+      tasks: ScheduledTaskRecord[];
+    }
+  | { type: "scheduledTask"; task: ScheduledTaskRecord }
+  | { type: "scheduledRun"; run: ScheduledRunRecord }
+  | { type: "templates"; templates: ScheduledTemplateCard[] }
+  | { type: "schedulePreview"; times: number[] }
   | { type: "codeDashboard"; summary: CodeUsageSummary; sessions: SessionRecord[]; repositories: CodeRepositoryView[]; policy: CodePolicyView }
   | {
       type: "turn";

@@ -629,6 +629,35 @@ pub fn run() {
                     None => dlog("cold-start deep-link dropped: main window not present at setup"),
                 }
             }
+            // The scheduler loop (Phase 6 slice 4): a per-30s tick over the
+            // armed scheduled tasks. Runs execute on the interactive send
+            // path with the scheduled approval context; a missed occurrence
+            // becomes a recorded skip, never a late execution
+            // (`docs/features/scheduled-tasks.md`, TEST-SCHED-003/004). The
+            // first tick initializes the chat service (the store) even when
+            // no renderer command has run yet, so boot-time catch-up works.
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    loop {
+                        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|elapsed| elapsed.as_millis() as i64)
+                            .unwrap_or(0);
+                        match chat_state(&handle) {
+                            Ok(service) => {
+                                for note in service.scheduled_tick(now).await {
+                                    dlog(&format!("scheduler: {note}"));
+                                }
+                            }
+                            Err(message) => {
+                                dlog(&format!("the scheduler is idle: {message}"));
+                            }
+                        }
+                    }
+                });
+            }
             Ok(())
         })
         .run(tauri::generate_context!())

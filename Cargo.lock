@@ -2308,6 +2308,7 @@ dependencies = [
  "myharness-provider-gateway",
  "myharness-provider-openai",
  "myharness-provider-sdk",
+ "myharness-scheduler",
  "myharness-secrets",
  "myharness-sessions",
  "myharness-skills",
@@ -2480,6 +2481,10 @@ dependencies = [
 [[package]]
 name = "myharness-scheduler"
 version = "0.1.0"
+dependencies = [
+ "chrono",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "myharness-search"

@@ -2705,3 +2705,143 @@ body {
   font-size: 12px;
   color: var(--mh-text-3);
 }
+
+/* ---------- Scheduled tasks (Phase 6 slice 4; docs/screens/scheduled-tasks.md) ---------- */
+
+.screen-subtitle {
+  margin: calc(var(--mh-unit) * 1) 0 0;
+  font-size: 13px;
+  color: var(--mh-text-2);
+}
+
+.sched-head {
+  align-items: flex-start;
+}
+
+.sched-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--mh-unit) * 1);
+}
+
+.sched-sort select {
+  font: inherit;
+  font-size: 13px;
+  color: var(--mh-text-1);
+  background: var(--mh-surface-2);
+  border: 1px solid var(--mh-border-strong);
+  border-radius: var(--mh-radius-control);
+  padding: calc(var(--mh-unit) * 1) calc(var(--mh-unit) * 2);
+}
+
+.sched-templates {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: calc(var(--mh-unit) * 3);
+  margin: 0 calc(var(--mh-unit) * 8);
+}
+
+.sched-template {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--mh-unit) * 3);
+  text-align: left;
+  border: 1px dashed var(--mh-border-strong);
+  background: var(--mh-surface-2);
+  border-radius: var(--mh-radius-card);
+  padding: calc(var(--mh-unit) * 3) calc(var(--mh-unit) * 4);
+  font: inherit;
+  color: var(--mh-text-1);
+  cursor: pointer;
+}
+
+.sched-template:hover {
+  background: var(--mh-hover-fill);
+}
+
+.sched-template-icon {
+  display: inline-flex;
+  color: var(--mh-text-2);
+}
+
+.sched-template-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sched-template-schedule {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--mh-unit) * 1);
+  font-size: 12px;
+  color: var(--mh-text-2);
+  white-space: nowrap;
+}
+
+.sched-row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--mh-unit) * 3);
+  border: 1px solid var(--mh-border-hair);
+  background: var(--mh-surface-2);
+  border-radius: var(--mh-radius-card);
+  padding: calc(var(--mh-unit) * 2) calc(var(--mh-unit) * 4);
+  flex-wrap: wrap;
+}
+
+.sched-run-chip {
+  font-size: 12px;
+  border-radius: var(--mh-radius-pill);
+  padding: calc(var(--mh-unit) * 1) calc(var(--mh-unit) * 2);
+  white-space: nowrap;
+}
+
+.sched-run-chip.none {
+  color: var(--mh-text-3);
+}
+
+.sched-run-chip.completed {
+  color: #1d7a3a;
+}
+
+.sched-run-chip.failed,
+.sched-run-chip.skipped {
+  color: #a13224;
+}
+
+.sched-run-chip.running {
+  color: var(--mh-info-text);
+}
+
+.confirm-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--mh-unit) * 2);
+  font-size: 12px;
+  color: var(--mh-text-2);
+}
+
+.sched-editor-row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--mh-unit) * 2);
+}
+
+.sched-editor-row select,
+.sched-editor-row input {
+  font: inherit;
+  font-size: 13px;
+  color: var(--mh-text-1);
+  background: var(--mh-surface-2);
+  border: 1px solid var(--mh-border-strong);
+  border-radius: var(--mh-radius-input);
+  padding: calc(var(--mh-unit) * 1) calc(var(--mh-unit) * 2);
+}
+
+@media (max-width: 900px) {
+  .sched-templates {
+    grid-template-columns: 1fr;
+  }
+}

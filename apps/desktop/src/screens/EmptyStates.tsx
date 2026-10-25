@@ -4,16 +4,6 @@
  * is invented. Header action buttons are rendered per docs but stay disabled until
  * their flows arrive (docs/05 §4.4 "The header also has New project", etc.).
  */
-function ClockGlyph() {
-  return (
-    <svg width="40" height="40" viewBox="0 0 40 40" fill="none" aria-hidden="true">
-      <circle cx="20" cy="21.5" r="13" stroke="currentColor" strokeWidth="1.6" />
-      <path d="M20 14.5v7l4.5 3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-      <path d="M13 5.5h14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-    </svg>
-  );
-}
-
 function ChevronRight() {
   return (
     <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -67,30 +57,6 @@ export function ScreenHead({ label, action }: { label: string; action?: string }
 
 /** /cowork-artifact — the real screen (Phase 6 slice 3) lives in ArtifactsScreen.tsx. */
 
-/** /scheduled-task — docs/05 §4.6: banner, keep-awake switch, empty copy. */
-export function ScheduledScreen() {
-  return (
-    <>
-      <ScreenHead label="Scheduled tasks" action="New Task" />
-      <div className="info-banner" role="status">
-        <span>
-          Scheduled tasks run only while the computer is awake and online.{" "}
-          {/* banner semantics per docs/05 §4.6; exact sentence copy pending locale catalog */}
-        </span>
-        <label className="switch">
-          <input type="checkbox" disabled title="Keep awake control arrives with scheduling (docs/08 UI-INT-084)" />
-          <span className="switch-track" aria-hidden="true" />
-          <span className="switch-label">Keep awake</span>
-        </label>
-      </div>
-      <EmptyState
-        icon={<ClockGlyph />}
-        headline="No scheduled tasks yet."
-        copy=""
-        action="New Task"
-      />
-    </>
-  );
-}
+/** /scheduled-task — the real screen (Phase 6 slice 4) lives in ScheduledScreen.tsx. */
 
 /** Generic fallthrough for routed surfaces without captured copy yet. */

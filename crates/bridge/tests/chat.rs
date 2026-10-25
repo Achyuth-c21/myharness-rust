@@ -1936,3 +1936,234 @@ async fn an_artifact_task_is_one_marked_session_the_library_can_filter() {
         Some(&serde_json::Value::Bool(true))
     );
 }
+
+// ---------------------------------------------------------------------
+// Scheduled tasks (Phase 6 slice 4; docs/features/scheduled-tasks.md,
+// TEST-SCHED-002/003/004 at the bridge boundary)
+// ---------------------------------------------------------------------
+
+impl Fixture {
+    async fn create_task(&self, cron: &str) -> (String, myharness_store::ScheduledTaskRow) {
+        let response = dispatch(
+            self.service.as_ref(),
+            ChatCommand::CreateScheduledTask {
+                name: "Daily brief".into(),
+                prompt: "What needs my attention today?".into(),
+                cron: cron.into(),
+                project_id: None,
+                cwd: None,
+                enabled: Some(true),
+            },
+            None,
+        )
+        .await;
+        match response {
+            ChatResponse::ScheduledTask { task } => (task.task.id.clone(), task.task),
+            other => panic!("expected a scheduled task, got {other:?}"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn scheduled_tasks_crud_arms_previews_and_refuses_bad_schedules() {
+    let fixture = Fixture::new(reply("brief"), Tail::End);
+
+    let templates = dispatch(fixture.service.as_ref(), ChatCommand::ScheduledTemplates, None).await;
+    let ChatResponse::Templates { templates } = templates else {
+        panic!("expected templates, got {templates:?}");
+    };
+    assert_eq!(templates.len(), 6, "the six captured templates");
+    assert_eq!(templates[0].name, "Daily briefing");
+    assert_eq!(templates[0].schedule_label, "Weekdays at 8:00 AM");
+
+    let (id, task) = fixture.create_task("30 9 * * *").await;
+    assert!(task.armed_at.is_some(), "an enabled task arms on creation");
+    assert!(task.enabled);
+
+    let listed = dispatch(
+        fixture.service.as_ref(),
+        ChatCommand::ListScheduledTasks,
+        None,
+    )
+    .await;
+    let ChatResponse::ScheduledTasks { tasks } = listed else {
+        panic!("expected tasks, got {listed:?}");
+    };
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].schedule_summary, "every day at 09:30");
+    assert!(!tasks[0].context_unavailable);
+
+    // The editor's preview is strictly increasing device-zone instants.
+    let preview = dispatch(
+        fixture.service.as_ref(),
+        ChatCommand::PreviewSchedule {
+            cron: "0 8 * * 1-5".into(),
+            count: Some(3),
+        },
+        None,
+    )
+    .await;
+    let ChatResponse::SchedulePreview { times } = preview else {
+        panic!("expected a preview, got {preview:?}");
+    };
+    assert_eq!(times.len(), 3);
+    assert!(times[0] < times[1] && times[1] < times[2]);
+
+    // A malformed schedule is refused before anything is stored.
+    let bad = dispatch(
+        fixture.service.as_ref(),
+        ChatCommand::CreateScheduledTask {
+            name: "Broken".into(),
+            prompt: "p".into(),
+            cron: "30 9 1 * *".into(),
+            project_id: None,
+            cwd: None,
+            enabled: Some(true),
+        },
+        None,
+    )
+    .await;
+    assert!(
+        matches!(bad, ChatResponse::Error { ref error, .. } if error.code == "CONFIG_VALIDATION"),
+        "day-of-month fields are outside the supported subset, got {bad:?}"
+    );
+
+    // Disable disarms; enabling rearms.
+    let disabled = dispatch(
+        fixture.service.as_ref(),
+        ChatCommand::SetScheduledTaskEnabled { id: id.clone(), enabled: false },
+        None,
+    )
+    .await;
+    let ChatResponse::ScheduledTask { task: disabled } = disabled else {
+        panic!("expected a task, got {disabled:?}");
+    };
+    assert!(!disabled.task.enabled);
+    assert!(disabled.task.armed_at.is_none(), "disabling must disarm");
+
+    let enabled = dispatch(
+        fixture.service.as_ref(),
+        ChatCommand::SetScheduledTaskEnabled { id: id.clone(), enabled: true },
+        None,
+    )
+    .await;
+    let ChatResponse::ScheduledTask { task: enabled } = enabled else {
+        panic!("expected a task, got {enabled:?}");
+    };
+    assert!(enabled.task.armed_at.is_some(), "enabling must rearm");
+
+    let deleted = dispatch(
+        fixture.service.as_ref(),
+        ChatCommand::DeleteScheduledTask { id: id.clone() },
+        None,
+    )
+    .await;
+    assert!(matches!(deleted, ChatResponse::Ack));
+    let gone = dispatch(
+        fixture.service.as_ref(),
+        ChatCommand::SetScheduledTaskEnabled { id, enabled: true },
+        None,
+    )
+    .await;
+    assert!(
+        matches!(gone, ChatResponse::Error { .. }),
+        "a deleted task is gone, not resurrected"
+    );
+}
+
+#[tokio::test]
+async fn a_missed_occurrence_is_a_recorded_skip_and_a_due_one_runs() {
+    let fixture = Fixture::new(reply("scheduled run"), Tail::End);
+    let (id, _task) = fixture.create_task("30 9 * * *").await;
+    let store = fixture.service.sessions().store();
+
+    // A missed occurrence: armed an hour ago. The tick must record a skip
+    // with the truthful reason, never execute late, and rearm strictly
+    // forward (TEST-SCHED-003).
+    let now = chrono::Utc::now().timestamp_millis();
+    store
+        .arm_scheduled_task(&id, Some(now - 60 * 60_000))
+        .expect("arm in the past");
+    let notes = fixture.service.scheduled_tick(now).await;
+    assert!(
+        notes.iter().any(|note| note.contains("skipped")),
+        "the tick must report the skip: {notes:?}"
+    );
+    let runs = store.list_scheduled_runs(&id, 10).expect("runs");
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].status, "skipped");
+    assert_eq!(
+        runs[0].reason.as_deref(),
+        Some("the computer was asleep, offline, or the app was closed at the scheduled time")
+    );
+    assert_eq!(runs[0].session_id, None, "a skip creates no session");
+    let task = store.read_scheduled_task(&id).expect("task");
+    assert!(task.armed_at.unwrap_or(0) > now, "the tick rearmed forward");
+    assert!(task.last_run_at.is_none(), "a skip is not a run: no last-run stamp");
+
+    // A due occurrence (within the grace window) executes on the normal send
+    // path: one normal session, one completed run row, the prompt as the user
+    // turn (TEST-SCHED-004).
+    let now = chrono::Utc::now().timestamp_millis();
+    store
+        .arm_scheduled_task(&id, Some(now - 1_000))
+        .expect("arm now");
+    let notes = fixture.service.scheduled_tick(now).await;
+    assert!(
+        notes.iter().any(|note| note.contains("ran in session")),
+        "the tick must run the due occurrence: {notes:?}"
+    );
+    let runs = store.list_scheduled_runs(&id, 10).expect("runs");
+    assert_eq!(runs.len(), 3, "skip + running + completed");
+    let completed = runs.iter().find(|run| run.status == "completed").expect("completed row");
+    let session_id = completed.session_id.clone().expect("session id");
+    let session = store.read_session(&session_id).expect("session");
+    assert_eq!(session.surface, "chat", "a run creates a normal session");
+    assert_eq!(
+        session.extra.get("scheduledTaskId").and_then(|v| v.as_str()),
+        Some(id.as_str())
+    );
+    let turns = store.list_turns(&session_id).expect("turns");
+    assert_eq!(turns.len(), 2, "user prompt + assistant reply");
+    let task = store.read_scheduled_task(&id).expect("task");
+    assert_eq!(
+        task.last_run_at,
+        Some(completed.started_at),
+        "a completed run stamps last_run_at"
+    );
+    assert!(task.armed_at.unwrap_or(0) > now, "rearmed past the handled occurrence");
+}
+
+#[tokio::test]
+async fn run_now_creates_one_session_and_the_terminal_run_row() {
+    let fixture = Fixture::new(reply("manual run"), Tail::End);
+    let (id, _task) = fixture.create_task("0 12 * * *").await;
+
+    let now = dispatch(
+        fixture.service.as_ref(),
+        ChatCommand::RunScheduledTaskNow { id: id.clone() },
+        None,
+    )
+    .await;
+    let ChatResponse::ScheduledRun { run } = now else {
+        panic!("expected a run row, got {now:?}");
+    };
+    assert_eq!(run.status, "completed");
+    let session_id = run.session_id.clone().expect("session id");
+    let opened = dispatch(
+        fixture.service.as_ref(),
+        ChatCommand::OpenSession { id: session_id },
+        None,
+    )
+    .await;
+    let ChatResponse::Session { session } = opened else {
+        panic!("expected the session, got {opened:?}");
+    };
+    assert_eq!(session.session.title, "Daily brief");
+    let user_text = session
+        .turns
+        .iter()
+        .find(|turn| turn.role == "user")
+        .expect("user turn");
+    assert!(user_text.content.plain_text().contains("What needs my attention today?"));
+}

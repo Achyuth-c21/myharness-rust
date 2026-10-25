@@ -664,6 +664,53 @@ pub enum ChatCommand {
     /// this creates the task only — the renderer navigates to it and the user's
     /// first send starts generation (recorded in `docs/14` §9).
     CreateArtifactTask,
+    /// Scheduled tasks (Phase 6 slice 4). The set is enumerated like every
+    /// other group; the arm/catch-up state machine lives in
+    /// `crates/bridge/src/scheduler.rs`, execution in the chat send path.
+    ListScheduledTasks,
+    /// The six captured template cards. They prefill an editor; the bridge
+    /// never creates a job from them.
+    ScheduledTemplates,
+    CreateScheduledTask {
+        name: String,
+        prompt: String,
+        cron: String,
+        #[serde(default)]
+        project_id: Option<String>,
+        #[serde(default)]
+        cwd: Option<String>,
+        #[serde(default)]
+        enabled: Option<bool>,
+    },
+    /// Replace the editable fields. A schedule change rearms; a disabled task
+    /// stays disarmed.
+    UpdateScheduledTask {
+        id: String,
+        name: String,
+        prompt: String,
+        cron: String,
+    },
+    /// Enable or disable. Disabling clears the armed occurrence; history is
+    /// retained.
+    SetScheduledTaskEnabled {
+        id: String,
+        enabled: bool,
+    },
+    DeleteScheduledTask {
+        id: String,
+    },
+    /// Run one task immediately (explicit). The run row, session, and
+    /// rearm behave exactly like a scheduler-driven run.
+    RunScheduledTaskNow {
+        id: String,
+    },
+    /// The editor's next-run preview: the following instants in the device
+    /// zone, epoch millis. Never a promise about the past.
+    PreviewSchedule {
+        cron: String,
+        #[serde(default)]
+        count: Option<usize>,
+    },
 }
 
 /// One command's answer.
@@ -742,6 +789,21 @@ pub enum ChatResponse {
     ProjectDeleted {
         orphaned_sessions: usize,
     },
+    ScheduledTasks {
+        tasks: Vec<ScheduledTaskView>,
+    },
+    ScheduledTask {
+        task: ScheduledTaskView,
+    },
+    ScheduledRun {
+        run: myharness_store::ScheduledRunRow,
+    },
+    Templates {
+        templates: Vec<crate::scheduler::ScheduledTemplate>,
+    },
+    SchedulePreview {
+        times: Vec<i64>,
+    },
     Stopped {
         stopped: bool,
     },
@@ -808,6 +870,22 @@ fn folder_resolves(cwd: &str) -> bool {
         .is_some_and(|canonical| canonical == cwd)
 }
 
+/// A scheduled task row plus the derived facts the renderer cannot compute
+/// itself: the readable schedule, the last run (or skip), and the project
+/// context's availability. `contextUnavailable` is true when the bound
+/// project is gone or the folder no longer resolves — the task shows the
+/// unavailable state and refuses to run; nothing is silently retargeted
+/// (`REQ-SCHED-05`).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScheduledTaskView {
+    #[serde(flatten)]
+    pub task: myharness_store::ScheduledTaskRow,
+    pub schedule_summary: String,
+    pub last_run: Option<myharness_store::ScheduledRunRow>,
+    pub context_unavailable: bool,
+}
+
 /// One stored turn in the shape the transcript renders. Content is the agent
 /// crate's transcript JSON (`TurnContent`), decoded here so the renderer never
 /// reads blobs.
@@ -850,6 +928,14 @@ impl From<BridgeError> for ChatFailure {
 
 fn session_failure(error: impl std::fmt::Display) -> ChatFailure {
     ChatFailure::before_send(BridgeError::new("SESSION_ERROR", error.to_string()))
+}
+
+/// A cron parse failure is always the caller's input problem.
+fn schedule_failure(error: myharness_scheduler::CronError) -> ChatFailure {
+    ChatFailure::before_send(BridgeError::new(
+        "CONFIG_VALIDATION",
+        format!("the schedule is invalid: {error}"),
+    ))
 }
 
 /// Map a project-layer failure onto the wire. `NotFound` is its own code —
@@ -981,7 +1067,7 @@ async fn run<K: AuditKeyStore, R: ChatTargetResolver>(
             max_tokens,
         } => {
             service
-                .send_turn_for_surface(&session_id, &text, max_tokens, observer, "code")
+                .send_turn_for_surface(&session_id, &text, max_tokens, observer, "code", false)
                 .await
         }
         ChatCommand::CodeDashboard {
@@ -1064,7 +1150,7 @@ async fn run<K: AuditKeyStore, R: ChatTargetResolver>(
             max_tokens,
         } => {
             service
-                .send_turn_for_surface(&session_id, &text, max_tokens, observer, "chat")
+                .send_turn_for_surface(&session_id, &text, max_tokens, observer, "chat", false)
                 .await
         }
         ChatCommand::StopTurn { session_id } => {
@@ -1161,6 +1247,39 @@ async fn run<K: AuditKeyStore, R: ChatTargetResolver>(
         } => service.update_project(&id, name, instructions, memory_enabled.unwrap_or(true)),
         ChatCommand::DeleteProject { id } => service.delete_project(&id),
         ChatCommand::CreateArtifactTask => service.create_artifact_task(),
+        ChatCommand::ListScheduledTasks => service.list_scheduled_tasks(),
+        ChatCommand::ScheduledTemplates => Ok(ChatResponse::Templates {
+            templates: crate::scheduler::TEMPLATES.to_vec(),
+        }),
+        ChatCommand::CreateScheduledTask {
+            name,
+            prompt,
+            cron,
+            project_id,
+            cwd,
+            enabled,
+        } => service.create_scheduled_task(
+            name,
+            prompt,
+            cron,
+            project_id,
+            cwd,
+            enabled.unwrap_or(true),
+        ),
+        ChatCommand::UpdateScheduledTask {
+            id,
+            name,
+            prompt,
+            cron,
+        } => service.update_scheduled_task(&id, name, prompt, cron),
+        ChatCommand::SetScheduledTaskEnabled { id, enabled } => {
+            service.set_scheduled_task_enabled(&id, enabled)
+        }
+        ChatCommand::DeleteScheduledTask { id } => service.delete_scheduled_task(&id),
+        ChatCommand::RunScheduledTaskNow { id } => service.run_scheduled_task_now(&id).await,
+        ChatCommand::PreviewSchedule { cron, count } => {
+            service.preview_schedule(&cron, count.unwrap_or(3))
+        }
     }
 }
 
@@ -1465,6 +1584,473 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
         })
     }
 
+    // -----------------------------------------------------------------------
+    // Scheduled tasks (Phase 6 slice 4; REQ-SCHED-01..06)
+    // -----------------------------------------------------------------------
+
+    /// One wire view for a task row: summary + last run + context health.
+    fn scheduled_task_view(
+        &self,
+        task: myharness_store::ScheduledTaskRow,
+    ) -> Result<ScheduledTaskView, ChatFailure> {
+        let schedule_summary = crate::scheduler::describe(&task.cron).map_err(|error| {
+            ChatFailure::before_send(BridgeError::new(
+                "CONFIG_VALIDATION",
+                format!("the stored schedule is invalid: {error}"),
+            ))
+        })?;
+        let last_run = self
+            .sessions
+            .store()
+            .list_scheduled_runs(&task.id, 1)
+            .map_err(session_failure)?
+            .into_iter()
+            .next();
+        let context_unavailable = match (&task.project_id, &task.cwd) {
+            (Some(project_id), _) => {
+                // A bound project must exist and its folder must still
+                // resolve; anything else is the explicit unavailable state.
+                self.sessions
+                    .store()
+                    .read_project(project_id)
+                    .map(|project| !folder_resolves(&project.cwd))
+                    .unwrap_or(true)
+            }
+            (None, Some(cwd)) => !folder_resolves(cwd),
+            (None, None) => false,
+        };
+        Ok(ScheduledTaskView {
+            task,
+            schedule_summary,
+            last_run,
+            context_unavailable,
+        })
+    }
+
+    /// Validate the context pair exactly one way and return the stored
+    /// spelling. A cwd is canonicalized against the same policy as every
+    /// other folder; a project must exist with a resolvable folder.
+    fn resolve_scheduled_context(
+        &self,
+        project_id: &Option<String>,
+        cwd: &Option<String>,
+    ) -> Result<(Option<String>, Option<String>), ChatFailure> {
+        if project_id.is_some() && cwd.is_some() {
+            return Err(ChatFailure::before_send(BridgeError::new(
+                "CONFIG_VALIDATION",
+                "choose a project or a folder, not both",
+            )));
+        }
+        if let Some(project_id) = project_id {
+            validate_session_id(project_id).map_err(|_| {
+                ChatFailure::before_send(BridgeError::new(
+                    "CONFIG_VALIDATION",
+                    "the project id is invalid",
+                ))
+            })?;
+            let project = self
+                .projects_service()
+                .read(project_id)
+                .map_err(project_failure)?;
+            if !folder_resolves(&project.cwd) {
+                return Err(ChatFailure::before_send(BridgeError::new(
+                    "FOLDER_UNAVAILABLE",
+                    "the project folder is not available; restore it or pick another project",
+                )));
+            }
+            return Ok((Some(project.id), Some(project.cwd)));
+        }
+        if let Some(raw_cwd) = cwd {
+            let policy = self.targets.code_policy()?;
+            let canonical = validate_workspace_folder(raw_cwd, &policy)?;
+            let cwd = canonical.to_str().ok_or_else(|| {
+                ChatFailure::before_send(BridgeError::new(
+                    "CONFIG_VALIDATION",
+                    "the selected folder path is not valid UTF-8",
+                ))
+            })?;
+            return Ok((None, Some(cwd.to_string())));
+        }
+        Ok((None, None))
+    }
+
+    fn read_task_view(&self, id: &str) -> Result<ScheduledTaskView, ChatFailure> {
+        let task = self
+            .sessions
+            .store()
+            .read_scheduled_task(id)
+            .map_err(session_failure)?;
+        self.scheduled_task_view(task)
+    }
+
+    fn list_scheduled_tasks(&self) -> Result<ChatResponse, ChatFailure> {
+        let tasks = self
+            .sessions
+            .store()
+            .list_scheduled_tasks()
+            .map_err(session_failure)?
+            .into_iter()
+            .map(|task| self.scheduled_task_view(task))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ChatResponse::ScheduledTasks { tasks })
+    }
+
+    /// Arm the next pending occurrence on the device zone. Refusing to arm is
+    /// a validation failure: a task that cannot fire must say so, not wait
+    /// silently forever.
+    fn arm_task(&self, id: &str, cron: &str) -> Result<(), ChatFailure> {
+        let armed_at = crate::scheduler::next_occurrence_after(cron, now_ms())
+            .map_err(|error| {
+                ChatFailure::before_send(BridgeError::new(
+                    "CONFIG_VALIDATION",
+                    format!("the schedule is invalid: {error}"),
+                ))
+            })?
+            .ok_or_else(|| {
+                ChatFailure::before_send(BridgeError::new(
+                    "CONFIG_VALIDATION",
+                    "the schedule never fires",
+                ))
+            })?;
+        self.sessions
+            .store()
+            .arm_scheduled_task(id, Some(armed_at))
+            .map_err(session_failure)
+    }
+
+    fn create_scheduled_task(
+        &self,
+        name: String,
+        prompt: String,
+        cron: String,
+        project_id: Option<String>,
+        cwd: Option<String>,
+        enabled: bool,
+    ) -> Result<ChatResponse, ChatFailure> {
+        crate::scheduler::validate_fields(&name, &prompt).map_err(|reason| {
+            ChatFailure::before_send(BridgeError::new("CONFIG_VALIDATION", reason))
+        })?;
+        crate::scheduler::describe(&cron).map_err(schedule_failure)?;
+        let (project_id, cwd) = self.resolve_scheduled_context(&project_id, &cwd)?;
+        let task = self
+            .sessions
+            .store()
+            .create_scheduled_task(myharness_store::NewScheduledTask {
+                name: &name,
+                prompt: &prompt,
+                cron: &cron,
+                enabled,
+                project_id: project_id.as_deref(),
+                cwd: cwd.as_deref(),
+                extra: serde_json::json!({}),
+            })
+            .map_err(session_failure)?;
+        // Arm on creation so the first occurrence is pending immediately.
+        if enabled {
+            self.arm_task(&task.id, &cron)?;
+        }
+        Ok(ChatResponse::ScheduledTask {
+            task: self.read_task_view(&task.id)?,
+        })
+    }
+
+    fn update_scheduled_task(
+        &self,
+        id: &str,
+        name: String,
+        prompt: String,
+        cron: String,
+    ) -> Result<ChatResponse, ChatFailure> {
+        crate::scheduler::validate_fields(&name, &prompt).map_err(|reason| {
+            ChatFailure::before_send(BridgeError::new("CONFIG_VALIDATION", reason))
+        })?;
+        crate::scheduler::describe(&cron).map_err(schedule_failure)?;
+        // The update clears the armed occurrence; an enabled task rearms on
+        // the new schedule, a disabled one stays disarmed.
+        let existing = self
+            .sessions
+            .store()
+            .read_scheduled_task(id)
+            .map_err(session_failure)?;
+        self.sessions
+            .store()
+            .update_scheduled_task(id, &name, &prompt, &cron, existing.enabled)
+            .map_err(session_failure)?;
+        if existing.enabled {
+            self.arm_task(id, &cron)?;
+        }
+        Ok(ChatResponse::ScheduledTask {
+            task: self.read_task_view(id)?,
+        })
+    }
+
+    fn set_scheduled_task_enabled(
+        &self,
+        id: &str,
+        enabled: bool,
+    ) -> Result<ChatResponse, ChatFailure> {
+        self.sessions
+            .store()
+            .set_scheduled_task_enabled(id, enabled)
+            .map_err(session_failure)?;
+        if enabled {
+            let task = self
+                .sessions
+                .store()
+                .read_scheduled_task(id)
+                .map_err(session_failure)?;
+            self.arm_task(id, &task.cron)?;
+        }
+        Ok(ChatResponse::ScheduledTask {
+            task: self.read_task_view(id)?,
+        })
+    }
+
+    fn delete_scheduled_task(&self, id: &str) -> Result<ChatResponse, ChatFailure> {
+        self.sessions
+            .store()
+            .delete_scheduled_task(id)
+            .map_err(session_failure)?;
+        Ok(ChatResponse::Ack)
+    }
+
+    fn preview_schedule(&self, cron: &str, count: usize) -> Result<ChatResponse, ChatFailure> {
+        let count = count.clamp(1, 10);
+        let mut times = Vec::with_capacity(count);
+        let mut cursor = now_ms();
+        for _ in 0..count {
+            let next = crate::scheduler::next_occurrence_after(cron, cursor)
+                .map_err(|error| {
+                    ChatFailure::before_send(BridgeError::new(
+                        "CONFIG_VALIDATION",
+                        format!("the schedule is invalid: {error}"),
+                    ))
+                })?
+                .ok_or_else(|| {
+                    ChatFailure::before_send(BridgeError::new(
+                        "CONFIG_VALIDATION",
+                        "the schedule never fires",
+                    ))
+                })?;
+            times.push(next);
+            cursor = next;
+        }
+        Ok(ChatResponse::SchedulePreview { times })
+    }
+
+    /// The session half of one run: create + send. The prompt travels as the
+    /// user turn on the scheduled approval context (`scheduled=true`), so a
+    /// scheduled run never inherits an interactive grant (`REQ-SCHED-04`).
+    async fn run_scheduled_session(
+        &self,
+        task: &myharness_store::ScheduledTaskRow,
+        run_id: &str,
+    ) -> Result<String, ChatFailure> {
+        // Context re-resolved at run time: a project deleted after the task
+        // was created fails this run clearly instead of retargeting
+        // (`REQ-SCHED-05`).
+        let stored_project = task.project_id.clone();
+        let stored_cwd = task.cwd.clone();
+        let (project_id, cwd) = self.resolve_scheduled_context(&stored_project, &stored_cwd)?;
+        let target = self.targets.resolve()?;
+        let session = self
+            .sessions
+            .start(NewSession {
+                project_id: project_id.as_deref(),
+                surface: "chat",
+                title: &task.name,
+                cwd: cwd.as_deref(),
+                model: Some(&target.model.model_id),
+                effort: None,
+                permission_mode: None,
+                extra: serde_json::json!({
+                    "providerId": target.model.provider_id,
+                    "profileId": target.profile_id,
+                    "scheduledTaskId": task.id,
+                    "scheduledRunId": run_id,
+                }),
+            })
+            .map_err(session_failure)?;
+        let session_id = session.id.clone();
+        self.send_turn_for_surface(&session_id, &task.prompt, None, None, "chat", true)
+            .await?;
+        Ok(session_id)
+    }
+
+    /// Execute one occurrence: run row, a normal session, the terminal run
+    /// row. Used by the background tick and `RunScheduledTaskNow` alike, so
+    /// history and usage are auditable in exactly one shape (`TEST-SCHED-004`).
+    async fn execute_scheduled_occurrence(
+        &self,
+        task: &myharness_store::ScheduledTaskRow,
+        started_at: i64,
+    ) -> Result<String, ChatFailure> {
+        let run_id = self
+            .sessions
+            .store()
+            .record_scheduled_run(&task.id, started_at, "running", None, None, None)
+            .map_err(session_failure)?;
+        match self.run_scheduled_session(task, &run_id).await {
+            Ok(session_id) => {
+                self.sessions
+                    .store()
+                    .record_scheduled_run(
+                        &task.id,
+                        started_at,
+                        "completed",
+                        None,
+                        Some(&session_id),
+                        Some(now_ms()),
+                    )
+                    .map_err(session_failure)?;
+                Ok(session_id)
+            }
+            Err(failure) => {
+                self.sessions
+                    .store()
+                    .record_scheduled_run(
+                        &task.id,
+                        started_at,
+                        "failed",
+                        Some(&failure.error.message),
+                        None,
+                        Some(now_ms()),
+                    )
+                    .map_err(session_failure)?;
+                Err(failure)
+            }
+        }
+    }
+
+    async fn run_scheduled_task_now(&self, id: &str) -> Result<ChatResponse, ChatFailure> {
+        let task = self
+            .sessions
+            .store()
+            .read_scheduled_task(id)
+            .map_err(session_failure)?;
+        let view = self.scheduled_task_view(task.clone())?;
+        if view.context_unavailable {
+            return Err(ChatFailure::before_send(BridgeError::new(
+                "FOLDER_UNAVAILABLE",
+                "the task's project or folder is not available; fix the context before running",
+            )));
+        }
+        let started_at = now_ms();
+        let session_id = self.execute_scheduled_occurrence(&task, started_at).await?;
+        // The response carries the terminal run row so the renderer can show
+        // the outcome without a second read.
+        let run = self
+            .sessions
+            .store()
+            .list_scheduled_runs(id, 1)
+            .map_err(session_failure)?
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| myharness_store::ScheduledRunRow {
+                id: String::new(),
+                task_id: id.to_string(),
+                started_at,
+                status: "completed".into(),
+                reason: None,
+                session_id: Some(session_id),
+                finished_at: Some(now_ms()),
+            });
+        Ok(ChatResponse::ScheduledRun { run })
+    }
+
+    /// One scheduler tick: handle every due armed occurrence, then rearm. A
+    /// late occurrence (past the grace window) is a recorded skip, never a
+    /// late execution and never a silent drop (`TEST-SCHED-003`). Returns
+    /// human-readable tick notes for diagnostics.
+    pub async fn scheduled_tick(&self, now: i64) -> Vec<String> {
+        let mut notes = Vec::new();
+        // Arm-on-boot: an enabled task with no pending occurrence (created
+        // before an upgrade, or a crash between create and arm) joins the
+        // schedule here. Arming is per-task because each cron computes its
+        // own next instant.
+        match self.sessions.store().list_scheduled_tasks() {
+            Ok(tasks) => {
+                for task in tasks {
+                    if task.enabled && task.armed_at.is_none() {
+                        match crate::scheduler::next_occurrence_after(&task.cron, now) {
+                            Ok(Some(next)) => {
+                                if let Err(error) = self
+                                    .sessions
+                                    .store()
+                                    .arm_scheduled_task(&task.id, Some(next))
+                                {
+                                    notes.push(format!(
+                                        "task {} could not arm on boot: {error}",
+                                        task.id
+                                    ));
+                                }
+                            }
+                            Ok(None) => {}
+                            Err(error) => notes.push(format!(
+                                "task {} could not arm on boot: {error}",
+                                task.id
+                            )),
+                        }
+                    }
+                }
+            }
+            Err(error) => notes.push(format!(
+                "the scheduler could not read tasks on boot: {error}"
+            )),
+        }
+        let due = match self.sessions.store().due_scheduled_tasks(now) {
+            Ok(due) => due,
+            Err(error) => {
+                notes.push(format!("the scheduler could not read due tasks: {error}"));
+                return notes;
+            }
+        };
+        for task in due {
+            let Some(armed_at) = task.armed_at else { continue };
+            match crate::scheduler::decide(armed_at, now) {
+                crate::scheduler::Occurrence::Run => {
+                    let outcome = self.execute_scheduled_occurrence(&task, armed_at).await;
+                    notes.push(match &outcome {
+                        Ok(session_id) => format!("task {} ran in session {session_id}", task.id),
+                        Err(failure) => format!("task {} failed: {}", task.id, failure.error.message),
+                    });
+                }
+                crate::scheduler::Occurrence::Skip => {
+                    let recorded = self.sessions.store().record_scheduled_run(
+                        &task.id,
+                        armed_at,
+                        "skipped",
+                        Some(crate::scheduler::skip_reason()),
+                        None,
+                        Some(now),
+                    );
+                    notes.push(match recorded {
+                        Ok(_) => format!("task {} skipped a missed occurrence", task.id),
+                        Err(error) => {
+                            format!("task {} skip could not be recorded: {error}", task.id)
+                        }
+                    });
+                }
+            }
+            // Rearm strictly past the handled occurrence. A task whose
+            // schedule cannot fire again disarms honestly.
+            match crate::scheduler::next_occurrence_after(&task.cron, now) {
+                Ok(Some(next)) => {
+                    if let Err(error) =
+                        self.sessions.store().arm_scheduled_task(&task.id, Some(next))
+                    {
+                        notes.push(format!("task {} could not rearm: {error}", task.id));
+                    }
+                }
+                Ok(None) => {
+                    let _ = self.sessions.store().arm_scheduled_task(&task.id, None);
+                }
+                Err(error) => notes.push(format!("task {} rearm failed: {error}", task.id)),
+            }
+        }
+        notes
+    }
+
     fn catalog(&self) -> Result<&std::sync::Arc<CatalogRuntime>, ChatFailure> {
         self.catalog.as_ref().ok_or_else(|| {
             ChatFailure::before_send(BridgeError::new(
@@ -1753,6 +2339,7 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
         Ok(ChatResponse::Ack)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn send_turn_for_surface(
         &self,
         session_id: &str,
@@ -1760,6 +2347,7 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
         max_tokens: Option<u32>,
         observer: Option<&(dyn Fn(&TurnEvent) + Send + Sync)>,
         expected_surface: &str,
+        scheduled: bool,
     ) -> Result<ChatResponse, ChatFailure> {
         validate_session_id(session_id)?;
         if text.trim().is_empty() {
@@ -1958,7 +2546,7 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
                     turn,
                     &snapshot,
                     session_id,
-                    false,
+                    scheduled,
                     unix_now(),
                     permission_mode,
                     code_policy.bypass_allowed,

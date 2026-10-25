@@ -1143,6 +1143,145 @@ try {
     await mockContext.close();
   });
 
+  await step("T44 scheduled preview is honest: captured banner, disabled keep-awake, no invented rows", async () => {
+    await page.goto(`${BASE}/scheduled-task`);
+    await page.getByText("No scheduled tasks yet.").waitFor();
+    await expectTrue(
+      await page.getByText("Scheduled tasks only run while your computer is awake and online.").count() === 1,
+      "the banner copy is the captured sentence",
+    );
+    await expectTrue(
+      await page.locator('.info-banner input[type=checkbox]').isDisabled(),
+      "keep-awake ships disabled (REQ-SCHED-06; TEST-SCHED-005)",
+    );
+    await expectTrue(
+      (await page.locator(".sched-row").count()) === 0,
+      "the preview must not invent scheduled rows",
+    );
+    await expectTrue(
+      (await page.locator(".sched-template").count()) === 0,
+      "templates come from the bridge; the preview shows none rather than faking them",
+    );
+    // The editor opens client-side; a save without a core reports the boundary.
+    await page.getByRole("button", { name: "New task" }).click();
+    await page.getByRole("dialog", { name: "New scheduled task" }).waitFor();
+    await page.locator(".project-dialog input[type=text]").fill("Probe");
+    await page.locator(".project-dialog textarea").fill("Say hello");
+    await page.getByRole("button", { name: "Create task" }).click();
+    await page.locator(".composer-error", { hasText: "Scheduling is available in the desktop app." }).waitFor();
+    await page.keyboard.press("Escape");
+    await page.locator(".project-dialog").waitFor({ state: "detached" });
+  });
+
+  await step("T45 scheduled tasks: templates prefill, save creates one task, rows show next run and last result", async () => {
+    const mockContext = await browser.newContext({
+      colorScheme: "dark",
+      viewport: { width: 1200, height: 900 },
+    });
+    const mockPage = await mockContext.newPage();
+    const now = Date.now();
+    const templates = [
+      { name: "Daily briefing", prompt: "What needs my attention today across calendar, email, and messages?", cron: "0 8 * * 1-5", scheduleLabel: "Weekdays at 8:00 AM" },
+      { name: "Weekly review", prompt: "Summarize what happened this week.", cron: "0 16 * * 5", scheduleLabel: "Every Friday at 4:00 PM" },
+    ];
+    let task = null;
+    await mockPage.addInitScript(
+      ({ templates, now }) => {
+        window.__lastTaskCommand = null;
+        const rows = [];
+        window.__TAURI_INTERNALS__ = {
+          invoke: async (cmd, args) => {
+            if (cmd !== "chat_command") throw new Error(`unexpected command ${cmd}`);
+            const command = args.command;
+            window.__lastTaskCommand = command;
+            if (command.type === "scheduledTemplates") {
+              return { type: "templates", templates };
+            }
+            if (command.type === "listScheduledTasks") {
+              return { type: "scheduledTasks", tasks: rows };
+            }
+            if (command.type === "previewSchedule") {
+              return { type: "schedulePreview", times: [now + 3_600_000, now + 86_400_000, now + 172_800_000] };
+            }
+            if (command.type === "createScheduledTask") {
+              window.__lastTaskCreate = command;
+              const record = {
+                id: "00000000-0000-0000-0000-00000000e001",
+                name: command.name,
+                prompt: command.prompt,
+                cron: command.cron,
+                enabled: true,
+                projectId: null,
+                cwd: null,
+                createdAt: now,
+                armedAt: now + 3_600_000,
+                lastRunAt: null,
+                extra: {},
+                scheduleSummary: "on Fri at 16:00",
+                lastRun: null,
+                contextUnavailable: false,
+              };
+              rows.push(record);
+              return { type: "scheduledTask", task: record };
+            }
+            if (command.type === "setScheduledTaskEnabled") {
+              rows[0].enabled = command.enabled;
+              rows[0].armedAt = command.enabled ? now + 3_600_000 : null;
+              return { type: "scheduledTask", task: rows[0] };
+            }
+            if (command.type === "deleteScheduledTask") {
+              rows.length = 0;
+              return { type: "ack" };
+            }
+            throw new Error(`unexpected chat command ${command.type}`);
+          },
+        };
+      },
+      { templates, now },
+    );
+    await mockPage.goto(`${BASE}/scheduled-task`);
+    await mockPage.locator(".sched-template", { hasText: "Weekly review" }).waitFor();
+    await expectTrue(
+      (await mockPage.locator(".sched-row").count()) === 0,
+      "a template click must never create a task (REQ-SCHED-02)",
+    );
+    await mockPage.locator(".sched-template", { hasText: "Weekly review" }).click();
+    await mockPage.getByRole("dialog", { name: "New scheduled task" }).waitFor();
+    await expectTrue(
+      (await mockPage.locator(".project-dialog input[type=text]").inputValue()) === "Weekly review",
+      "the template prefills the editor",
+    );
+    await mockPage.getByRole("button", { name: "Create task" }).click();
+    await mockPage.locator(".sched-row", { hasText: "Weekly review" }).waitFor();
+    const created = await mockPage.evaluate(() => window.__lastTaskCreate);
+    await expectTrue(
+      created.cron === "0 16 * * 5",
+      "the weekly template's schedule reaches the bridge as cron",
+    );
+    await expectTrue(
+      (await mockPage.locator(".sched-row", { hasText: "Weekly review" }).innerText()).includes("next"),
+      "the row shows the next pending occurrence",
+    );
+    await expectTrue(
+      (await mockPage.locator(".sched-run-chip", { hasText: "Never run" }).count()) === 1,
+      "a fresh task has never run",
+    );
+    // Disabling clears the next-run display; delete confirms its effects.
+    await mockPage.locator(".sched-row .switch").click();
+    await expectTrue(
+      (await mockPage.locator(".sched-row", { hasText: "Weekly review" }).innerText()).includes("disabled"),
+      "a disabled task shows no future run",
+    );
+    await mockPage.locator(".sched-row").getByRole("button", { name: "Delete" }).first().click();
+    await mockPage.locator(".confirm-inline").waitFor();
+    await mockPage.locator(".confirm-inline").getByRole("button", { name: "Delete" }).click();
+    await expectTrue(
+      (await mockPage.locator(".sched-row").count()) === 0,
+      "deleting removes the schedule; run sessions stay in history",
+    );
+    await mockContext.close();
+  });
+
 } finally {
   await browser.close();
 }
