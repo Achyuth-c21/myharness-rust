@@ -174,6 +174,18 @@ pub struct UsageEventRow {
     pub timestamp: i64,
 }
 
+/// One user/assistant turn on the Code surface, used by the Code dashboard's
+/// message count. Only the fields the aggregate needs are selected; transcript
+/// content stays behind its blob reference.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CodeTurnActivity {
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+    pub role: String,
+    #[serde(rename = "createdAt")]
+    pub created_at: i64,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct NewUsageEvent<'a> {
     pub model: &'a str,
@@ -220,6 +232,11 @@ fn turn_columns() -> &'static str {
 fn usage_columns() -> &'static str {
     "id, session_id, model, input_tokens, output_tokens, cache_read_tokens,
      cache_write_tokens, search_requests, error, timestamp"
+}
+
+fn usage_columns_qualified() -> &'static str {
+    "u.id, u.session_id, u.model, u.input_tokens, u.output_tokens, u.cache_read_tokens,
+     u.cache_write_tokens, u.search_requests, u.error, u.timestamp"
 }
 
 fn audit_columns() -> &'static str {
@@ -868,6 +885,18 @@ impl Store {
         session_id: &str,
         event: NewUsageEvent<'_>,
     ) -> Result<UsageEventRow, StoreError> {
+        self.record_usage_at(session_id, event, now_ms())
+    }
+
+    /// Record one usage event at an explicit timestamp. This is the import
+    /// seam used by fixtures; the live path calls [`Self::record_usage`], which
+    /// stamps the current time. A non-positive timestamp is refused.
+    pub fn record_usage_at(
+        &self,
+        session_id: &str,
+        event: NewUsageEvent<'_>,
+        timestamp: i64,
+    ) -> Result<UsageEventRow, StoreError> {
         if !is_uuid(session_id) {
             return Err(StoreError::Validation("the session id is not a uuid"));
         }
@@ -882,10 +911,14 @@ impl Store {
         {
             return Err(StoreError::Validation("a usage count is negative"));
         }
+        if timestamp <= 0 {
+            return Err(StoreError::Validation(
+                "the usage timestamp must be positive",
+            ));
+        }
         let id = uuid::Uuid::new_v4().to_string();
         let conn = self.conn.lock().expect("store mutex poisoned");
         self.require_session(&conn, session_id)?;
-        let timestamp = now_ms();
         conn.execute(
             "INSERT INTO usage_events (id, session_id, model, input_tokens, output_tokens,
                                        cache_read_tokens, cache_write_tokens, search_requests,
@@ -988,6 +1021,98 @@ impl Store {
         ))?;
         let rows: Vec<UsageEventRow> = stmt
             .query_map(params![from_ms, to_ms, session_id], usage_from_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(stmt);
+        Ok(rows)
+    }
+
+    /// Usage events in a closed window for Code sessions only. The join is on
+    /// the session's stored surface, so a chat event can never leak into the
+    /// Code dashboard (`TEST-CODE-001`).
+    pub fn list_code_usage_between(
+        &self,
+        from_ms: i64,
+        to_ms: i64,
+    ) -> Result<Vec<UsageEventRow>, StoreError> {
+        if to_ms < from_ms {
+            return Err(StoreError::Validation(
+                "the usage window ends before it starts",
+            ));
+        }
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {} FROM usage_events u
+             JOIN sessions s ON s.id = u.session_id
+             WHERE s.surface = 'code'
+               AND u.timestamp >= ?1 AND u.timestamp <= ?2
+             ORDER BY u.timestamp ASC, u.id ASC",
+            usage_columns_qualified()
+        ))?;
+        let rows: Vec<UsageEventRow> = stmt
+            .query_map(params![from_ms, to_ms], usage_from_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(stmt);
+        Ok(rows)
+    }
+
+    /// The earliest Code activity, if any: a usage event or a user/assistant
+    /// turn. The all-time dashboard uses this so the first user turn is not
+    /// dropped merely because its usage event was written a moment later.
+    pub fn earliest_code_activity_ms(&self) -> Result<Option<i64>, StoreError> {
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        let value: Option<i64> = conn
+            .query_row(
+                "SELECT MIN(activity_ts) FROM (
+                     SELECT u.timestamp AS activity_ts
+                     FROM usage_events u
+                     JOIN sessions s ON s.id = u.session_id
+                     WHERE s.surface = 'code'
+                     UNION ALL
+                     SELECT t.created_at AS activity_ts
+                     FROM turns t
+                     JOIN sessions s ON s.id = t.session_id
+                     WHERE s.surface = 'code'
+                       AND t.role IN ('user', 'assistant')
+                 )",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(value)
+    }
+
+    /// User/assistant turns on the Code surface in a closed window. Tool and
+    /// system rows are excluded so the dashboard's Messages stat means what
+    /// the docs say it means.
+    pub fn list_code_turns_between(
+        &self,
+        from_ms: i64,
+        to_ms: i64,
+    ) -> Result<Vec<CodeTurnActivity>, StoreError> {
+        if to_ms < from_ms {
+            return Err(StoreError::Validation(
+                "the turn window ends before it starts",
+            ));
+        }
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT t.session_id, t.role, t.created_at
+             FROM turns t
+             JOIN sessions s ON s.id = t.session_id
+             WHERE s.surface = 'code'
+               AND t.role IN ('user', 'assistant')
+               AND t.created_at >= ?1 AND t.created_at <= ?2
+             ORDER BY t.created_at ASC, t.id ASC",
+        )?;
+        let rows: Vec<CodeTurnActivity> = stmt
+            .query_map(params![from_ms, to_ms], |row| {
+                Ok(CodeTurnActivity {
+                    session_id: row.get(0)?,
+                    role: row.get(1)?,
+                    created_at: row.get(2)?,
+                })
+            })?
             .collect::<Result<Vec<_>, _>>()?;
         drop(stmt);
         Ok(rows)

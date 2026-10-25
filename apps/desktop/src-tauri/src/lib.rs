@@ -376,7 +376,8 @@ async fn chat_command(app: tauri::AppHandle, command: ChatCommand) -> ChatRespon
         }
     };
     let session_id = match &command {
-        ChatCommand::SendTurn { session_id, .. } => Some(session_id.clone()),
+        ChatCommand::SendTurn { session_id, .. }
+        | ChatCommand::SendCodeTurn { session_id, .. } => Some(session_id.clone()),
         _ => None,
     };
     let handle = app.clone();
@@ -390,6 +391,32 @@ async fn chat_command(app: tauri::AppHandle, command: ChatCommand) -> ChatRespon
         }
     };
     chat_dispatch(service, command, Some(&observer)).await
+}
+
+/// Native folder selection for Code. The browser preview has no Tauri host
+/// and reports `BRIDGE_UNAVAILABLE`; it never invents a folder. Cancellation
+/// is `None`; `rfd` does not expose a separate platform-picker failure, so a
+/// failed portal is also observed as `None` and the bridge still revalidates
+/// any path it receives.
+#[tauri::command]
+async fn pick_workspace_folder() -> Result<Option<String>, BridgeError> {
+    let picked = rfd::AsyncFileDialog::new()
+        .set_title("Choose a folder for Code")
+        .pick_folder()
+        .await;
+    let Some(folder) = picked else {
+        return Ok(None);
+    };
+    folder
+        .path()
+        .to_str()
+        .map(|path| Some(path.to_string()))
+        .ok_or_else(|| {
+            BridgeError::new(
+                "CONFIG_VALIDATION",
+                "the selected folder path is not valid UTF-8",
+            )
+        })
 }
 
 /// The `settings.Custom3pSetup` namespace (docs/18 §3.4): profiles, config
@@ -522,6 +549,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             ping,
             chat_command,
+            pick_workspace_folder,
             setup_command,
             setup_discover_models,
             setup_discover_openai_models,

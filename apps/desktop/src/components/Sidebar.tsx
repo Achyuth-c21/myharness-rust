@@ -14,7 +14,7 @@
  * provider label, and a disclosure chevron; its menu behavior is unchanged.
  */
 import { useState } from "react";
-import { Link, NavLink } from "react-router-dom";
+import { Link, NavLink, useLocation } from "react-router-dom";
 import { NAV_ITEMS } from "../routes";
 import { ModeSwitch } from "./ModeSwitch";
 import { openSetupWindow } from "../setup/client";
@@ -162,7 +162,9 @@ const NAV_ICONS: Record<string, () => JSX.Element> = {
 
 export function Sidebar({ onOpenSettings, onOpenSearch }: Props) {
   const [accountOpen, setAccountOpen] = useState(false);
-  const { sessions } = useChatSessions(false);
+  const { pathname } = useLocation();
+  const codeMode = pathname.startsWith("/epitaxy");
+  const { sessions } = useChatSessions(false, codeMode ? "code" : "chat");
 
   return (
     <nav className="sidebar" aria-label="Primary">
@@ -171,10 +173,11 @@ export function Sidebar({ onOpenSettings, onOpenSearch }: Props) {
         <div className="sidebar-list">
           {NAV_ITEMS.map((item) => {
             const Icon = NAV_ICONS[item.path];
+            const to = item.path === "/new" && codeMode ? "/epitaxy" : item.path;
             return (
               <NavLink
                 key={item.path}
-                to={item.path}
+                to={to}
                 className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
               >
                 {Icon ? <Icon /> : null}
@@ -225,7 +228,11 @@ export function Sidebar({ onOpenSettings, onOpenSearch }: Props) {
             </div>
           </div>
           {sessions.map((session) => (
-            <Link key={session.id} to={`/cowork/${session.id}`} className="task-row">
+            <Link
+              key={session.id}
+              to={`${codeMode ? "/epitaxy" : "/cowork"}/${session.id}`}
+              className="task-row"
+            >
               <span className="task-icon">
                 <TaskIcon />
               </span>

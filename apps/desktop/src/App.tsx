@@ -17,10 +17,10 @@ import { Sidebar } from "./components/Sidebar";
 import { SearchPalette } from "./components/SearchPalette";
 import { SettingsModal } from "./components/SettingsModal";
 import { NewTaskScreen } from "./screens/NewTaskScreen";
-import { CoworkSessionScreen } from "./screens/CoworkSessionScreen";
-import { ArtifactsScreen, CodeScreen, ProjectsScreen, ScreenHead, ScheduledScreen } from "./screens/EmptyStates";
+import { CoworkSessionScreen, CodeSessionScreen } from "./screens/CoworkSessionScreen";
+import { CodeDashboardScreen } from "./screens/CodeDashboardScreen";
+import { ArtifactsScreen, ProjectsScreen, ScreenHead, ScheduledScreen } from "./screens/EmptyStates";
 import { LoadingShell } from "./components/shells";
-import { SCREENS } from "./routes";
 import SetupWindow from "./setup/SetupWindow";
 import { clearDraft, newDraftKey } from "./chat/drafts";
 
@@ -155,8 +155,6 @@ function MainShell() {
     return () => window.removeEventListener("keydown", onKey);
   }, [navigate, openSettings, paletteOpen, settingsSection]);
 
-  const screens = new Map(SCREENS.map((screen) => [screen.path, screen]));
-
   return (
     <div className="app-shell">
       <TitleBar
@@ -188,10 +186,10 @@ function MainShell() {
             <Route path="/projects" element={<ProjectsScreen />} />
             <Route path="/cowork-artifact" element={<ArtifactsScreen />} />
             <Route path="/scheduled-task" element={<ScheduledScreen />} />
-            <Route
-              path="/epitaxy"
-              element={<CodeScreen screen={screens.get("/epitaxy") ?? { path: "/epitaxy", label: "Code", paletteSurface: "code" }} />}
-            />
+            <Route path="/epitaxy" element={<CodeDashboardScreen />} />
+            {/* Code session detail reuses the transcript/tool/approval surface
+                but calls the Code-only bridge commands (Phase 6). */}
+            <Route path="/epitaxy/:sessionId" element={<CodeSessionScreen />} />
             {/* Task detail (UI-SCREEN-03): opens the stored session, recovers an
                 interrupted stream, and streams follow-ups (docs/13 Phase 4). */}
             <Route path="/cowork/:sessionId" element={<CoworkSessionScreen />} />

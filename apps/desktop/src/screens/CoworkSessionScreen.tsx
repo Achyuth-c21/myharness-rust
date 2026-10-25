@@ -237,6 +237,31 @@ function ToolResultBlock({ turn }: { turn: TurnSummary }) {
   );
 }
 
+function permissionModeLabel(value: string | null): string {
+  switch (value) {
+    case "default":
+      return "Default permissions";
+    case "acceptEdits":
+      return "Accept edits";
+    case "plan":
+      return "Plan";
+    case "bypass":
+      return "Bypass permissions";
+    default:
+      // A corrupt stored mode is never presented as Default; the backend also
+      // refuses to send until it is repaired.
+      return "Unknown permissions";
+  }
+}
+
+function folderName(path: string | null): string {
+  if (!path) return "No folder";
+  const trimmed = path.replace(/[\\/]+$/, "");
+  if (!trimmed) return path;
+  const parts = trimmed.split(/[\\/]/);
+  return parts[parts.length - 1] || trimmed;
+}
+
 const SCOPE_LABEL: Record<ApprovalScope, string> = {
   once: "Allow once",
   session: "Allow for this session",
@@ -440,10 +465,23 @@ export function CoworkSessionScreen() {
   // state. Without this, navigating from task A to task B while A streams
   // would show A's Stop button and live text in B's composer, and A's
   // completion would overwrite B's draft.
-  return <SessionScreen key={sessionId} sessionId={sessionId} />;
+  return <SessionScreen key={sessionId} sessionId={sessionId} surface="chat" />;
 }
 
-function SessionScreen({ sessionId }: { sessionId: string }) {
+/** Code session detail — same transcript/tool/approval machinery, Code route
+ * and Code-specific bridge commands (`docs/features/code.md`; Phase 6). */
+export function CodeSessionScreen() {
+  const { sessionId = "" } = useParams();
+  return <SessionScreen key={sessionId} sessionId={sessionId} surface="code" />;
+}
+
+export function SessionScreen({
+  sessionId,
+  surface,
+}: {
+  sessionId: string;
+  surface: "chat" | "code";
+}) {
   const navigate = useNavigate();
   const location = useLocation();
   const pending = location.state as
@@ -490,9 +528,13 @@ function SessionScreen({ sessionId }: { sessionId: string }) {
   const stickToBottom = useRef(true);
 
   const draftKey = sessionDraftKey(sessionId);
+  const home = surface === "code" ? "/epitaxy" : "/new";
 
   const load = useCallback(async () => {
-    const response = await chat({ type: "openSession", id: sessionId });
+    const response =
+      surface === "code"
+        ? await chat({ type: "openCodeSession", id: sessionId })
+        : await chat({ type: "openSession", id: sessionId });
     if (response.type === "session") {
       // A live marker means a turn is still running in the core (open skips
       // crash recovery for it). Reflect that in the composer: Stop, not Send.
@@ -510,7 +552,7 @@ function SessionScreen({ sessionId }: { sessionId: string }) {
       setLoadError(response.error);
     }
     setLoading(false);
-  }, [sessionId]);
+  }, [sessionId, surface]);
 
   // Route change: reset per-session state and load the transcript.
   useEffect(() => {
@@ -654,7 +696,10 @@ function SessionScreen({ sessionId }: { sessionId: string }) {
       setActionError(null);
       setLiveText("");
       try {
-        const response = await chat({ type: "sendTurn", sessionId, text });
+        const response =
+          surface === "code"
+            ? await chat({ type: "sendCodeTurn", sessionId, text })
+            : await chat({ type: "sendTurn", sessionId, text });
         if (response.type === "turn" || response.type === "toolTurn") {
           // The turn completed: the draft's job is done.
           saveDraft(draftKey, "");
@@ -688,7 +733,7 @@ function SessionScreen({ sessionId }: { sessionId: string }) {
         setLiveTool(null);
       }
     },
-    [draftKey, load, pending?.originKey, sessionId],
+    [draftKey, load, pending?.originKey, sessionId, surface],
   );
 
   // A turn that was running when this screen opened finishes in the core even
@@ -721,7 +766,6 @@ function SessionScreen({ sessionId }: { sessionId: string }) {
     // so a crash between navigation and the send cannot lose it.
     setDraft(pending.pendingText);
     saveDraft(draftKey, pending.pendingText);
-    if (pending.originKey) clearDraft(pending.originKey);
     void send(pending.pendingText);
   }, [view, pending, send, navigate, location.pathname, sessionId]);
 
@@ -816,7 +860,7 @@ function SessionScreen({ sessionId }: { sessionId: string }) {
     const response = await chat({ type: "archiveSession", id: sessionId, archived: true });
     if (response.type === "ack") {
       emitSessionsChanged();
-      navigate("/new");
+      navigate(home);
     } else if (response.type === "error") {
       setActionError(response.error);
       setMenuOpen(false);
@@ -828,7 +872,7 @@ function SessionScreen({ sessionId }: { sessionId: string }) {
     if (response.type === "ack") {
       clearDraft(draftKey);
       emitSessionsChanged();
-      navigate("/new");
+      navigate(home);
     } else if (response.type === "error") {
       setActionError(response.error);
       setConfirmDelete(false);
@@ -843,14 +887,18 @@ function SessionScreen({ sessionId }: { sessionId: string }) {
     const preview = loadError?.code === "BRIDGE_UNAVAILABLE";
     return (
       <div className="shell empty" role="alert">
-        <h2>{preview ? "Chat is available in the desktop app" : "This task could not be opened"}</h2>
+        <h2>
+          {preview
+            ? `${surface === "code" ? "Code" : "Chat"} is available in the desktop app`
+            : "This task could not be opened"}
+        </h2>
         <p>
           {preview
             ? "This browser preview has no local session store."
             : loadError?.message ?? "The session is not available."}
         </p>
-        <button type="button" className="text-btn" onClick={() => navigate("/new")}>
-          Back to New
+        <button type="button" className="text-btn" onClick={() => navigate(home)}>
+          {surface === "code" ? "Back to Code" : "Back to New"}
         </button>
       </div>
     );
@@ -860,6 +908,10 @@ function SessionScreen({ sessionId }: { sessionId: string }) {
   const extra = session.extra as { providerId?: unknown } | null;
   const label = modelLabel(extra?.providerId, session.model);
   const hasDraft = draft.trim().length > 0;
+  const codeContext =
+    surface === "code"
+      ? `${folderName(session.cwd)} · ${permissionModeLabel(session.permission_mode)}`
+      : null;
 
   return (
     <div className="session-screen">
@@ -973,6 +1025,11 @@ function SessionScreen({ sessionId }: { sessionId: string }) {
             </>
           )}
         </div>
+        {surface === "code" ? (
+          <span className="session-code-context" title={session.cwd ?? undefined}>
+            {codeContext}
+          </span>
+        ) : null}
         <span className="session-model-label" title="The model is fixed for this task">
           {label}
         </span>
@@ -1109,6 +1166,11 @@ function SessionScreen({ sessionId }: { sessionId: string }) {
                   </div>
                 ) : null}
               </div>
+            ) : null}
+            {codeContext ? (
+              <span className="composer-code-context" title={session.cwd ?? undefined}>
+                {codeContext}
+              </span>
             ) : null}
             <span className="composer-spacer" />
             <span className="composer-model" title="The model is fixed for this task">

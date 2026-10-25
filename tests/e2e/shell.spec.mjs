@@ -387,10 +387,275 @@ try {
     await page.getByRole("button", { name: "Back to New" }).click();
     await page.waitForURL("**/new");
     await page.goto(`${BASE}/epitaxy`);
+    await page.getByRole("heading", { name: "What’s up next?" }).waitFor();
     await expectTrue(await page.getByRole("heading", { name: "What’s up next?" }).count() === 1, "code greeting");
     await expectTrue(await page.getByRole("heading", { name: "You’re here!" }).count() === 0, "cowork greeting must NOT appear in code mode");
     await page.goto(`${BASE}/definitely-not-a-route`);
     await page.waitForURL("**/new");
+  });
+
+  await step("T28b Code dashboard preview is honest and fail-closed", async () => {
+    await page.goto(`${BASE}/epitaxy`);
+    await page.getByText("Code is available in the desktop app.").waitFor();
+    await expectTrue(
+      (await page.locator(".code-stats").count()) === 0,
+      "the preview must not invent usage stats",
+    );
+    await expectTrue(
+      (await page.locator(".code-session-row").count()) === 0,
+      "the preview must not invent Code sessions",
+    );
+    await expectTrue(
+      (await page.locator(".code-repo-row").count()) === 0,
+      "the preview must not invent repository rows",
+    );
+    await expectTrue(
+      await page
+        .locator('select[aria-label="Permission mode"] option[value="bypass"]')
+        .evaluate((option) => option.disabled),
+      "Bypass must be disabled when policy is unknown",
+    );
+    await expectTrue(
+      await page.getByRole("button", { name: "Fast" }).isDisabled(),
+      "Fast mode is deferred and must stay disabled",
+    );
+    await expectTrue(
+      await page.getByRole("button", { name: "Send" }).isDisabled(),
+      "Send must be disabled without a folder and desktop host",
+    );
+    await page.getByRole("button", { name: "Choose folder" }).click();
+    await page.locator(".composer-error").waitFor({ state: "visible" });
+    await expectTrue(
+      (await page.locator(".composer-error").innerText()).includes("desktop app"),
+      "the folder picker must report that it is desktop-only",
+    );
+    await page.goto(`${BASE}/epitaxy/local_abc123`);
+    await page.getByRole("heading", { name: "Code is available in the desktop app" }).waitFor();
+    await page.getByRole("button", { name: "Back to Code" }).click();
+    await page.waitForURL("**/epitaxy");
+  });
+
+  await step("T28c populated Code dashboard renders only the supplied bridge data", async () => {
+    const mockContext = await browser.newContext({
+      colorScheme: "dark",
+      viewport: { width: 1200, height: 900 },
+    });
+    const mockPage = await mockContext.newPage();
+    await mockPage.addInitScript(() => {
+      const now = Date.now();
+      const totals = {
+        inputTokens: 10,
+        outputTokens: 5,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        searchRequests: 0,
+        events: 1,
+        errorEvents: 0,
+      };
+      const session = {
+        id: "00000000-0000-0000-0000-000000000001",
+        surface: "code",
+        title: "Test Code task",
+        cwd: "/tmp/repo",
+        model: "model-a",
+        effort: null,
+        permission_mode: "default",
+        archived: false,
+        legal_hold: false,
+        createdAt: now - 60_000,
+        lastActivityAt: now - 30_000,
+        extra: { providerId: "stub", placement: "local" },
+      };
+      window.__TAURI_INTERNALS__ = {
+        invoke: async (cmd, args) => {
+          if (cmd === "pick_workspace_folder") return "/tmp/repo";
+          if (cmd !== "chat_command") throw new Error(`unexpected command ${cmd}`);
+          const command = args.command;
+          if (command.type === "listCodeSessions" || command.type === "listSessions") {
+            return {
+              type: "sessions",
+              sessions: command.type === "listCodeSessions" ? [session] : [],
+            };
+          }
+          if (command.type === "codeDashboard") {
+            window.__lastCodeRange = command.range ?? "all";
+            return {
+              type: "codeDashboard",
+              summary: {
+                range: command.range ?? "all",
+                days: 2,
+                truncated: false,
+                timezoneOffsetMinutes: 0,
+                from: "2026-10-24T00:00:00+00:00",
+                to: "2026-10-25T00:00:00+00:00",
+                totals,
+                daily: [
+                  { date: "2026-10-24", totals },
+                  {
+                    date: "2026-10-25",
+                    totals: { ...totals, events: 0, inputTokens: 0, outputTokens: 0 },
+                  },
+                ],
+                messages: 2,
+                sessions: 1,
+                activeDays: 1,
+                peakHour: 9,
+                favoriteModel: "model-a",
+                models: [{ model: "model-a", totals, sessions: 1, sharePercent: 100 }],
+              },
+              sessions: [session],
+              repositories: [
+                { cwd: "/tmp/repo", sessionCount: 1, lastActivityAt: now - 30_000 },
+              ],
+              policy: {
+                codeEnabled: true,
+                localSessionsEnabled: true,
+                bypassAllowed: false,
+                workspaceRestricted: false,
+              },
+            };
+          }
+          throw new Error(`unexpected chat command ${command.type}`);
+        },
+      };
+    });
+    await mockPage.goto(`${BASE}/epitaxy`);
+    await mockPage.locator(".code-session-row", { hasText: "Test Code task" }).waitFor();
+    await expectTrue(
+      (await mockPage.locator(".code-stat").count()) === 6,
+      "the populated dashboard must render the six real stats",
+    );
+    await expectTrue(
+      (await mockPage.locator(".code-stat").allInnerTexts()).some(
+        (text) => text.toLowerCase().includes("total tokens") && text.includes("15"),
+      ),
+      "Total tokens must use input+output from the bridge",
+    );
+    await expectTrue(
+      (await mockPage.locator(".code-repo-row").count()) === 1,
+      "the folder row must come from the bridge",
+    );
+    await mockPage.getByRole("button", { name: "7 days" }).click();
+    await mockPage.waitForFunction(() => window.__lastCodeRange === "7d");
+    await expectTrue(
+      (await mockPage.evaluate(() => window.__lastCodeRange)) === "7d",
+      "the range control must request the 7-day bridge window",
+    );
+    await mockPage.getByRole("button", { name: "Choose folder" }).click();
+    await mockPage.locator(".code-folder-chip", { hasText: "repo" }).waitFor();
+    await expectTrue(
+      (await mockPage.locator(".code-folder-chip").innerText()).includes("repo"),
+      "a picked folder must be shown in the composer",
+    );
+    await mockPage.locator('select[aria-label="Permission mode"]').selectOption("plan");
+    await expectTrue(
+      (await mockPage.locator('select[aria-label="Permission mode"]').inputValue()) === "plan",
+      "the permission selector must reflect the chosen mode",
+    );
+    await expectTrue(
+      await mockPage
+        .locator('select[aria-label="Permission mode"] option[value="bypass"]')
+        .evaluate((option) => option.disabled),
+      "Bypass must stay disabled when the mock policy does not grant it",
+    );
+    await mockContext.close();
+  });
+
+  await step("T28d Code session reuses the transcript with Code metadata", async () => {
+    const mockContext = await browser.newContext({
+      colorScheme: "dark",
+      viewport: { width: 1200, height: 900 },
+    });
+    const mockPage = await mockContext.newPage();
+    await mockPage.addInitScript(() => {
+      const now = Date.now();
+      const session = {
+        id: "00000000-0000-0000-0000-000000000002",
+        surface: "code",
+        title: "Code transcript task",
+        cwd: "/tmp/repo",
+        model: "model-a",
+        effort: null,
+        permission_mode: "acceptEdits",
+        archived: false,
+        legal_hold: false,
+        createdAt: now - 60_000,
+        lastActivityAt: now - 30_000,
+        extra: { providerId: "stub", placement: "local" },
+      };
+      const turns = [
+        {
+          id: "00000000-0000-0000-0000-000000000003",
+          seq: 0,
+          role: "user",
+          status: "complete",
+          stopReason: null,
+          error: null,
+          createdAt: now - 50_000,
+          content: { parts: [{ type: "text", text: "hello code" }], citations: [] },
+        },
+        {
+          id: "00000000-0000-0000-0000-000000000004",
+          seq: 1,
+          role: "assistant",
+          status: "complete",
+          stopReason: "end_turn",
+          error: null,
+          createdAt: now - 40_000,
+          content: { parts: [{ type: "text", text: "working in the folder" }], citations: [] },
+        },
+      ];
+      let callbackId = 0;
+      window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
+      window.__TAURI_INTERNALS__ = {
+        transformCallback: (callback) => {
+          callbackId += 1;
+          window[`_${callbackId}`] = callback;
+          return callbackId;
+        },
+        invoke: async (cmd, args) => {
+          if (cmd === "plugin:event|listen" || cmd === "plugin:event|unlisten") return 1;
+          if (cmd !== "chat_command") throw new Error(`unexpected command ${cmd}`);
+          const command = args.command;
+          if (command.type === "listCodeSessions" || command.type === "listSessions") {
+            return {
+              type: "sessions",
+              sessions: command.type === "listCodeSessions" ? [session] : [],
+            };
+          }
+          if (command.type === "listSkills") {
+            return {
+              type: "skills",
+              view: { skills: [], disabled: [], creationEnabled: true, warnings: [] },
+            };
+          }
+          if (command.type === "openCodeSession") {
+            return { type: "session", session: { session, turns } };
+          }
+          throw new Error(`unexpected chat command ${command.type}`);
+        },
+      };
+    });
+    await mockPage.goto(`${BASE}/epitaxy/00000000-0000-0000-0000-000000000002`);
+    await mockPage.locator(".session-title", { hasText: "Code transcript task" }).waitFor();
+    await expectTrue(
+      (await mockPage.locator(".user-bubble").innerText()).includes("hello code"),
+      "the stored user turn must render",
+    );
+    await expectTrue(
+      (await mockPage.locator(".turn-assistant").innerText()).includes("working in the folder"),
+      "the stored assistant turn must render",
+    );
+    await expectTrue(
+      (await mockPage.locator(".session-code-context").innerText()).includes("repo") &&
+        (await mockPage.locator(".session-code-context").innerText()).includes("Accept edits"),
+      "the Code header must show folder and stored permission mode",
+    );
+    await expectTrue(
+      (await mockPage.locator(".session-model-label").innerText()).includes("model-a"),
+      "the Code header must show the stored model",
+    );
+    await mockContext.close();
   });
 
   await step("T29 rapid Ctrl+B leaves persisted state consistent", async () => {

@@ -37,8 +37,8 @@ pub use blobs::BlobStore;
 pub use migrate::LATEST_SCHEMA_VERSION;
 pub use quarantine::quarantined_records;
 pub use repos::{
-    AuditEventRow, NewSession, NewUsageEvent, SessionRow, TurnRole, TurnStatus, TurnRow,
-    UsageEventRow,
+    AuditEventRow, CodeTurnActivity, NewSession, NewUsageEvent, SessionRow, TurnRole, TurnStatus,
+    TurnRow, UsageEventRow,
 };
 
 pub(crate) mod secure {

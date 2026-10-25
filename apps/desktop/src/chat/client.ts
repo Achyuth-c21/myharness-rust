@@ -26,7 +26,7 @@ export interface SessionRecord {
   cwd: string | null;
   model: string | null;
   effort: string | null;
-  /** Stored snake_case spelling (the row's wire contract). */
+  /** Stored permission spelling (e.g. `default`, `acceptEdits`). */
   permission_mode: string | null;
   archived: boolean;
   /** Stored snake_case spelling (the row's wire contract). */
@@ -121,9 +121,65 @@ export interface UsageSummary {
   daily: DailyUsage[];
 }
 
+export type CodeRange = "7d" | "30d" | "all";
+export type CodePermissionMode = "default" | "acceptEdits" | "plan" | "bypass";
+
+/** The effective Code policy; folder roots never cross the bridge. */
+export interface CodePolicyView {
+  codeEnabled: boolean;
+  localSessionsEnabled: boolean;
+  bypassAllowed: boolean;
+  workspaceRestricted: boolean;
+}
+
+export interface CodeModelUsage {
+  model: string;
+  totals: UsageTotals;
+  sessions: number;
+  sharePercent: number;
+}
+
+/** Code-only dashboard data (`sessions::CodeUsageSummary`). */
+export interface CodeUsageSummary {
+  range: CodeRange;
+  days: number;
+  truncated: boolean;
+  timezoneOffsetMinutes: number;
+  from: string;
+  to: string;
+  totals: UsageTotals;
+  daily: DailyUsage[];
+  messages: number;
+  sessions: number;
+  activeDays: number;
+  peakHour: number | null;
+  favoriteModel: string | null;
+  models: CodeModelUsage[];
+}
+
+export interface CodeRepositoryView {
+  cwd: string;
+  sessionCount: number;
+  lastActivityAt: number;
+}
+
 export type ChatCommand =
   | { type: "listSessions"; archived?: boolean | null }
   | { type: "createSession"; title?: string | null }
+  | { type: "listCodeSessions"; archived?: boolean | null }
+  | {
+      type: "createCodeSession";
+      title?: string | null;
+      cwd: string;
+      permissionMode: CodePermissionMode;
+    }
+  | { type: "openCodeSession"; id: string }
+  | { type: "sendCodeTurn"; sessionId: string; text: string; maxTokens?: number | null }
+  | {
+      type: "codeDashboard";
+      range?: CodeRange | null;
+      utcOffsetMinutes?: number | null;
+    }
   | { type: "openSession"; id: string }
   | { type: "sendTurn"; sessionId: string; text: string; maxTokens?: number | null }
   | { type: "stopTurn"; sessionId: string }
@@ -156,6 +212,13 @@ export type ChatCommand =
 export type ChatResponse =
   | { type: "sessions"; sessions: SessionRecord[] }
   | { type: "session"; session: SessionView }
+  | {
+      type: "codeDashboard";
+      summary: CodeUsageSummary;
+      sessions: SessionRecord[];
+      repositories: CodeRepositoryView[];
+      policy: CodePolicyView;
+    }
   | {
       type: "turn";
       sessionId: string;
@@ -301,6 +364,58 @@ export async function chat(command: ChatCommand): Promise<ChatResponse> {
         retryable: true,
       },
       userTurnRecorded: false,
+    };
+  }
+}
+
+export type FolderPickResult =
+  | { kind: "picked"; path: string }
+  | { kind: "cancelled" }
+  | { kind: "error"; error: BridgeError };
+
+/**
+ * Native folder selection. Cancellation is `cancelled`; an invocation failure
+ * is an error, and a browser preview reports `BRIDGE_UNAVAILABLE` instead of
+ * inventing a folder. `rfd` does not expose a platform-picker failure
+ * separately from cancellation, so the bridge always revalidates the path it
+ * receives as untrusted input.
+ */
+export async function pickWorkspaceFolder(): Promise<FolderPickResult> {
+  try {
+    const path = await invoke<string | null>("pick_workspace_folder");
+    return path ? { kind: "picked", path } : { kind: "cancelled" };
+  } catch (error) {
+    const hostPresent =
+      typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+    if (!hostPresent) {
+      return {
+        kind: "error",
+        error: {
+          code: "BRIDGE_UNAVAILABLE",
+          message: "Folder selection is available in the desktop app.",
+          retryable: true,
+        },
+      };
+    }
+    const record =
+      typeof error === "object" && error !== null
+        ? (error as { code?: unknown; message?: unknown })
+        : null;
+    return {
+      kind: "error",
+      error: {
+        code:
+          typeof record?.code === "string" ? record.code : "FOLDER_PICKER_FAILED",
+        message:
+          typeof record?.message === "string"
+            ? record.message
+            : typeof error === "string"
+              ? error
+              : error instanceof Error
+                ? error.message
+                : "The folder picker could not be opened.",
+        retryable: true,
+      },
     };
   }
 }

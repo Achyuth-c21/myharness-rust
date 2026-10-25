@@ -4,8 +4,6 @@
  * is invented. Header action buttons are rendered per docs but stay disabled until
  * their flows arrive (docs/05 §4.4 "The header also has New project", etc.).
  */
-import type { ScreenDef } from "../routes";
-
 function ClockGlyph() {
   return (
     <svg width="40" height="40" viewBox="0 0 40 40" fill="none" aria-hidden="true">
@@ -138,22 +136,6 @@ export function ScheduledScreen() {
         copy=""
         action="New Task"
       />
-    </>
-  );
-}
-
-/** /epitaxy — docs/05 §4.3: Code greeting differs from Cowork and must not reuse it. */
-export function CodeScreen({ screen }: { screen: ScreenDef }) {
-  return (
-    <>
-      <ScreenHead label={screen.label} />
-      <div className="new-task">
-        <h1 className="greeting">What’s up next?</h1>
-        <p className="code-note">
-          The Code dashboard (overview stats, activity heatmap, repository composer) is specified in{" "}
-          docs/05 §4.3 and lands in its own phase.
-        </p>
-      </div>
     </>
   );
 }

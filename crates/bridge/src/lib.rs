@@ -24,6 +24,7 @@ pub mod catalog;
 pub mod chat;
 pub mod helper;
 pub mod mcp;
+pub mod policy;
 pub mod setup;
 
 /// Commands the renderer may invoke. The set grows phase by phase and must never become

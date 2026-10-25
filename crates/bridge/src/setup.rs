@@ -238,6 +238,15 @@ impl ConfigBackend {
     pub(crate) fn secrets(&self) -> &dyn SecretStore {
         self.secrets.as_ref()
     }
+
+    /// The effective Code placement/permission policy (`docs/09` §2.3;
+    /// `REQ-CODE-01/02`). Read from the merged profile so a managed value
+    /// cannot be overridden by a local draft or the renderer.
+    pub fn code_policy(&self) -> Result<crate::policy::CodePolicy, BridgeError> {
+        Ok(crate::policy::CodePolicy::from_merged(
+            &self.library.get_merged()?,
+        ))
+    }
 }
 
 impl SetupBackend for ConfigBackend {

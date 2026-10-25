@@ -5,6 +5,7 @@
 //! The adapter is scripted; provider wire behavior stays in each provider's
 //! own battery. These tests ask only what the agent layer did with the stream.
 
+use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use async_trait::async_trait;
@@ -15,7 +16,7 @@ use myharness_agent::tool_policy::{
     ToolPolicy,
 };
 use myharness_agent::{
-    run_turn_with_tools, AgentError, ToolTurnRun, TurnContent, TurnInput, TurnRun,
+    run_turn_with_tools, AgentError, PermissionMode, ToolTurnRun, TurnContent, TurnInput, TurnRun,
 };
 use myharness_provider_sdk::{
     AuthContext, ContentPart, CountRequest, ModelCapabilities, ModelDescriptor, ModelKey,
@@ -304,6 +305,13 @@ impl ApprovalPrompt for CancellingPrompt {
 fn allow_policy() -> ToolPolicy {
     ToolPolicy {
         default: PolicyEffect::Allow,
+        rules: Vec::new(),
+    }
+}
+
+fn ask_policy() -> ToolPolicy {
+    ToolPolicy {
+        default: PolicyEffect::Ask,
         rules: Vec::new(),
     }
 }
@@ -906,4 +914,259 @@ fn wire_tool_names_are_provider_safe_distinct_and_bounded() {
     assert_ne!(wire[0], wire[2]);
     assert_ne!(wire[0], wire[3]);
     assert_ne!(wire[3], wire[4]);
+}
+
+#[tokio::test]
+async fn plan_mode_hides_tools_and_denies_a_stale_call() {
+    let fixture = Fixture::new();
+    let session = fixture.start();
+    let adapter = ScriptedAdapter::new(vec![
+        final_script("planned without changes"),
+        tool_script("mcp:echo", json!({"repo": "dev"})),
+    ]);
+    let executor = RecordingExecutor::new(ToolOutput::text("must not run"));
+    let prompt = FixedPrompt::new(Some(ApprovalScope::Once));
+    let policy = allow_policy();
+    let mut approvals = ApprovalStore::default();
+    let cancel = CancellationToken::new();
+    let input = TurnInput {
+        tools: vec![tool("mcp:echo")],
+        ..TurnInput::text(model(), 128, "plan first")
+    };
+    let run = TurnRun::new(&fixture.service, &adapter, auth(), &session, input, &cancel);
+    let outcome = run_turn_with_tools(
+        ToolTurnRun::new(
+            run,
+            &policy,
+            &mut approvals,
+            ApprovalContext::interactive(&session, true),
+            executor.as_ref(),
+            &prompt,
+            100,
+        )
+        .with_permission_mode(PermissionMode::Plan, false),
+    )
+    .await
+    .expect("plan turn");
+
+    assert_eq!(outcome.tool_turns.len(), 1);
+    assert!(executor.calls().is_empty());
+    assert!(prompt.calls().is_empty());
+    let calls = adapter.calls();
+    assert_eq!(calls.len(), 2);
+    assert!(calls[0].tools.is_empty(), "Plan must advertise no tools");
+    let tool_content = stored_content(&fixture.service, &outcome.tool_turns[0]);
+    assert!(matches!(
+        &tool_content.parts[0],
+        ContentPart::ToolResult { is_error: true, .. }
+    ));
+    assert!(matches!(
+        &tool_content.parts[0],
+        ContentPart::ToolResult { content, .. }
+            if content.iter().any(|part| matches!(
+                part,
+                ContentPart::Text { text } if text.contains("Plan mode")
+            ))
+    ));
+}
+
+#[tokio::test]
+async fn bypass_requires_policy_and_then_auto_approves_only_asks() {
+    let fixture = Fixture::new();
+    let session = fixture.start();
+    let policy = ask_policy();
+
+    let refused_adapter = ScriptedAdapter::new(vec![]);
+    let executor = RecordingExecutor::new(ToolOutput::text("must not run"));
+    let prompt = FixedPrompt::new(None);
+    let mut approvals = ApprovalStore::default();
+    let cancel = CancellationToken::new();
+    let input = TurnInput {
+        tools: vec![tool("mcp:echo")],
+        ..TurnInput::text(model(), 128, "bypass")
+    };
+    let run = TurnRun::new(
+        &fixture.service,
+        &refused_adapter,
+        auth(),
+        &session,
+        input,
+        &cancel,
+    );
+    let refused = run_turn_with_tools(
+        ToolTurnRun::new(
+            run,
+            &policy,
+            &mut approvals,
+            ApprovalContext::interactive(&session, true),
+            executor.as_ref(),
+            &prompt,
+            100,
+        )
+        .with_permission_mode(PermissionMode::Bypass, false),
+    )
+    .await;
+    assert!(matches!(refused, Err(AgentError::Validation(_))));
+    assert!(refused_adapter.calls().is_empty());
+
+    let adapter = ScriptedAdapter::new(vec![
+        final_script("after bypass"),
+        tool_script("mcp:echo", json!({"repo": "dev"})),
+    ]);
+    let mut approvals = ApprovalStore::default();
+    let input = TurnInput {
+        tools: vec![tool("mcp:echo")],
+        ..TurnInput::text(model(), 128, "bypass")
+    };
+    let run = TurnRun::new(&fixture.service, &adapter, auth(), &session, input, &cancel);
+    run_turn_with_tools(
+        ToolTurnRun::new(
+            run,
+            &policy,
+            &mut approvals,
+            ApprovalContext::interactive(&session, true),
+            executor.as_ref(),
+            &prompt,
+            100,
+        )
+        .with_permission_mode(PermissionMode::Bypass, true),
+    )
+    .await
+    .expect("bypass turn");
+    assert_eq!(executor.calls().len(), 1);
+    assert!(prompt.calls().is_empty(), "Bypass must not prompt for Ask");
+}
+
+#[tokio::test]
+async fn accept_edits_auto_approves_only_the_declared_edit_tools() {
+    let fixture = Fixture::new();
+    let session = fixture.start();
+    let adapter = ScriptedAdapter::new(vec![
+        final_script("edited"),
+        tool_script("mcp:edit", json!({"repo": "dev"})),
+    ]);
+    let executor = RecordingExecutor::new(ToolOutput::text("edited"));
+    let prompt = FixedPrompt::new(None);
+    let policy = ask_policy();
+    let mut approvals = ApprovalStore::default();
+    let cancel = CancellationToken::new();
+    let mut edit_tools = BTreeSet::new();
+    edit_tools.insert("mcp:edit".to_string());
+    let input = TurnInput {
+        tools: vec![tool("mcp:edit")],
+        ..TurnInput::text(model(), 128, "edit")
+    };
+    let run = TurnRun::new(&fixture.service, &adapter, auth(), &session, input, &cancel);
+    run_turn_with_tools(
+        ToolTurnRun::new(
+            run,
+            &policy,
+            &mut approvals,
+            ApprovalContext::interactive(&session, true),
+            executor.as_ref(),
+            &prompt,
+            100,
+        )
+        .with_permission_mode(PermissionMode::AcceptEdits, false)
+        .with_edit_tools(&edit_tools),
+    )
+    .await
+    .expect("accept-edits turn");
+    assert_eq!(executor.calls().len(), 1);
+    assert!(prompt.calls().is_empty());
+}
+
+#[tokio::test]
+async fn accept_edits_does_not_auto_approve_non_edit_tools() {
+    let fixture = Fixture::new();
+    let session = fixture.start();
+    let adapter = ScriptedAdapter::new(vec![
+        final_script("not edited"),
+        tool_script("mcp:echo", json!({"repo": "dev"})),
+    ]);
+    let executor = RecordingExecutor::new(ToolOutput::text("must not run"));
+    let prompt = FixedPrompt::new(None);
+    let policy = ask_policy();
+    let mut approvals = ApprovalStore::default();
+    let cancel = CancellationToken::new();
+    let mut edit_tools = BTreeSet::new();
+    edit_tools.insert("mcp:edit".to_string());
+    let input = TurnInput {
+        tools: vec![tool("mcp:echo")],
+        ..TurnInput::text(model(), 128, "not an edit")
+    };
+    let run = TurnRun::new(&fixture.service, &adapter, auth(), &session, input, &cancel);
+    let outcome = run_turn_with_tools(
+        ToolTurnRun::new(
+            run,
+            &policy,
+            &mut approvals,
+            ApprovalContext::interactive(&session, true),
+            executor.as_ref(),
+            &prompt,
+            100,
+        )
+        .with_permission_mode(PermissionMode::AcceptEdits, false)
+        .with_edit_tools(&edit_tools),
+    )
+    .await
+    .expect("accept-edits turn");
+
+    assert_eq!(outcome.tool_turns.len(), 1);
+    assert!(executor.calls().is_empty());
+    assert_eq!(prompt.calls().len(), 1, "a non-edit tool still asks");
+    let tool_content = stored_content(&fixture.service, &outcome.tool_turns[0]);
+    assert!(matches!(
+        &tool_content.parts[0],
+        ContentPart::ToolResult { is_error: true, .. }
+    ));
+}
+
+#[tokio::test]
+async fn bypass_never_overrides_a_policy_deny() {
+    let fixture = Fixture::new();
+    let session = fixture.start();
+    let adapter = ScriptedAdapter::new(vec![
+        final_script("denied"),
+        tool_script("mcp:echo", json!({"repo": "dev"})),
+    ]);
+    let executor = RecordingExecutor::new(ToolOutput::text("must not run"));
+    let prompt = FixedPrompt::new(Some(ApprovalScope::Once));
+    let policy = ToolPolicy {
+        default: PolicyEffect::Allow,
+        rules: vec![PolicyRule {
+            tool: ToolPattern::Exact("mcp:echo".into()),
+            arguments: Default::default(),
+            effect: PolicyEffect::Deny,
+        }],
+    };
+    let mut approvals = ApprovalStore::default();
+    let cancel = CancellationToken::new();
+    let input = TurnInput {
+        tools: vec![tool("mcp:echo")],
+        ..TurnInput::text(model(), 128, "bypass deny")
+    };
+    let run = TurnRun::new(&fixture.service, &adapter, auth(), &session, input, &cancel);
+    let outcome = run_turn_with_tools(
+        ToolTurnRun::new(
+            run,
+            &policy,
+            &mut approvals,
+            ApprovalContext::interactive(&session, true),
+            executor.as_ref(),
+            &prompt,
+            100,
+        )
+        .with_permission_mode(PermissionMode::Bypass, true),
+    )
+    .await
+    .expect("bypass turn");
+    assert_eq!(outcome.tool_turns.len(), 1);
+    assert!(executor.calls().is_empty());
+    assert!(prompt.calls().is_empty());
+    let tool_content = stored_content(&fixture.service, &outcome.tool_turns[0]);
+    assert!(matches!(
+        &tool_content.parts[0],
+        ContentPart::ToolResult { is_error: true, .. }
+    ));
 }
