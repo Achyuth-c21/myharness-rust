@@ -320,18 +320,27 @@ impl OAuthStore for KeyringOAuthStore {
 /// captured. Errors never include the response body (it can echo a token).
 pub struct ReqwestOAuthHttp {
     client: reqwest::Client,
+    egress: Option<EgressPolicy>,
 }
 
 impl ReqwestOAuthHttp {
     pub fn new() -> Result<ReqwestOAuthHttp, OAuthError> {
+        ReqwestOAuthHttp::with_egress(None)
+    }
+
+    /// Build the refresh client with the same host allowlist as the MCP
+    /// transport. Redirects are disabled: a refresh token must never be
+    /// replayed to a redirect target that the policy did not check.
+    pub fn with_egress(egress: Option<EgressPolicy>) -> Result<ReqwestOAuthHttp, OAuthError> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|error| OAuthError::Refresh {
                 server: "unknown".into(),
                 message: format!("the OAuth HTTP client could not be built: {error}"),
             })?;
-        Ok(ReqwestOAuthHttp { client })
+        Ok(ReqwestOAuthHttp { client, egress })
     }
 }
 
@@ -343,6 +352,14 @@ impl OAuthHttp for ReqwestOAuthHttp {
         refresh_token: &str,
     ) -> Result<OAuthToken, OAuthError> {
         config.validate()?;
+        if let Some(egress) = &self.egress {
+            egress
+                .check_url(&config.token_url)
+                .map_err(|error| OAuthError::Refresh {
+                    server: "unknown".into(),
+                    message: format!("the OAuth token endpoint is not allowed: {error}"),
+                })?;
+        }
         let mut form = vec![
             ("grant_type", "refresh_token".to_string()),
             ("refresh_token", refresh_token.to_string()),
@@ -1137,7 +1154,15 @@ pub fn keyring_oauth_store(store: Arc<dyn SecretStore>) -> Arc<dyn OAuthStore> {
 
 /// The OAuth HTTP client factory.
 pub fn reqwest_oauth_http() -> Result<Arc<dyn OAuthHttp>, OAuthError> {
-    Ok(Arc::new(ReqwestOAuthHttp::new()?))
+    reqwest_oauth_http_with_egress(None)
+}
+
+/// The OAuth HTTP client factory with the MCP host allowlist applied to the
+/// token endpoint.
+pub fn reqwest_oauth_http_with_egress(
+    egress: Option<EgressPolicy>,
+) -> Result<Arc<dyn OAuthHttp>, OAuthError> {
+    Ok(Arc::new(ReqwestOAuthHttp::with_egress(egress)?))
 }
 
 /// A status summary that never includes configuration secrets.
@@ -1177,6 +1202,23 @@ mod tests {
         let loaded = McpConfig::load(dir.path());
         assert!(loaded.config.servers.is_empty());
         assert!(loaded.warnings[0].contains("byte limit"));
+    }
+
+    #[tokio::test]
+    async fn oauth_refresh_refuses_a_token_endpoint_outside_egress() {
+        let http = ReqwestOAuthHttp::with_egress(Some(EgressPolicy::allow_hosts([
+            "auth.example.test",
+        ])))
+        .unwrap();
+        let config = OAuthConfig {
+            token_url: "https://elsewhere.example/token".into(),
+            client_id: "client".into(),
+            scopes: Vec::new(),
+        };
+        let error = http.refresh(&config, "refresh-token").await.unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("egress"));
+        assert!(!message.contains("elsewhere.example"));
     }
 
     #[test]

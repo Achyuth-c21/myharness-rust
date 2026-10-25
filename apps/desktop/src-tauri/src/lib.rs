@@ -272,7 +272,7 @@ fn init_chat(app: &tauri::AppHandle) -> Result<Chat, String> {
     let oauth_store = myharness_bridge::mcp::keyring_oauth_store(Arc::new(
         myharness_secrets::KeyringStore::new(myharness_secrets::DEFAULT_SERVICE),
     ));
-    let oauth_http = match ReqwestOAuthHttp::new() {
+    let oauth_http = match ReqwestOAuthHttp::with_egress(loaded.config.egress.clone()) {
         Ok(client) => Arc::new(client) as Arc<dyn myharness_mcp::OAuthHttp>,
         Err(error) => {
             let mut warnings = loaded.warnings.clone();

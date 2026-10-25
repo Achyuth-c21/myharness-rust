@@ -17,9 +17,12 @@
 //! - **stdio servers are not inspected.** A child process can open its own
 //!   sockets, and this layer cannot see them. Egress enforcement for stdio
 //!   belongs to the OS/proxy boundary; claiming otherwise here would be false.
-//! - Redirects are not followed by this check; the transport's redirect
-//!   behavior must be pinned separately. The current `rmcp` Streamable HTTP
-//!   client is not configured to follow a redirect in this crate.
+//! - Redirects are not part of this check. The pinned `rmcp` 3.7 Streamable
+//!   HTTP client follows only same-origin 307/308 redirects (up to 10) and
+//!   returns 301/302/303 or cross-origin redirects to the caller, so the
+//!   checked host cannot be swapped for another host by a redirect. This
+//!   relies on the default client; a custom transport client must re-check
+//!   every hop.
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
