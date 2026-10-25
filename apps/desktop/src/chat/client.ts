@@ -123,6 +123,16 @@ export interface UsageSummary {
   daily: DailyUsage[];
 }
 
+/**
+ * One surface's share of the split usage view (`crates/sessions`
+ * `SurfaceUsage`, Phase 7). `surface` is the stored spelling: `"chat"`
+ * (Cowork) or `"code"`.
+ */
+export interface SurfaceUsage {
+  surface: string;
+  totals: UsageTotals;
+}
+
 export type CodeRange = "7d" | "30d" | "all";
 export type CodePermissionMode = "default" | "acceptEdits" | "plan" | "bypass";
 
@@ -375,7 +385,7 @@ export type ChatResponse =
     }
   | { type: "stopped"; stopped: boolean }
   | { type: "ack" }
-  | { type: "usage"; summary: UsageSummary }
+  | { type: "usage"; summary: UsageSummary; surfaces: SurfaceUsage[] }
   | { type: "mcpStatus"; servers: McpServerView[]; warnings: string[] }
   | { type: "toolSearch"; hits: ToolSearchHit[]; enabled: boolean }
   | { type: "mcpTools"; tools: ToolDescriptor[] }

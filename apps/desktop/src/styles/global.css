@@ -1577,6 +1577,40 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+.usage-surfaces {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: calc(var(--mh-unit) * 2);
+  margin-top: calc(var(--mh-unit) * 2);
+}
+
+.usage-surface {
+  border: 1px solid var(--mh-border-hair);
+  border-radius: var(--mh-radius-card);
+  background: var(--mh-surface-2);
+  padding: calc(var(--mh-unit) * 2) calc(var(--mh-unit) * 3);
+}
+
+.usage-surface h4 {
+  margin: 0 0 calc(var(--mh-unit) * 1);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--mh-text-2);
+}
+
+.usage-surface .usage-totals {
+  margin-top: 0;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: calc(var(--mh-unit) * 1.5);
+}
+
+.usage-surface .usage-total {
+  background: transparent;
+  padding: calc(var(--mh-unit) * 1) 0;
+  border: none;
+  border-radius: 0;
+}
+
 .usage-chart-wrap {
   margin-top: calc(var(--mh-unit) * 2);
 }

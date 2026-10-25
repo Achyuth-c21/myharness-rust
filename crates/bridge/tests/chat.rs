@@ -588,7 +588,7 @@ async fn usage_summary_aggregates_the_ledger() {
         None,
     )
     .await;
-    let ChatResponse::Usage { summary } = response else {
+    let ChatResponse::Usage { summary, surfaces } = response else {
         panic!("expected usage, got {response:?}");
     };
     assert_eq!(summary.days, 7);
@@ -596,6 +596,19 @@ async fn usage_summary_aggregates_the_ledger() {
     assert_eq!(summary.totals.input_tokens, 7);
     assert_eq!(summary.totals.output_tokens, 2);
     assert_eq!(summary.totals.cache_read_tokens, 3);
+    // The Phase-7 split view rides along: this fixture only has a Cowork
+    // session, so the Code share is a zero summary, not a missing field.
+    let chat_share = surfaces
+        .iter()
+        .find(|share| share.surface == "chat")
+        .expect("chat share");
+    assert_eq!(chat_share.totals.events, 1);
+    assert_eq!(chat_share.totals.input_tokens, 7);
+    let code_share = surfaces
+        .iter()
+        .find(|share| share.surface == "code")
+        .expect("code share");
+    assert_eq!(code_share.totals.events, 0);
 
     let bad = dispatch(
         fixture.service.as_ref(),
@@ -610,6 +623,87 @@ async fn usage_summary_aggregates_the_ledger() {
         bad,
         ChatResponse::Error { ref error, .. } if error.code == "CONFIG_VALIDATION"
     ));
+}
+
+/// The usage response splits the window into Cowork and Code shares, and each
+/// share counts only its own surface's rows (`docs/screens/settings.md`
+/// §Usage).
+#[tokio::test]
+async fn usage_summary_splits_cowork_and_code() {
+    let fixture = Fixture::new(reply("counted"), Tail::End);
+    let chat = fixture.create().await;
+    let folder = fixture.dir.path().join("usage-repo");
+    std::fs::create_dir_all(&folder).expect("folder");
+    let folder_text = std::fs::canonicalize(&folder)
+        .expect("canonical folder")
+        .to_str()
+        .expect("utf-8")
+        .to_string();
+    let code = match fixture
+        .create_code(&folder_text, PermissionMode::Default)
+        .await
+    {
+        ChatResponse::Session { session } => session.session.id,
+        other => panic!("expected code session, got {other:?}"),
+    };
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_millis() as i64;
+    let store = fixture.service.sessions().store();
+    store
+        .record_usage_at(
+            &code,
+            NewUsageEvent {
+                model: "stub-model",
+                input_tokens: 10,
+                output_tokens: 5,
+                search_requests: 1,
+                ..Default::default()
+            },
+            now,
+        )
+        .expect("code usage");
+    // A real send records the Cowork event through the turn loop.
+    dispatch(
+        fixture.service.as_ref(),
+        ChatCommand::SendTurn {
+            session_id: chat,
+            text: "count me".into(),
+            max_tokens: None,
+        },
+        None,
+    )
+    .await;
+
+    let response = dispatch(
+        fixture.service.as_ref(),
+        ChatCommand::UsageSummary {
+            days: Some(7),
+            utc_offset_minutes: Some(0),
+        },
+        None,
+    )
+    .await;
+    let ChatResponse::Usage { summary, surfaces } = response else {
+        panic!("expected usage, got {response:?}");
+    };
+    assert_eq!(summary.totals.events, 2);
+    let chat_share = surfaces
+        .iter()
+        .find(|share| share.surface == "chat")
+        .expect("chat share");
+    assert_eq!(chat_share.totals.events, 1);
+    assert_eq!(chat_share.totals.input_tokens, 7);
+    assert_eq!(chat_share.totals.search_requests, 0);
+    let code_share = surfaces
+        .iter()
+        .find(|share| share.surface == "code")
+        .expect("code share");
+    assert_eq!(code_share.totals.events, 1);
+    assert_eq!(code_share.totals.input_tokens, 10);
+    assert_eq!(code_share.totals.search_requests, 1);
 }
 
 /// An empty message is refused before any row is written, and the error says

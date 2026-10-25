@@ -857,6 +857,9 @@ pub enum ChatResponse {
     Ack,
     Usage {
         summary: UsageSummary,
+        /// The Cowork/Code shares (Phase 7's split view). Present since the
+        /// split view; renderers that only need the combined totals ignore it.
+        surfaces: Vec<myharness_sessions::SurfaceUsage>,
     },
     Error {
         error: BridgeError,
@@ -2891,11 +2894,14 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
     ) -> Result<ChatResponse, ChatFailure> {
         let days = days.unwrap_or(DEFAULT_USAGE_DAYS);
         let tz = fixed_offset(utc_offset_minutes)?;
-        let summary = self
+        let split = self
             .sessions
-            .usage_summary(None, days, tz, now_ms())
+            .usage_summary_split(days, tz, now_ms())
             .map_err(session_failure)?;
-        Ok(ChatResponse::Usage { summary })
+        Ok(ChatResponse::Usage {
+            summary: split.combined,
+            surfaces: split.surfaces,
+        })
     }
 }
 

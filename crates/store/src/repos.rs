@@ -1066,6 +1066,39 @@ impl Store {
         Ok(rows)
     }
 
+    /// Usage events of one surface (Phase 7's split usage view). Same shape
+    /// and bounds as [`Store::list_usage_between`]; the join carries the
+    /// surface scoping so the combined totals can be split honestly.
+    pub fn list_surface_usage_between(
+        &self,
+        surface: &str,
+        from_ms: i64,
+        to_ms: i64,
+    ) -> Result<Vec<UsageEventRow>, StoreError> {
+        if to_ms < from_ms {
+            return Err(StoreError::Validation(
+                "the usage window ends before it starts",
+            ));
+        }
+        if surface.trim().is_empty() || surface.contains('\0') {
+            return Err(StoreError::Validation("the surface name is invalid"));
+        }
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {} FROM usage_events u
+             JOIN sessions s ON s.id = u.session_id
+             WHERE s.surface = ?1
+               AND u.timestamp >= ?2 AND u.timestamp <= ?3
+             ORDER BY u.timestamp ASC, u.id ASC",
+            usage_columns_qualified()
+        ))?;
+        let rows: Vec<UsageEventRow> = stmt
+            .query_map(params![surface, from_ms, to_ms], usage_from_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(stmt);
+        Ok(rows)
+    }
+
     /// The earliest Code activity, if any: a usage event or a user/assistant
     /// turn. The all-time dashboard uses this so the first user turn is not
     /// dropped merely because its usage event was written a moment later.

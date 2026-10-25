@@ -620,6 +620,97 @@ fn usage_summary_reads_the_ledger_window() {
     assert!(fixture.service.usage_summary(None, 367, utc, now).is_err());
 }
 
+/// The Phase-7 split view (`docs/screens/settings.md` §Usage): the combined
+/// window plus per-surface shares whose totals fold back into the combined
+/// one, and a surface with no rows is a zero summary, never a missing field.
+#[test]
+fn usage_summary_split_reports_each_surface() {
+    let fixture = Fixture::new();
+    let chat = fixture.start("split-chat");
+    let code = fixture
+        .service
+        .start(NewSession {
+            project_id: None,
+            surface: "code",
+            title: "split-code",
+            ..Default::default()
+        })
+        .expect("code session");
+    fixture
+        .service
+        .record_usage(
+            &chat.id,
+            NewUsageEvent {
+                model: "model-a",
+                input_tokens: 7,
+                output_tokens: 3,
+                cache_read_tokens: 2,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    fixture
+        .service
+        .record_usage(
+            &code.id,
+            NewUsageEvent {
+                model: "model-a",
+                input_tokens: 11,
+                output_tokens: 5,
+                search_requests: 2,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_millis() as i64;
+    let utc = FixedOffset::east_opt(0).expect("offset");
+    let split = fixture
+        .service
+        .usage_summary_split(7, utc, now)
+        .expect("split summary");
+    assert_eq!(split.combined.totals.events, 2);
+    assert_eq!(split.combined.totals.input_tokens, 18);
+    assert_eq!(split.combined.totals.output_tokens, 8);
+    assert_eq!(split.surfaces.len(), 2);
+
+    let chat_share = split
+        .surfaces
+        .iter()
+        .find(|share| share.surface == "chat")
+        .expect("chat share");
+    assert_eq!(chat_share.totals.events, 1);
+    assert_eq!(chat_share.totals.input_tokens, 7);
+    assert_eq!(chat_share.totals.cache_read_tokens, 2);
+    assert_eq!(chat_share.totals.search_requests, 0);
+
+    let code_share = split
+        .surfaces
+        .iter()
+        .find(|share| share.surface == "code")
+        .expect("code share");
+    assert_eq!(code_share.totals.events, 1);
+    assert_eq!(code_share.totals.input_tokens, 11);
+    assert_eq!(code_share.totals.search_requests, 2);
+
+    // Every share folds back into the combined totals.
+    let sum: i64 = split.surfaces.iter().map(|share| share.totals.events).sum();
+    assert_eq!(sum, split.combined.totals.events);
+
+    // A ledger with no rows at all still reports both surfaces as zeros.
+    let empty = Fixture::new();
+    let split = empty
+        .service
+        .usage_summary_split(30, utc, now)
+        .expect("empty split");
+    assert_eq!(split.combined.totals.events, 0);
+    assert_eq!(split.surfaces.len(), 2);
+    assert!(split.surfaces.iter().all(|share| share.totals.events == 0));
+}
+
 fn utc_2026_10_24_noon() -> i64 {
     FixedOffset::east_opt(0)
         .expect("offset")

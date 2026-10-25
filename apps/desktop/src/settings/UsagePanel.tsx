@@ -8,19 +8,26 @@
  * event at 23:30 local stays on that local day even after UTC has rolled over.
  *
  * Cached tokens are shown separately: docs/11 §6 records that they are excluded
- * from token limits. The Phase-4 ledger has no surface column, so Cowork and
- * Code are shown together; the per-surface split stays explicitly unbuilt
- * rather than guessed.
+ * from token limits. The Phase-7 split view carries the Cowork and Code shares
+ * the spec names; each share folds only its own surface's rows, and a surface
+ * with no activity is a zero card, never a missing one.
  */
 import { useEffect, useState } from "react";
 import {
   chat,
   type BridgeError,
+  type SurfaceUsage,
   type UsageSummary,
   type UsageTotals,
 } from "../chat/client";
 
 const RANGES = [7, 30, 90] as const;
+
+/** Display names for the stored surface spellings; unknown values pass through. */
+const SURFACE_LABELS: Record<string, string> = {
+  chat: "Cowork",
+  code: "Code",
+};
 
 function formatCount(value: number): string {
   return value.toLocaleString();
@@ -61,6 +68,50 @@ function Totals({ totals }: { totals: UsageTotals }) {
           <span className="usage-value">{formatCount(totals.errorEvents)}</span>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function SurfaceCard({ share }: { share: SurfaceUsage }) {
+  const label = SURFACE_LABELS[share.surface] ?? share.surface;
+  const { totals } = share;
+  return (
+    <div className="usage-surface" data-surface={share.surface}>
+      <h4>{label}</h4>
+      <div className="usage-totals">
+        <div className="usage-total">
+          <span className="usage-label">Input</span>
+          <span className="usage-value">{formatCount(totals.inputTokens)}</span>
+        </div>
+        <div className="usage-total">
+          <span className="usage-label">Output</span>
+          <span className="usage-value">{formatCount(totals.outputTokens)}</span>
+        </div>
+        <div className="usage-total">
+          <span className="usage-label">Cache read</span>
+          <span className="usage-value">{formatCount(totals.cacheReadTokens)}</span>
+        </div>
+        <div className="usage-total">
+          <span className="usage-label">Cache write</span>
+          <span className="usage-value">{formatCount(totals.cacheWriteTokens)}</span>
+        </div>
+        {totals.searchRequests > 0 ? (
+          <div className="usage-total">
+            <span className="usage-label">Search requests</span>
+            <span className="usage-value">{formatCount(totals.searchRequests)}</span>
+          </div>
+        ) : null}
+        <div className="usage-total">
+          <span className="usage-label">Turns</span>
+          <span className="usage-value">{formatCount(totals.events)}</span>
+        </div>
+        {totals.errorEvents > 0 ? (
+          <div className="usage-total">
+            <span className="usage-label">Failed turns</span>
+            <span className="usage-value">{formatCount(totals.errorEvents)}</span>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -106,6 +157,7 @@ function DailyChart({ summary }: { summary: UsageSummary }) {
 export function UsagePanel() {
   const [days, setDays] = useState<(typeof RANGES)[number]>(7);
   const [summary, setSummary] = useState<UsageSummary | null>(null);
+  const [surfaces, setSurfaces] = useState<SurfaceUsage[]>([]);
   const [error, setError] = useState<BridgeError | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -124,9 +176,11 @@ export function UsagePanel() {
       setLoading(false);
       if (response.type === "usage") {
         setSummary(response.summary);
+        setSurfaces(response.surfaces);
         setError(null);
       } else if (response.type === "error") {
         setSummary(null);
+        setSurfaces([]);
         setError(response.error);
       }
     })();
@@ -169,12 +223,17 @@ export function UsagePanel() {
         <>
           <h3>Tokens</h3>
           <Totals totals={summary.totals} />
+          <h3>Cowork and Code</h3>
+          <div className="usage-surfaces">
+            {surfaces.map((share) => (
+              <SurfaceCard key={share.surface} share={share} />
+            ))}
+          </div>
           <h3>Daily</h3>
           <DailyChart summary={summary} />
           <p className="settings-note">
             Values are device-local and are not a billing statement. Cached tokens are shown
-            separately and are excluded from token limits. The Phase-4 ledger records no surface
-            per event, so Cowork and Code totals are combined until that column exists.
+            separately and are excluded from token limits.
           </p>
         </>
       ) : null}

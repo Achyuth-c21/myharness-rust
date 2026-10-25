@@ -609,6 +609,84 @@ fn usage_events_are_selectable_in_a_window() {
     ));
 }
 
+/// The Phase-7 split view's store query: a surface window carries only that
+/// surface's events, and its bounds/surface validation matches the combined
+/// query's (`docs/screens/settings.md` §Usage).
+#[test]
+fn surface_usage_events_are_scoped_to_their_surface() {
+    let probe = TestStore::new();
+    let chat = probe.fresh_session("usage-split-chat");
+    let code = probe
+        .store
+        .create_session(NewSession {
+            project_id: None,
+            surface: "code",
+            title: "usage-split-code",
+            ..Default::default()
+        })
+        .unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    probe
+        .store
+        .record_usage_at(
+            &chat.id,
+            NewUsageEvent {
+                model: "model-a",
+                input_tokens: 3,
+                output_tokens: 1,
+                ..Default::default()
+            },
+            now - 100,
+        )
+        .unwrap();
+    probe
+        .store
+        .record_usage_at(
+            &code.id,
+            NewUsageEvent {
+                model: "model-a",
+                input_tokens: 5,
+                output_tokens: 2,
+                search_requests: 1,
+                ..Default::default()
+            },
+            now - 50,
+        )
+        .unwrap();
+
+    let code_rows = probe
+        .store
+        .list_surface_usage_between("code", 0, now)
+        .unwrap();
+    assert_eq!(code_rows.len(), 1);
+    assert_eq!(code_rows[0].input_tokens, 5);
+    assert_eq!(code_rows[0].search_requests, 1);
+    let chat_rows = probe
+        .store
+        .list_surface_usage_between("chat", 0, now)
+        .unwrap();
+    assert_eq!(chat_rows.len(), 1);
+    assert_eq!(chat_rows[0].input_tokens, 3);
+    // A surface with no sessions is an empty window, not an error.
+    assert!(probe
+        .store
+        .list_surface_usage_between("vault", 0, now)
+        .unwrap()
+        .is_empty());
+    // The window bounds and the surface name validate like the combined query.
+    assert!(matches!(
+        probe.store.list_surface_usage_between("code", 10, 5),
+        Err(StoreError::Validation(_))
+    ));
+    assert!(matches!(
+        probe.store.list_surface_usage_between("  ", 0, now),
+        Err(StoreError::Validation(_))
+    ));
+}
+
 // ---------------------------------------------------------------------
 // Quarantine (`TEST-SESSION-003` / `TEST-DATA-003`)
 // ---------------------------------------------------------------------
