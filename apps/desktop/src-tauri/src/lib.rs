@@ -10,12 +10,16 @@
 //! - deep links validate via `myharness_app_shell::lifecycle` (docs/06 route grammar).
 
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use myharness_app_shell as shell;
+use myharness_bridge::catalog::CatalogRuntime;
 use myharness_bridge::chat::{
     dispatch as chat_dispatch, ChatCommand, ChatResponse, ChatService, KeyringAuditKeys,
     ProfileTargets,
+};
+use myharness_bridge::mcp::{
+    BridgeApprovalPrompt, BuiltMcp, McpConfig, ReqwestOAuthHttp, ToolRuntime,
 };
 use myharness_bridge::setup::{BridgeError, ConfigBackend, SetupCommand, SetupResponse};
 use myharness_provider_sdk::TurnEvent;
@@ -80,13 +84,11 @@ fn safe_text(raw: &str) -> String {
 /// Phase-2 surface (docs/13 §4, ARCH-NAV-03 "separate and independently reachable"),
 /// so the main renderer must never navigate to it. Returns the app URL to navigate.
 fn deep_link_target(args: &[String]) -> Option<tauri::Url> {
-    let (raw, route) = args
-        .iter()
-        .find_map(|arg| {
-            shell::classify_deep_link(arg)
-                .ok()
-                .map(|route| (arg.clone(), route))
-        })?;
+    let (raw, route) = args.iter().find_map(|arg| {
+        shell::classify_deep_link(arg)
+            .ok()
+            .map(|route| (arg.clone(), route))
+    })?;
     if route == shell::DeepLinkRoute::Setup3p {
         // The dedicated setup window (docs/09 §2.1; ARCH-NAV-03) is opened by the
         // caller; the main renderer is never navigated to it.
@@ -101,10 +103,7 @@ fn deep_link_target(args: &[String]) -> Option<tauri::Url> {
     };
     // Malformed paths cannot parse as a URL -> None (fail closed, no navigation).
     let url = tauri::Url::parse(&format!("app://localhost/{rest}")).ok()?;
-    dlog(&format!(
-        "deep-link accepted {} -> {url}",
-        safe_text(&raw)
-    ));
+    dlog(&format!("deep-link accepted {} -> {url}", safe_text(&raw)));
     Some(url)
 }
 
@@ -132,10 +131,12 @@ fn adapt(request: tauri::http::Request<Vec<u8>>) -> tauri::http::Response<Vec<u8
         .and_then(|value| value.to_str().ok())
         .map(str::to_owned)
         .or_else(|| {
-            request
-                .uri()
-                .host()
-                .map(|uri_host| uri_host.trim_start_matches('[').trim_end_matches(']').to_string())
+            request.uri().host().map(|uri_host| {
+                uri_host
+                    .trim_start_matches('[')
+                    .trim_end_matches(']')
+                    .to_string()
+            })
         })
         .unwrap_or_default();
     let origin = request
@@ -236,11 +237,11 @@ fn chat_state(app: &tauri::AppHandle) -> Result<&'static Chat, String> {
 }
 
 fn init_chat(app: &tauri::AppHandle) -> Result<Chat, String> {
-    let root = app
+    let data = app
         .path()
         .app_data_dir()
-        .map_err(|error| format!("the app data directory is not available: {error}"))?
-        .join("chat");
+        .map_err(|error| format!("the app data directory is not available: {error}"))?;
+    let root = data.join("chat");
     std::fs::create_dir_all(&root)
         .map_err(|error| format!("the session directory could not be created: {error}"))?;
     let store = Store::open(&root.join("sessions.db"), &root.join("files"))
@@ -249,10 +250,115 @@ fn init_chat(app: &tauri::AppHandle) -> Result<Chat, String> {
         myharness_secrets::DEFAULT_SERVICE,
     )));
     let targets = ProfileTargets::new(setup_backend()?);
-    Ok(ChatService::new(
+
+    // MCP is optional and must never block chat. A malformed MCP file becomes
+    // a warning on an empty manager; a failed start is reported per server.
+    let mcp_root = data.join("mcp");
+    let mut mcp_warnings = Vec::new();
+    if let Err(error) = std::fs::create_dir_all(&mcp_root) {
+        // MCP is optional: a broken directory disables the MCP surface but
+        // must not take chat down with it.
+        mcp_warnings.push(format!(
+            "the MCP directory could not be created; MCP is disabled: {error}"
+        ));
+    }
+    let catalog = Arc::new(CatalogRuntime::load(data.join("catalog")));
+    let mut loaded = McpConfig::load(&mcp_root);
+    loaded.warnings.extend(mcp_warnings);
+    // Plugin-contributed servers join the normal manager/policy path. A
+    // plugin enable/disable change takes effect on the next app start; the
+    // current session snapshot is never mutated underneath a turn.
+    catalog.apply_plugin_servers(&mut loaded.config);
+    let oauth_store = myharness_bridge::mcp::keyring_oauth_store(Arc::new(
+        myharness_secrets::KeyringStore::new(myharness_secrets::DEFAULT_SERVICE),
+    ));
+    let oauth_http = match ReqwestOAuthHttp::new() {
+        Ok(client) => Arc::new(client) as Arc<dyn myharness_mcp::OAuthHttp>,
+        Err(error) => {
+            let mut warnings = loaded.warnings.clone();
+            warnings.push(format!("OAuth is unavailable: {error}"));
+            let built = BuiltMcp {
+                manager: Arc::new(tokio::sync::Mutex::new(myharness_mcp::McpManager::new())),
+                config: myharness_bridge::mcp::McpConfig::default(),
+                warnings,
+            };
+            return Ok(chat_with_tools(
+                app,
+                SessionService::new(store, keys),
+                targets,
+                built,
+                oauth_store,
+                mcp_root,
+                catalog,
+            ));
+        }
+    };
+    let built = match loaded.config.build(
+        &mcp_root.join("schemas.json"),
+        oauth_store.clone(),
+        oauth_http,
+    ) {
+        Ok(mut built) => {
+            built.warnings.extend(loaded.warnings);
+            built
+        }
+        Err(error) => {
+            let mut warnings = loaded.warnings;
+            warnings.push(format!("MCP is disabled: {error}"));
+            BuiltMcp {
+                manager: Arc::new(tokio::sync::Mutex::new(myharness_mcp::McpManager::new())),
+                config: myharness_bridge::mcp::McpConfig::default(),
+                warnings,
+            }
+        }
+    };
+    Ok(chat_with_tools(
+        app,
         SessionService::new(store, keys),
         targets,
+        built,
+        oauth_store,
+        mcp_root,
+        catalog,
     ))
+}
+
+fn chat_with_tools(
+    app: &tauri::AppHandle,
+    sessions: SessionService<KeyringAuditKeys>,
+    targets: ProfileTargets,
+    built: BuiltMcp,
+    oauth_store: Arc<dyn myharness_mcp::OAuthStore>,
+    mcp_root: std::path::PathBuf,
+    catalog: Arc<CatalogRuntime>,
+) -> Chat {
+    let handle = app.clone();
+    let prompt = Arc::new(BridgeApprovalPrompt::new(Arc::new(move |event| {
+        let _ = handle.emit("chat://tool-approval", event);
+    })));
+    let runtime = Arc::new(ToolRuntime::new(
+        built,
+        prompt,
+        Some(mcp_root.join("approvals.json")),
+        Some(oauth_store),
+    ));
+    let boot = Arc::clone(&runtime);
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let summary = boot.start_all().await;
+        let (servers, warnings) = boot.statuses().await;
+        let _ = handle.emit(
+            "chat://mcp-status",
+            serde_json::json!({
+                "summary": summary,
+                "servers": servers,
+                "warnings": warnings,
+            }),
+        );
+    });
+    ChatService::new(sessions, targets)
+        .with_tools(runtime)
+        .with_catalog(catalog)
 }
 
 /// The chat subset of `web.LocalAgentModeSessions` (docs/18 §3.4/§4). Content
@@ -340,10 +446,8 @@ async fn setup_discover_models(
 #[tauri::command]
 async fn setup_discover_openai_models(
     request: myharness_bridge::helper::OpenAiDiscoveryRequest,
-) -> Result<
-    myharness_bridge::helper::OpenAiDiscoveryOutcome,
-    myharness_bridge::setup::BridgeError,
-> {
+) -> Result<myharness_bridge::helper::OpenAiDiscoveryOutcome, myharness_bridge::setup::BridgeError>
+{
     let client = reqwest::Client::new();
     myharness_bridge::helper::discover_openai_models(&request, &client).await
 }

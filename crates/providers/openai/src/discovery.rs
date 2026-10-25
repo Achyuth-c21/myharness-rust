@@ -31,7 +31,7 @@ use myharness_provider_sdk::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::adapter::{status_class, AdapterKind, normalize_base};
+use crate::adapter::{normalize_base, status_class, AdapterKind};
 
 /// The single listing's timeout (the shipped discovery timeout; the gateway
 /// family documents 10 s per page — `docs/12` §3.1 — and the tolerance
@@ -146,14 +146,11 @@ pub async fn discover_with(
     for (name, value) in custom_headers {
         builder = builder.header(name, value);
     }
-    let response = builder
-        .send()
-        .await
-        .map_err(|error| ProviderError {
-            class: ErrorClass::Unreachable,
-            status: None,
-            message: format!("the provider could not be reached: {error}"),
-        })?;
+    let response = builder.send().await.map_err(|error| ProviderError {
+        class: ErrorClass::Unreachable,
+        status: None,
+        message: format!("the provider could not be reached: {error}"),
+    })?;
     let status = response.status();
     if !status.is_success() {
         // The status is reported; the body is not — it can carry a token,
@@ -258,11 +255,29 @@ fn row_id(row: &Value) -> Option<String> {
 /// (`AI-PROVIDER-05`).
 pub(crate) fn descriptor_from_row(provider: &str, row: &Value) -> Option<ModelDescriptor> {
     let id = row_id(row)?;
+    // OpenRouter-style rows advertise tool support in `supported_parameters`
+    // (a list that includes "tools"); some compatible gateways use a boolean.
+    // Anything else stays unsupported (`AI-PROVIDER-05`).
+    let tools_supported = row
+        .get("supported_parameters")
+        .and_then(Value::as_array)
+        .map(|values| values.iter().any(|value| value.as_str() == Some("tools")))
+        .unwrap_or(false)
+        || row
+            .get("supports_tools")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        || row
+            .get("capabilities")
+            .and_then(|capabilities| capabilities.get("tools"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
     let capabilities = ModelCapabilities {
         context_window: row
             .get("context_window")
             .and_then(Value::as_u64)
             .or_else(|| row.get("context_length").and_then(Value::as_u64)),
+        tools_supported,
         ..Default::default()
     };
     Some(ModelDescriptor {

@@ -34,7 +34,11 @@ async fn stdio_child_starts_lists_tools_and_shuts_down() {
     assert_eq!(tools.len(), 1);
     assert_eq!(tools[0].name, "echo:echo");
     assert_eq!(tools[0].tool, "echo");
-    assert!(tools[0].description.as_deref().unwrap_or("").contains("Echo"));
+    assert!(tools[0]
+        .description
+        .as_deref()
+        .unwrap_or("")
+        .contains("Echo"));
 
     let statuses = manager.statuses();
     assert!(matches!(

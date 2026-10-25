@@ -1616,3 +1616,301 @@ body {
 .shell.empty .text-btn {
   margin-top: calc(var(--mh-unit) * 2);
 }
+
+/* Phase 5 tool surfaces. The shipped tool-call, approval, and skill-picker
+   layouts were not captured; these are rebuild-defined minimal surfaces
+   (docs/14 §9). They use the existing tokens and keep untrusted tool output
+   visually separate from assistant prose. */
+.tool-uses {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--mh-unit) * 2);
+  margin: calc(var(--mh-unit) * 2) 0;
+}
+
+.tool-use {
+  border-left: 2px solid var(--mh-border);
+  padding-left: calc(var(--mh-unit) * 2.5);
+  font-size: 13px;
+  color: var(--mh-text-2);
+}
+
+.tool-use summary {
+  cursor: pointer;
+}
+
+.tool-use pre,
+.tool-result pre,
+.approval-preview {
+  margin: calc(var(--mh-unit) * 1.5) 0 0;
+  padding: calc(var(--mh-unit) * 2);
+  border-radius: 6px;
+  background: var(--mh-surface-2);
+  color: var(--mh-text-1);
+  font-family: var(--mh-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.tool-name {
+  color: var(--mh-text-1);
+  font-family: var(--mh-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.turn-tool {
+  font-size: 13px;
+  color: var(--mh-text-2);
+}
+
+.tool-result {
+  border-left: 2px solid var(--mh-border);
+  padding-left: calc(var(--mh-unit) * 2.5);
+}
+
+.tool-result-error {
+  border-left-color: var(--mh-accent-mark);
+}
+
+.tool-result-label {
+  display: flex;
+  gap: calc(var(--mh-unit) * 2);
+  color: var(--mh-text-3);
+  font-size: 12px;
+}
+
+.tool-result-id {
+  font-family: var(--mh-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.tool-result-media {
+  margin-top: calc(var(--mh-unit) * 1.5);
+  font-size: 12px;
+  color: var(--mh-text-3);
+}
+
+.skill-picker {
+  position: relative;
+}
+
+.skill-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  width: 300px;
+  max-height: 320px;
+  overflow: auto;
+  padding: calc(var(--mh-unit) * 1.5);
+  border: 1px solid var(--mh-border);
+  border-radius: 10px;
+  background: var(--mh-surface-1);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 18%);
+}
+
+.skill-item {
+  display: flex;
+  justify-content: space-between;
+  gap: calc(var(--mh-unit) * 2);
+  width: 100%;
+}
+
+.skill-source {
+  color: var(--mh-text-3);
+  font-size: 11px;
+}
+
+.skill-empty,
+.skill-note {
+  padding: calc(var(--mh-unit) * 1.5);
+  color: var(--mh-text-3);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.approval-modal {
+  width: min(560px, calc(100vw - 48px));
+  max-height: calc(100vh - 80px);
+  overflow: auto;
+  padding: calc(var(--mh-unit) * 5);
+  border-radius: 14px;
+  background: var(--mh-surface-1);
+  box-shadow: 0 20px 60px rgb(0 0 0 / 28%);
+}
+
+.approval-modal h2 {
+  margin: 0 0 calc(var(--mh-unit) * 2);
+  font-size: 18px;
+}
+
+.approval-tool {
+  margin: 0;
+  font-weight: 600;
+}
+
+.approval-name {
+  margin: calc(var(--mh-unit) * 0.5) 0 0;
+  color: var(--mh-text-3);
+  font-family: var(--mh-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+}
+
+.approval-preview {
+  max-height: 240px;
+}
+
+.approval-scopes {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--mh-unit) * 1.5);
+  margin: calc(var(--mh-unit) * 3) 0;
+  font-size: 13px;
+}
+
+.approval-scope {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--mh-unit) * 2);
+}
+
+.approval-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: calc(var(--mh-unit) * 2);
+  margin-top: calc(var(--mh-unit) * 3);
+}
+
+.approval-allow {
+  width: auto;
+  padding: 0 calc(var(--mh-unit) * 4);
+}
+
+.approval-note {
+  margin: calc(var(--mh-unit) * 3) 0 0;
+  color: var(--mh-text-3);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+/* Phase 5 settings panes (rebuild-defined). */
+.settings-panel {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--mh-unit) * 2.5);
+  max-width: 760px;
+}
+
+.settings-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--mh-border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.settings-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: calc(var(--mh-unit) * 3);
+  padding: calc(var(--mh-unit) * 2.5);
+  border-bottom: 1px solid var(--mh-border);
+}
+
+.settings-row:last-child {
+  border-bottom: 0;
+}
+
+.settings-row-title {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--mh-unit) * 1.5);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.settings-row-sub {
+  margin-top: 2px;
+  color: var(--mh-text-3);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.settings-row-actions {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--mh-unit) * 2);
+  flex-shrink: 0;
+}
+
+.settings-tag {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--mh-hover-fill);
+  color: var(--mh-text-3);
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: none;
+}
+
+.settings-check {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--mh-unit) * 1.5);
+  color: var(--mh-text-2);
+  font-size: 12px;
+}
+
+.settings-inline {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--mh-unit) * 2);
+}
+
+.settings-path {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-warnings {
+  color: var(--mh-text-3);
+  font-size: 12px;
+}
+
+.settings-warnings ul {
+  margin: calc(var(--mh-unit) * 1.5) 0 0;
+  padding-left: calc(var(--mh-unit) * 4);
+  line-height: 1.5;
+}
+
+.tool-picker-modal {
+  width: min(680px, calc(100vw - 48px));
+  max-height: calc(100vh - 80px);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--mh-unit) * 2);
+  overflow: auto;
+  padding: calc(var(--mh-unit) * 5);
+  border-radius: 14px;
+  background: var(--mh-surface-1);
+  box-shadow: 0 20px 60px rgb(0 0 0 / 28%);
+}
+
+.tool-picker-modal h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.tool-picker-list {
+  max-height: 360px;
+  overflow: auto;
+}
+
+.tool-picker-row {
+  align-items: center;
+  cursor: pointer;
+}

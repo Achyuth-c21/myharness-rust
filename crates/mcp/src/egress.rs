@@ -196,11 +196,9 @@ mod tests {
             env: BTreeMap::new(),
         };
         assert_eq!(policy.check_server(&stdio), Ok(()));
-        assert!(
-            policy
-                .check_server(&http("https://example.com/mcp"))
-                .is_err()
-        );
+        assert!(policy
+            .check_server(&http("https://example.com/mcp"))
+            .is_err());
     }
 
     #[test]

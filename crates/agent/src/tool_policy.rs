@@ -448,13 +448,20 @@ impl ApprovalStore {
         {
             return true;
         }
+        // A persistent grant is usable only while the host still allows
+        // persistent approvals. A scheduled task never inherits an
+        // interactive grant that has no expiry: its lifetime is separate and
+        // must be stated on the record.
+        if !context.persistent_allowed {
+            return false;
+        }
         let persistent_key = ArgumentKey {
             tool: tool.to_string(),
             arguments_fingerprint,
         };
-        self.persistent
-            .get(&persistent_key)
-            .is_some_and(|record| is_active(record, now))
+        self.persistent.get(&persistent_key).is_some_and(|record| {
+            is_active(record, now) && (!context.scheduled || record.expires_at.is_some())
+        })
     }
 
     /// Drop every expired grant.
@@ -473,6 +480,48 @@ impl ApprovalStore {
     pub fn clear_all(&mut self) {
         self.session.clear();
         self.persistent.clear();
+    }
+
+    /// Restore durable grants after a restart. Expired records and `Once`
+    /// records are skipped; the return value is the number restored. This is
+    /// a host-only operation, like [`grant`](Self::grant); a tool result has
+    /// no path to it.
+    pub fn restore(
+        &mut self,
+        records: impl IntoIterator<Item = ApprovalRecord>,
+        now: u64,
+    ) -> usize {
+        let mut restored = 0;
+        for record in records {
+            if record.scope == ApprovalScope::Once || !is_active(&record, now) {
+                continue;
+            }
+            match record.scope {
+                ApprovalScope::Session => {
+                    self.session.insert(
+                        SessionKey {
+                            session_id: record.session_id.clone(),
+                            tool: record.tool.clone(),
+                            arguments_fingerprint: record.arguments_fingerprint.clone(),
+                        },
+                        record,
+                    );
+                    restored += 1;
+                }
+                ApprovalScope::Persistent => {
+                    self.persistent.insert(
+                        ArgumentKey {
+                            tool: record.tool.clone(),
+                            arguments_fingerprint: record.arguments_fingerprint.clone(),
+                        },
+                        record,
+                    );
+                    restored += 1;
+                }
+                ApprovalScope::Once => {}
+            }
+        }
+        restored
     }
 
     /// Every stored grant, for the host's audit/session metadata write.

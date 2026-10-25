@@ -18,8 +18,12 @@
 //! - stdio and Streamable HTTP use `rmcp` 3.7. The legacy HTTP+SSE transport is
 //!   modelled but returns [`McpError::UnsupportedTransport`]: the current SDK
 //!   carries SSE inside Streamable HTTP (`docs/14` §9).
-//! - Tool execution, approval/policy, OAuth, skills, plugins, and renderer
-//!   commands are later Phase 5 slices. No UI claims them yet.
+//! - OAuth token storage/refresh, schema caching, and tool search are in this
+//!   crate; the production keychain/HTTP adapters live at the bridge boundary.
+//!   The shipped authorization-code flow was not captured, so a server that
+//!   needs it surfaces `NeedsAuth` rather than a fabricated login.
+//! - Tool execution is exposed by the agent crate through an executor adapter;
+//!   renderer commands and skills/plugins are separate Phase 5 slices.
 //! - Tool descriptions and schemas are untrusted input (`docs/12` §5.1). They
 //!   are size-limited here and never interpreted as instructions.
 //!
@@ -31,22 +35,31 @@ mod config;
 mod egress;
 mod error;
 mod manager;
+mod oauth;
+mod schema_cache;
+mod search;
 mod session;
 mod tool;
 
 pub use config::{
-    MAX_ERROR_MESSAGE_LEN, MAX_SERVER_NAME_LEN, MAX_TOOLS_PER_SERVER, MAX_TOOL_NAME_LEN,
-    MAX_TOOL_SCHEMA_BYTES, ServerConfig, validate_server_name, validate_tool_name,
+    validate_server_name, validate_tool_name, ServerConfig, MAX_ERROR_MESSAGE_LEN,
+    MAX_SERVER_NAME_LEN, MAX_TOOLS_PER_SERVER, MAX_TOOL_NAME_LEN, MAX_TOOL_SCHEMA_BYTES,
 };
 pub use egress::{EgressError, EgressPolicy};
 pub use error::{McpError, McpResult};
 pub use manager::{
     McpManager, ServerStatus, ServerView, ShutdownFailure, StartFailure, StartSummary,
 };
-pub use session::{
-    McpConnector, McpSession, RmcpConnector, ServerInfoSummary,
+pub use oauth::{
+    AuthError, McpAuthProvider, MemoryOAuthStore, OAuthConfig, OAuthError, OAuthHttp, OAuthManager,
+    OAuthStore, OAuthToken,
 };
+pub use schema_cache::{SchemaCache, CACHE_VERSION};
+pub use search::{
+    search_catalogs, search_tools, ToolSearchHit, DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT,
+};
+pub use session::{McpConnector, McpSession, RmcpConnector, ServerInfoSummary};
 pub use tool::{
-    ToolCallResult, ToolContent, ToolDefinition, ToolDescriptor, ToolSnapshot, namespaced_name,
-    split_namespaced,
+    namespaced_name, split_namespaced, ToolCallResult, ToolContent, ToolDefinition, ToolDescriptor,
+    ToolSnapshot,
 };

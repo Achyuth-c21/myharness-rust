@@ -183,10 +183,14 @@ impl<K: AuditKeyStore> SessionService<K> {
             }
         };
         let payload = serde_json::json!({ "event": "session.created" }).to_string();
-        if let Err(err) =
-            self.store
-                .append_audit(&row.id, "core", "session.created", None, payload.as_bytes(), &key)
-        {
+        if let Err(err) = self.store.append_audit(
+            &row.id,
+            "core",
+            "session.created",
+            None,
+            payload.as_bytes(),
+            &key,
+        ) {
             let _ = self.store.delete_session(&row.id);
             let _ = self.keys.remove(&row.id);
             return Err(err.into());
@@ -373,6 +377,71 @@ impl<K: AuditKeyStore> SessionService<K> {
             session_id,
             "core",
             "session.renamed",
+            None,
+            payload.as_bytes(),
+            &key,
+        )?;
+        Ok(())
+    }
+
+    /// Replace the renderer-safe session metadata and chain the change. The
+    /// audit payload names the changed keys, never their values, so a tool
+    /// list or approval reference cannot smuggle a secret into the chain.
+    pub fn set_extra(
+        &self,
+        session_id: &str,
+        extra: &serde_json::Value,
+    ) -> Result<(), SessionError> {
+        self.store.set_session_extra(session_id, extra)?;
+        let key = self.key(session_id)?;
+        let mut keys: Vec<&String> = extra
+            .as_object()
+            .map(|object| object.keys().collect())
+            .unwrap_or_default();
+        keys.sort();
+        let payload = serde_json::json!({
+            "event": "session.extra_updated",
+            "keys": keys,
+        })
+        .to_string();
+        self.store.append_audit(
+            session_id,
+            "core",
+            "session.extra_updated",
+            None,
+            payload.as_bytes(),
+            &key,
+        )?;
+        Ok(())
+    }
+
+    /// Chain one MCP approval decision. The argument fingerprint is a hash,
+    /// not the arguments; the chain records what was approved without storing
+    /// the call payload.
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_tool_approval(
+        &self,
+        session_id: &str,
+        tool: &str,
+        arguments_fingerprint: &str,
+        scope: &str,
+        granted_at: u64,
+        expires_at: Option<u64>,
+    ) -> Result<(), SessionError> {
+        let key = self.key(session_id)?;
+        let payload = serde_json::json!({
+            "event": "mcp.tool.approved",
+            "tool": tool,
+            "argumentsFingerprint": arguments_fingerprint,
+            "scope": scope,
+            "grantedAt": granted_at,
+            "expiresAt": expires_at,
+        })
+        .to_string();
+        self.store.append_audit(
+            session_id,
+            "core",
+            "mcp.tool.approved",
             None,
             payload.as_bytes(),
             &key,

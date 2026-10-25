@@ -30,6 +30,7 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::FixedOffset;
+use myharness_agent::tool_policy::{ApprovalRecord, ApprovalScope};
 use myharness_agent::{run_turn, AgentError, TurnContent, TurnInput, TurnRun};
 use myharness_provider_anthropic::AnthropicAdapter;
 use myharness_provider_bedrock::BedrockAdapter;
@@ -45,6 +46,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
+use crate::catalog::{CatalogRuntime, PluginsView, SkillsView};
+use crate::mcp::{ApprovalDecision, ToolRuntime};
 use crate::setup::{
     bridge_provider_error, bridge_secret_error, custom_headers_for_probe, first_probe_model,
     parse_probe_scheme, resolve_optional_probe_credential, resolve_probe_credential, BridgeError,
@@ -97,9 +100,10 @@ impl ProfileTargets {
 
 impl ChatTargetResolver for ProfileTargets {
     fn resolve(&self) -> Result<ChatTarget, BridgeError> {
-        let backend = self.backend.lock().map_err(|_| {
-            BridgeError::new("CONFIG_IO", "the configuration lock is unavailable")
-        })?;
+        let backend = self
+            .backend
+            .lock()
+            .map_err(|_| BridgeError::new("CONFIG_IO", "the configuration lock is unavailable"))?;
         backend.chat_target()
     }
 }
@@ -134,21 +138,13 @@ impl ConfigBackend {
 
         let (adapter, secret): (Box<dyn ProviderAdapter>, SecretString) = match provider {
             myharness_config::ProviderKind::Gateway => {
-                let base = optional_string(connection, "inferenceGatewayBaseUrl")?.ok_or_else(
-                    || {
-                        BridgeError::new(
-                            "CONFIG_VALIDATION",
-                            "the gateway base URL is required",
-                        )
-                    },
-                )?;
+                let base =
+                    optional_string(connection, "inferenceGatewayBaseUrl")?.ok_or_else(|| {
+                        BridgeError::new("CONFIG_VALIDATION", "the gateway base URL is required")
+                    })?;
                 let scheme = parse_probe_scheme(connection.get("inferenceGatewayAuthScheme"))?;
-                let secret = required_secret(
-                    connection,
-                    self.secrets(),
-                    "inferenceGatewayApiKey",
-                    true,
-                )?;
+                let secret =
+                    required_secret(connection, self.secrets(), "inferenceGatewayApiKey", true)?;
                 let adapter = GatewayAdapter::new(
                     GatewayClientConfig {
                         base_url: base,
@@ -183,12 +179,9 @@ impl ConfigBackend {
                 (Box::new(adapter), secret)
             }
             myharness_config::ProviderKind::Bedrock => {
-                let region = optional_string(connection, "inferenceBedrockRegion")?
-                    .ok_or_else(|| {
-                        BridgeError::new(
-                            "CONFIG_VALIDATION",
-                            "the Bedrock region is required",
-                        )
+                let region =
+                    optional_string(connection, "inferenceBedrockRegion")?.ok_or_else(|| {
+                        BridgeError::new("CONFIG_VALIDATION", "the Bedrock region is required")
                     })?;
                 let (runtime_base, control_base) =
                     match optional_string(connection, "inferenceBedrockBaseUrl")? {
@@ -224,12 +217,8 @@ impl ConfigBackend {
             myharness_config::ProviderKind::OpenAi => {
                 let base =
                     optional_string(connection, "inferenceOpenAiBaseUrl")?.unwrap_or_default();
-                let secret = optional_secret(
-                    connection,
-                    self.secrets(),
-                    "inferenceOpenAiApiKey",
-                    false,
-                )?;
+                let secret =
+                    optional_secret(connection, self.secrets(), "inferenceOpenAiApiKey", false)?;
                 let adapter = OpenAiCompatAdapter::new(
                     OpenAiClientConfig {
                         kind: AdapterKind::OpenAi,
@@ -245,20 +234,12 @@ impl ConfigBackend {
                 (Box::new(adapter), secret)
             }
             myharness_config::ProviderKind::Custom => {
-                let base = optional_string(connection, "inferenceCustomBaseUrl")?.ok_or_else(
-                    || {
-                        BridgeError::new(
-                            "CONFIG_VALIDATION",
-                            "the custom base URL is required",
-                        )
-                    },
-                )?;
-                let secret = optional_secret(
-                    connection,
-                    self.secrets(),
-                    "inferenceCustomApiKey",
-                    true,
-                )?;
+                let base =
+                    optional_string(connection, "inferenceCustomBaseUrl")?.ok_or_else(|| {
+                        BridgeError::new("CONFIG_VALIDATION", "the custom base URL is required")
+                    })?;
+                let secret =
+                    optional_secret(connection, self.secrets(), "inferenceCustomApiKey", true)?;
                 let adapter = OpenAiCompatAdapter::new(
                     OpenAiClientConfig {
                         kind: AdapterKind::Custom,
@@ -420,7 +401,9 @@ impl AuditKeyStore for KeyringAuditKeys {
             Ok(None) => Ok(None),
             Ok(Some(value)) => {
                 use secrecy::ExposeSecret;
-                hex_decode(value.expose_secret()).map(Some).ok_or(SessionError::AuditKeyStore)
+                hex_decode(value.expose_secret())
+                    .map(Some)
+                    .ok_or(SessionError::AuditKeyStore)
             }
             Err(_) => Err(SessionError::AuditKeyStore),
         }
@@ -463,7 +446,11 @@ fn hex_decode(text: &str) -> Option<[u8; 32]> {
 /// One command in the rebuild's `web.LocalAgentModeSessions` subset
 /// (`docs/18` §3.4/§4). The set is enumerated on purpose — no generic CRUD.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum ChatCommand {
     /// The sidebar/home list; `archived` narrows to one side.
     ListSessions {
@@ -477,7 +464,9 @@ pub enum ChatCommand {
         title: Option<String>,
     },
     /// The transcript, after crash recovery.
-    OpenSession { id: String },
+    OpenSession {
+        id: String,
+    },
     SendTurn {
         session_id: String,
         text: String,
@@ -485,10 +474,20 @@ pub enum ChatCommand {
         max_tokens: Option<u32>,
     },
     /// Idempotent: cancelling an idle session reports `stopped: false`.
-    StopTurn { session_id: String },
-    RenameSession { id: String, title: String },
-    ArchiveSession { id: String, archived: bool },
-    DeleteSession { id: String },
+    StopTurn {
+        session_id: String,
+    },
+    RenameSession {
+        id: String,
+        title: String,
+    },
+    ArchiveSession {
+        id: String,
+        archived: bool,
+    },
+    DeleteSession {
+        id: String,
+    },
     /// The Usage page. `utcOffsetMinutes` is minutes east of UTC, computed by
     /// the renderer from the device zone; absent falls back to the process
     /// zone.
@@ -498,14 +497,85 @@ pub enum ChatCommand {
         #[serde(default)]
         utc_offset_minutes: Option<i32>,
     },
+    /// Connected/failed MCP servers, redacted. Secrets never appear here.
+    McpStatus,
+    /// Live executable tools for the session tool picker. Cached-only tools
+    /// are excluded because they cannot execute.
+    McpTools,
+    /// Search live and cached tools. Cached hits are metadata only.
+    McpSearchTools {
+        query: String,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+    /// Freeze this session's tool set. Names must exist on a connected
+    /// server; a missing name fails before the selection is stored.
+    SetSessionTools {
+        session_id: String,
+        tools: Vec<String>,
+    },
+    /// Answer one `chat://tool-approval` event.
+    RespondToolApproval {
+        approval_id: String,
+        decision: ApprovalDecision,
+        #[serde(default)]
+        scope: Option<ApprovalScope>,
+    },
+    /// Retry one configured MCP server.
+    RetryMcpServer {
+        server: String,
+    },
+    /// Remove one server's stored OAuth token.
+    ForgetMcpOAuth {
+        server: String,
+    },
+    /// Bundled/user/org/plugin skill catalog.
+    ListSkills,
+    /// Build the structured instruction block for a skill. Selection does not
+    /// execute the skill and does not grant any tool approval.
+    SelectSkill {
+        name: String,
+    },
+    SetSkillEnabled {
+        name: String,
+        enabled: bool,
+    },
+    SetSkillCreationEnabled {
+        enabled: bool,
+    },
+    /// Installed plugins, their declared servers/skills, and signature state.
+    ListPlugins,
+    /// Install a local plugin directory. The path is absolute; signature
+    /// policy is read from plugin settings.
+    InstallPlugin {
+        path: String,
+    },
+    UninstallPlugin {
+        name: String,
+    },
+    SetPluginEnabled {
+        name: String,
+        enabled: bool,
+    },
+    SetPluginSignaturePolicy {
+        policy: myharness_plugins::SignaturePolicy,
+    },
 }
 
 /// One command's answer.
 #[derive(Debug, Clone, Serialize)]
-#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum ChatResponse {
-    Sessions { sessions: Vec<SessionRow> },
-    Session { session: SessionView },
+    Sessions {
+        sessions: Vec<SessionRow>,
+    },
+    Session {
+        session: SessionView,
+    },
     Turn {
         session_id: String,
         user_turn: TurnSummary,
@@ -513,9 +583,49 @@ pub enum ChatResponse {
         stop_reason: Option<String>,
         usage: Option<Value>,
     },
-    Stopped { stopped: bool },
+    /// A turn that used at least one tool. Every assistant/tool row is
+    /// included in order; the renderer can rebuild the transcript segment
+    /// without a second open.
+    ToolTurn {
+        session_id: String,
+        user_turn: TurnSummary,
+        assistant_turns: Vec<TurnSummary>,
+        tool_turns: Vec<TurnSummary>,
+        stop_reason: Option<String>,
+        usage: Option<Value>,
+        /// Non-fatal audit/persistence warnings. Empty in the normal case.
+        warnings: Vec<String>,
+    },
+    McpStatus {
+        servers: Vec<myharness_mcp::ServerView>,
+        warnings: Vec<String>,
+    },
+    ToolSearch {
+        hits: Vec<myharness_mcp::ToolSearchHit>,
+        enabled: bool,
+    },
+    McpTools {
+        tools: Vec<myharness_mcp::ToolDescriptor>,
+    },
+    Skills {
+        view: SkillsView,
+    },
+    SkillSelection {
+        selection: myharness_skills::SkillSelection,
+    },
+    Plugins {
+        view: PluginsView,
+    },
+    PluginInstalled {
+        plugin: myharness_plugins::PluginView,
+    },
+    Stopped {
+        stopped: bool,
+    },
     Ack,
-    Usage { summary: UsageSummary },
+    Usage {
+        summary: UsageSummary,
+    },
     Error {
         error: BridgeError,
         /// True when the user turn was already persisted before the failure,
@@ -588,6 +698,8 @@ pub struct ChatService<K: AuditKeyStore, R: ChatTargetResolver> {
     sessions: SessionService<K>,
     targets: R,
     running: Mutex<HashMap<String, CancellationToken>>,
+    tools: Option<std::sync::Arc<ToolRuntime>>,
+    catalog: Option<std::sync::Arc<CatalogRuntime>>,
 }
 
 impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
@@ -596,12 +708,32 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
             sessions,
             targets,
             running: Mutex::new(HashMap::new()),
+            tools: None,
+            catalog: None,
         }
+    }
+
+    /// Attach the MCP/tool runtime. Without it, sends remain tool-free and
+    /// every MCP command is an explicit `UNSUPPORTED`.
+    pub fn with_tools(mut self, tools: std::sync::Arc<ToolRuntime>) -> ChatService<K, R> {
+        self.tools = Some(tools);
+        self
+    }
+
+    /// Attach the skills/plugins catalog.
+    pub fn with_catalog(mut self, catalog: std::sync::Arc<CatalogRuntime>) -> ChatService<K, R> {
+        self.catalog = Some(catalog);
+        self
     }
 
     /// The underlying session service (diagnostics and tests).
     pub fn sessions(&self) -> &SessionService<K> {
         &self.sessions
+    }
+
+    /// The attached tool runtime, if any.
+    pub fn tools(&self) -> Option<&std::sync::Arc<ToolRuntime>> {
+        self.tools.as_ref()
     }
 }
 
@@ -710,7 +842,11 @@ async fn run<K: AuditKeyStore, R: ChatTargetResolver>(
             session_id,
             text,
             max_tokens,
-        } => service.send_turn(&session_id, &text, max_tokens, observer).await,
+        } => {
+            service
+                .send_turn(&session_id, &text, max_tokens, observer)
+                .await
+        }
         ChatCommand::StopTurn { session_id } => {
             validate_session_id(&session_id)?;
             let stopped = service.stop_turn(&session_id)?;
@@ -750,16 +886,337 @@ async fn run<K: AuditKeyStore, R: ChatTargetResolver>(
                 )));
             }
             service.sessions.delete(&id).map_err(session_failure)?;
+            if let Some(runtime) = &service.tools {
+                runtime.clear_session(&id).await;
+            }
             Ok(ChatResponse::Ack)
         }
         ChatCommand::UsageSummary {
             days,
             utc_offset_minutes,
         } => service.usage(days, utc_offset_minutes),
+        ChatCommand::McpStatus => service.mcp_status().await,
+        ChatCommand::McpTools => service.mcp_tools().await,
+        ChatCommand::McpSearchTools { query, limit } => {
+            service.mcp_search_tools(&query, limit).await
+        }
+        ChatCommand::SetSessionTools { session_id, tools } => {
+            service.set_session_tools(&session_id, tools).await
+        }
+        ChatCommand::RespondToolApproval {
+            approval_id,
+            decision,
+            scope,
+        } => service.respond_tool_approval(&approval_id, decision, scope),
+        ChatCommand::RetryMcpServer { server } => service.retry_mcp_server(&server).await,
+        ChatCommand::ForgetMcpOAuth { server } => service.forget_mcp_oauth(&server),
+        ChatCommand::ListSkills => service.list_skills(),
+        ChatCommand::SelectSkill { name } => service.select_skill(&name),
+        ChatCommand::SetSkillEnabled { name, enabled } => service.set_skill_enabled(&name, enabled),
+        ChatCommand::SetSkillCreationEnabled { enabled } => {
+            service.set_skill_creation_enabled(enabled)
+        }
+        ChatCommand::ListPlugins => service.list_plugins(),
+        ChatCommand::InstallPlugin { path } => service.install_plugin(&path),
+        ChatCommand::UninstallPlugin { name } => service.uninstall_plugin(&name),
+        ChatCommand::SetPluginEnabled { name, enabled } => {
+            service.set_plugin_enabled(&name, enabled)
+        }
+        ChatCommand::SetPluginSignaturePolicy { policy } => {
+            service.set_plugin_signature_policy(policy)
+        }
     }
 }
 
 impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
+    fn catalog(&self) -> Result<&std::sync::Arc<CatalogRuntime>, ChatFailure> {
+        self.catalog.as_ref().ok_or_else(|| {
+            ChatFailure::before_send(BridgeError::new(
+                "UNSUPPORTED",
+                "skills and plugins are not configured in this build",
+            ))
+        })
+    }
+
+    fn list_skills(&self) -> Result<ChatResponse, ChatFailure> {
+        Ok(ChatResponse::Skills {
+            view: self.catalog()?.skills(),
+        })
+    }
+
+    fn select_skill(&self, name: &str) -> Result<ChatResponse, ChatFailure> {
+        if name.is_empty() || name.chars().count() > 128 || name.contains('\0') {
+            return Err(ChatFailure::before_send(BridgeError::new(
+                "CONFIG_VALIDATION",
+                "the skill name is invalid",
+            )));
+        }
+        let selection = self.catalog()?.select_skill(name).map_err(|message| {
+            ChatFailure::before_send(BridgeError::new("SKILL_UNAVAILABLE", message))
+        })?;
+        Ok(ChatResponse::SkillSelection { selection })
+    }
+
+    fn set_skill_enabled(&self, name: &str, enabled: bool) -> Result<ChatResponse, ChatFailure> {
+        if name.is_empty() || name.chars().count() > 128 || name.contains('\0') {
+            return Err(ChatFailure::before_send(BridgeError::new(
+                "CONFIG_VALIDATION",
+                "the skill name is invalid",
+            )));
+        }
+        self.catalog()?
+            .set_skill_enabled(name, enabled)
+            .map_err(|message| {
+                ChatFailure::before_send(BridgeError::new("SKILL_UNAVAILABLE", message))
+            })?;
+        self.list_skills()
+    }
+
+    fn set_skill_creation_enabled(&self, enabled: bool) -> Result<ChatResponse, ChatFailure> {
+        self.catalog()?
+            .set_skill_creation_enabled(enabled)
+            .map_err(|message| ChatFailure::before_send(BridgeError::new("CONFIG_IO", message)))?;
+        self.list_skills()
+    }
+
+    fn list_plugins(&self) -> Result<ChatResponse, ChatFailure> {
+        Ok(ChatResponse::Plugins {
+            view: self.catalog()?.plugins(),
+        })
+    }
+
+    fn install_plugin(&self, path: &str) -> Result<ChatResponse, ChatFailure> {
+        if path.is_empty() || path.chars().count() > 4096 || path.contains('\0') {
+            return Err(ChatFailure::before_send(BridgeError::new(
+                "CONFIG_VALIDATION",
+                "the plugin path is invalid",
+            )));
+        }
+        let plugin = self.catalog()?.install_plugin(path).map_err(|message| {
+            ChatFailure::before_send(BridgeError::new("PLUGIN_INSTALL_FAILED", message))
+        })?;
+        Ok(ChatResponse::PluginInstalled { plugin })
+    }
+
+    fn uninstall_plugin(&self, name: &str) -> Result<ChatResponse, ChatFailure> {
+        if name.is_empty() || name.chars().count() > 128 || name.contains('\0') {
+            return Err(ChatFailure::before_send(BridgeError::new(
+                "CONFIG_VALIDATION",
+                "the plugin name is invalid",
+            )));
+        }
+        self.catalog()?.uninstall_plugin(name).map_err(|message| {
+            ChatFailure::before_send(BridgeError::new("PLUGIN_UNINSTALL_FAILED", message))
+        })?;
+        self.list_plugins()
+    }
+
+    fn set_plugin_enabled(&self, name: &str, enabled: bool) -> Result<ChatResponse, ChatFailure> {
+        if name.is_empty() || name.chars().count() > 128 || name.contains('\0') {
+            return Err(ChatFailure::before_send(BridgeError::new(
+                "CONFIG_VALIDATION",
+                "the plugin name is invalid",
+            )));
+        }
+        self.catalog()?
+            .set_plugin_enabled(name, enabled)
+            .map_err(|message| {
+                ChatFailure::before_send(BridgeError::new("PLUGIN_UNAVAILABLE", message))
+            })?;
+        self.list_plugins()
+    }
+
+    fn set_plugin_signature_policy(
+        &self,
+        policy: myharness_plugins::SignaturePolicy,
+    ) -> Result<ChatResponse, ChatFailure> {
+        self.catalog()?
+            .set_signature_policy(policy)
+            .map_err(|message| ChatFailure::before_send(BridgeError::new("CONFIG_IO", message)))?;
+        self.list_plugins()
+    }
+
+    async fn mcp_status(&self) -> Result<ChatResponse, ChatFailure> {
+        let Some(runtime) = &self.tools else {
+            return Ok(ChatResponse::McpStatus {
+                servers: Vec::new(),
+                warnings: vec!["MCP is not configured in this build".to_string()],
+            });
+        };
+        let (servers, warnings) = runtime.statuses().await;
+        Ok(ChatResponse::McpStatus { servers, warnings })
+    }
+
+    async fn mcp_tools(&self) -> Result<ChatResponse, ChatFailure> {
+        let Some(runtime) = &self.tools else {
+            return Err(ChatFailure::before_send(BridgeError::new(
+                "UNSUPPORTED",
+                "MCP is not configured in this build",
+            )));
+        };
+        Ok(ChatResponse::McpTools {
+            tools: runtime.list_tools().await,
+        })
+    }
+
+    async fn mcp_search_tools(
+        &self,
+        query: &str,
+        limit: Option<usize>,
+    ) -> Result<ChatResponse, ChatFailure> {
+        let Some(runtime) = &self.tools else {
+            return Err(ChatFailure::before_send(BridgeError::new(
+                "UNSUPPORTED",
+                "MCP is not configured in this build",
+            )));
+        };
+        if !runtime.tool_search_enabled() {
+            return Err(ChatFailure::before_send(BridgeError::new(
+                "UNSUPPORTED",
+                "tool search is disabled; enable it in MCP settings",
+            )));
+        }
+        if query.chars().count() > 200 {
+            return Err(ChatFailure::before_send(BridgeError::new(
+                "CONFIG_VALIDATION",
+                "the tool search query is too long",
+            )));
+        }
+        let hits = runtime.search_tools(query, limit.unwrap_or(20)).await;
+        Ok(ChatResponse::ToolSearch {
+            hits,
+            enabled: true,
+        })
+    }
+
+    async fn set_session_tools(
+        &self,
+        session_id: &str,
+        tools: Vec<String>,
+    ) -> Result<ChatResponse, ChatFailure> {
+        validate_session_id(session_id)?;
+        let Some(runtime) = &self.tools else {
+            return Err(ChatFailure::before_send(BridgeError::new(
+                "UNSUPPORTED",
+                "MCP is not configured in this build",
+            )));
+        };
+        let mut seen = std::collections::BTreeSet::new();
+        for tool in &tools {
+            if tool.is_empty() || tool.chars().count() > 200 || tool.contains('\0') {
+                return Err(ChatFailure::before_send(BridgeError::new(
+                    "CONFIG_VALIDATION",
+                    "a tool name is empty, too long, or contains an unsafe character",
+                )));
+            }
+            if !seen.insert(tool.clone()) {
+                return Err(ChatFailure::before_send(BridgeError::new(
+                    "CONFIG_VALIDATION",
+                    "a tool name appears twice in the selection",
+                )));
+            }
+        }
+        let session = self
+            .sessions
+            .store()
+            .read_session(session_id)
+            .map_err(session_failure)?;
+        if session.surface != "chat" {
+            return Err(ChatFailure::before_send(BridgeError::new(
+                "CONFIG_VALIDATION",
+                "only a chat session can select MCP tools",
+            )));
+        }
+        if self.has_running_turn(session_id) {
+            return Err(ChatFailure::before_send(BridgeError::new(
+                "TURN_IN_PROGRESS",
+                "stop the running turn before changing its tools",
+            )));
+        }
+        // Validate the selection against the live catalog, persist it, then
+        // install the frozen snapshot. If persistence fails, the runtime still
+        // holds the previous snapshot and the stored selection stays in sync.
+        let snapshot = runtime
+            .prepare_session_tools(&tools)
+            .await
+            .map_err(|message| {
+                ChatFailure::before_send(BridgeError::new("MCP_TOOLS_UNAVAILABLE", message))
+            })?;
+        let mut extra = session.extra.clone();
+        if !extra.is_object() {
+            extra = serde_json::json!({});
+        }
+        extra["mcpTools"] = serde_json::json!(tools);
+        self.sessions
+            .set_extra(session_id, &extra)
+            .map_err(session_failure)?;
+        runtime
+            .install_snapshot(session_id, snapshot)
+            .map_err(|message| {
+                ChatFailure::new(BridgeError::new("SESSION_ERROR", message), false)
+            })?;
+        Ok(ChatResponse::Ack)
+    }
+
+    fn respond_tool_approval(
+        &self,
+        approval_id: &str,
+        decision: ApprovalDecision,
+        scope: Option<ApprovalScope>,
+    ) -> Result<ChatResponse, ChatFailure> {
+        let Some(runtime) = &self.tools else {
+            return Err(ChatFailure::before_send(BridgeError::new(
+                "UNSUPPORTED",
+                "MCP is not configured in this build",
+            )));
+        };
+        runtime
+            .prompt()
+            .respond(approval_id, decision, scope)
+            .map_err(|message| {
+                ChatFailure::before_send(BridgeError::new("APPROVAL_NOT_PENDING", message))
+            })?;
+        Ok(ChatResponse::Ack)
+    }
+
+    async fn retry_mcp_server(&self, server: &str) -> Result<ChatResponse, ChatFailure> {
+        let Some(runtime) = &self.tools else {
+            return Err(ChatFailure::before_send(BridgeError::new(
+                "UNSUPPORTED",
+                "MCP is not configured in this build",
+            )));
+        };
+        if server.is_empty() || server.chars().count() > 200 || server.contains('\0') {
+            return Err(ChatFailure::before_send(BridgeError::new(
+                "CONFIG_VALIDATION",
+                "the MCP server name is invalid",
+            )));
+        }
+        runtime.start_server(server).await.map_err(|message| {
+            ChatFailure::before_send(BridgeError::new("MCP_START_FAILED", message))
+        })?;
+        self.mcp_status().await
+    }
+
+    fn forget_mcp_oauth(&self, server: &str) -> Result<ChatResponse, ChatFailure> {
+        let Some(runtime) = &self.tools else {
+            return Err(ChatFailure::before_send(BridgeError::new(
+                "UNSUPPORTED",
+                "MCP is not configured in this build",
+            )));
+        };
+        if server.is_empty() || server.chars().count() > 200 || server.contains('\0') {
+            return Err(ChatFailure::before_send(BridgeError::new(
+                "CONFIG_VALIDATION",
+                "the MCP server name is invalid",
+            )));
+        }
+        runtime
+            .forget_oauth(server)
+            .map_err(|message| ChatFailure::before_send(BridgeError::new("MCP_OAUTH", message)))?;
+        Ok(ChatResponse::Ack)
+    }
+
     async fn send_turn(
         &self,
         session_id: &str,
@@ -789,7 +1246,10 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
         if session.surface != "chat" {
             return Err(ChatFailure::before_send(BridgeError::new(
                 "CONFIG_VALIDATION",
-                format!("session surface {:?} cannot be sent from the chat surface", session.surface),
+                format!(
+                    "session surface {:?} cannot be sent from the chat surface",
+                    session.surface
+                ),
             )));
         }
 
@@ -844,6 +1304,101 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
             session_id,
         };
 
+        let enabled = enabled_tools(&session.extra)?;
+        if !enabled.is_empty() {
+            let Some(runtime) = &self.tools else {
+                return Err(ChatFailure::before_send(BridgeError::new(
+                    "UNSUPPORTED",
+                    "this task has MCP tools selected, but MCP is not configured",
+                )));
+            };
+            // Capability gate before any tool schema reaches the provider
+            // (`AI-PROVIDER-05`): absence is unsupported, never optimistic.
+            let descriptors = target
+                .adapter
+                .list_models(&target.auth)
+                .await
+                .map_err(|error| ChatFailure::before_send(bridge_provider_error(error)))?;
+            let capabilities = target.adapter.capabilities(&target.model, &descriptors);
+            if !capabilities.tools_supported {
+                return Err(ChatFailure::before_send(BridgeError::new(
+                    "MODEL_UNSUPPORTED",
+                    "the selected model does not advertise tool use; no tools were sent",
+                )));
+            }
+            let snapshot = runtime
+                .snapshot_for(session_id, &enabled)
+                .await
+                .map_err(|message| {
+                    ChatFailure::before_send(BridgeError::new("MCP_TOOLS_UNAVAILABLE", message))
+                })?;
+            let mut input = TurnInput::text(target.model.clone(), max_tokens, text);
+            input.tools = ToolRuntime::tool_specs(&snapshot);
+            let mut turn = TurnRun::new(
+                &self.sessions,
+                target.adapter.as_ref(),
+                &target.auth,
+                session_id,
+                input,
+                &cancel,
+            );
+            if let Some(observer) = observer {
+                turn = turn.with_observer(observer);
+            }
+            let before = runtime.approval_records().await;
+            let result = runtime
+                .run_turn(turn, &snapshot, session_id, false, unix_now())
+                .await;
+            let after = runtime.approval_records().await;
+            let warnings = self.record_approvals(session_id, &before, &after);
+            return match result {
+                Ok(outcome) => {
+                    let usage = serde_json::to_value(crate::mcp::aggregate_usage(&outcome)).ok();
+                    let stop_reason = Some(outcome.final_stop_reason.wire().to_string());
+                    let user_turn = turn_summary(self.sessions.store(), outcome.user_turn)?;
+                    if outcome.tool_turns.is_empty() {
+                        let assistant_turn =
+                            outcome.assistant_turns.into_iter().last().ok_or_else(|| {
+                                ChatFailure::new(
+                                    BridgeError::new(
+                                        "PROVIDER_ERROR",
+                                        "the tool turn produced no assistant row",
+                                    ),
+                                    true,
+                                )
+                            })?;
+                        return Ok(ChatResponse::Turn {
+                            session_id: session_id.to_string(),
+                            user_turn,
+                            assistant_turn: turn_summary(self.sessions.store(), assistant_turn)?,
+                            stop_reason,
+                            usage,
+                        });
+                    }
+                    let assistant_turns = outcome
+                        .assistant_turns
+                        .into_iter()
+                        .map(|turn| turn_summary(self.sessions.store(), turn))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let tool_turns = outcome
+                        .tool_turns
+                        .into_iter()
+                        .map(|turn| turn_summary(self.sessions.store(), turn))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    Ok(ChatResponse::ToolTurn {
+                        session_id: session_id.to_string(),
+                        user_turn,
+                        assistant_turns,
+                        tool_turns,
+                        stop_reason,
+                        usage,
+                        warnings,
+                    })
+                }
+                Err(error) => Err(agent_failure(error)),
+            };
+        }
+
         let input = TurnInput::text(target.model.clone(), max_tokens, text);
         let mut turn = TurnRun::new(
             &self.sessions,
@@ -856,9 +1411,7 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
         if let Some(observer) = observer {
             turn = turn.with_observer(observer);
         }
-        let result = run_turn(turn).await;
-
-        match result {
+        match run_turn(turn).await {
             Ok(outcome) => Ok(ChatResponse::Turn {
                 session_id: session_id.to_string(),
                 user_turn: turn_summary(self.sessions.store(), outcome.user_turn)?,
@@ -866,38 +1419,59 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
                 stop_reason: Some(outcome.stop_reason.wire().to_string()),
                 usage: serde_json::to_value(&outcome.usage).ok(),
             }),
-            Err(AgentError::Provider(error)) => Err(ChatFailure::new(
-                bridge_provider_error(error),
-                true,
-            )),
-            Err(AgentError::Cancelled) => Err(ChatFailure::new(
-                BridgeError::new("TURN_CANCELLED", "the turn was cancelled"),
-                true,
-            )),
-            Err(AgentError::CancelledBeforeSend) => Err(ChatFailure::before_send(
-                BridgeError::new("TURN_CANCELLED", "the turn was cancelled before it started"),
-            )),
-            Err(AgentError::Protocol(message)) => Err(ChatFailure::new(
-                BridgeError::new("PROVIDER_ERROR", message),
-                true,
-            )),
-            Err(AgentError::Validation(message)) => Err(ChatFailure::before_send(
-                BridgeError::new("CONFIG_VALIDATION", message),
-            )),
-            Err(AgentError::Unsupported(message)) => Err(ChatFailure::before_send(
-                BridgeError::new("UNSUPPORTED", message),
-            )),
-            Err(AgentError::ProviderMismatch {
-                model_provider,
-                adapter,
-            }) => Err(ChatFailure::before_send(BridgeError::new(
-                "CONFIG_VALIDATION",
-                format!("the model belongs to provider {model_provider}, but this adapter is {adapter}"),
-            ))),
-            Err(error @ AgentError::Transcript(_)) => Err(session_failure(error)),
-            Err(error @ AgentError::Session(_)) => Err(session_failure(error)),
-            Err(error @ AgentError::Store(_)) => Err(session_failure(error)),
+            Err(error) => Err(agent_failure(error)),
         }
+    }
+
+    /// Persist approval references and chain only the newly granted records.
+    /// Failures are warnings on the completed response, never a reason to
+    /// discard a turn whose rows are already durable.
+    fn record_approvals(
+        &self,
+        session_id: &str,
+        before: &[ApprovalRecord],
+        after: &[ApprovalRecord],
+    ) -> Vec<String> {
+        let mut warnings = Vec::new();
+        let session_records: Vec<ApprovalRecord> = after
+            .iter()
+            .filter(|record| record.session_id == session_id)
+            .cloned()
+            .collect();
+        match self.sessions.store().read_session(session_id) {
+            Ok(session) => {
+                let mut extra = session.extra.clone();
+                if !extra.is_object() {
+                    extra = serde_json::json!({});
+                }
+                extra["mcpApprovals"] = serde_json::to_value(&session_records)
+                    .unwrap_or_else(|_| serde_json::json!([]));
+                if let Err(error) = self.sessions.set_extra(session_id, &extra) {
+                    warnings.push(format!("MCP approvals could not be stored: {error}"));
+                }
+            }
+            Err(error) => warnings.push(format!("MCP approvals could not be read: {error}")),
+        }
+        for record in after
+            .iter()
+            .filter(|record| !before.contains(record) && record.session_id == session_id)
+        {
+            let scope = serde_json::to_value(record.scope)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_string))
+                .unwrap_or_else(|| format!("{:?}", record.scope));
+            if let Err(error) = self.sessions.record_tool_approval(
+                session_id,
+                &record.tool,
+                &record.arguments_fingerprint,
+                &scope,
+                record.granted_at,
+                record.expires_at,
+            ) {
+                warnings.push(format!("an MCP approval could not be chained: {error}"));
+            }
+        }
+        warnings
     }
 
     fn has_running_turn(&self, session_id: &str) -> bool {
@@ -975,6 +1549,93 @@ fn validate_session_id(id: &str) -> Result<(), ChatFailure> {
             "the session id is not a uuid",
         ))
     })
+}
+
+fn agent_failure(error: AgentError) -> ChatFailure {
+    match error {
+        AgentError::Provider(error) => ChatFailure::new(bridge_provider_error(error), true),
+        AgentError::Cancelled => ChatFailure::new(
+            BridgeError::new("TURN_CANCELLED", "the turn was cancelled"),
+            true,
+        ),
+        AgentError::CancelledBeforeSend => ChatFailure::before_send(BridgeError::new(
+            "TURN_CANCELLED",
+            "the turn was cancelled before it started",
+        )),
+        AgentError::Protocol(message) => {
+            ChatFailure::new(BridgeError::new("PROVIDER_ERROR", message), true)
+        }
+        AgentError::Validation(message) => {
+            ChatFailure::before_send(BridgeError::new("CONFIG_VALIDATION", message))
+        }
+        AgentError::Unsupported(message) => {
+            ChatFailure::before_send(BridgeError::new("UNSUPPORTED", message))
+        }
+        AgentError::ToolLoopLimit { rounds } => ChatFailure::new(
+            BridgeError::new(
+                "TOOL_LOOP_LIMIT",
+                format!("the tool loop reached its {rounds}-round limit"),
+            ),
+            true,
+        ),
+        AgentError::Approval(message) => {
+            ChatFailure::new(BridgeError::new("APPROVAL_FAILED", message), true)
+        }
+        AgentError::ProviderMismatch {
+            model_provider,
+            adapter,
+        } => ChatFailure::before_send(BridgeError::new(
+            "CONFIG_VALIDATION",
+            format!(
+                "the model belongs to provider {model_provider}, but this adapter is {adapter}"
+            ),
+        )),
+        AgentError::Transcript(_) | AgentError::Session(_) | AgentError::Store(_) => {
+            session_failure(error)
+        }
+    }
+}
+
+fn enabled_tools(extra: &Value) -> Result<Vec<String>, ChatFailure> {
+    let Some(value) = extra.get("mcpTools") else {
+        return Ok(Vec::new());
+    };
+    let Some(array) = value.as_array() else {
+        return Err(ChatFailure::before_send(BridgeError::new(
+            "CONFIG_VALIDATION",
+            "the session's mcpTools value is not an array",
+        )));
+    };
+    if array.len() > 4096 {
+        return Err(ChatFailure::before_send(BridgeError::new(
+            "CONFIG_VALIDATION",
+            "the session selects too many MCP tools",
+        )));
+    }
+    array
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .filter(|name| {
+                    !name.is_empty() && name.chars().count() <= 200 && !name.contains('\0')
+                })
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    ChatFailure::before_send(BridgeError::new(
+                        "CONFIG_VALIDATION",
+                        "the session has an invalid MCP tool name",
+                    ))
+                })
+        })
+        .collect()
+}
+
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
 }
 
 fn turn_summary(store: &Store, turn: TurnRow) -> Result<TurnSummary, ChatFailure> {

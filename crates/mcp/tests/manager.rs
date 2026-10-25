@@ -11,11 +11,11 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use myharness_mcp::{
-    EgressPolicy, MAX_TOOL_SCHEMA_BYTES, McpConnector, McpError, McpManager, McpResult,
-    McpSession, ServerConfig, ServerInfoSummary, ToolCallResult, ToolContent, ToolDefinition,
-    namespaced_name,
+    namespaced_name, EgressPolicy, McpConnector, McpError, McpManager, McpResult, McpSession,
+    ServerConfig, ServerInfoSummary, ToolCallResult, ToolContent, ToolDefinition,
+    MAX_TOOL_SCHEMA_BYTES,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 #[derive(Clone)]
 enum MockResult {
@@ -34,6 +34,7 @@ struct MockConnector {
     call_result: Mutex<ToolCallResult>,
     call_delay: Mutex<Option<Duration>>,
     connect_delays: Mutex<HashMap<String, Duration>>,
+    seen_configs: Arc<Mutex<Vec<(String, ServerConfig)>>>,
 }
 
 impl Default for MockConnector {
@@ -46,6 +47,7 @@ impl Default for MockConnector {
             call_result: Mutex::new(ToolCallResult::text("ok")),
             call_delay: Mutex::new(None),
             connect_delays: Mutex::new(HashMap::new()),
+            seen_configs: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -56,6 +58,10 @@ impl MockConnector {
             .lock()
             .expect("mock results lock")
             .insert(server.to_string(), result);
+    }
+
+    fn seen_configs(&self) -> Vec<(String, ServerConfig)> {
+        self.seen_configs.lock().expect("seen configs lock").clone()
     }
 }
 
@@ -70,12 +76,12 @@ struct MockSession {
 
 #[async_trait]
 impl McpConnector for MockConnector {
-    async fn connect(
-        &self,
-        server: &str,
-        _config: &ServerConfig,
-    ) -> McpResult<Box<dyn McpSession>> {
+    async fn connect(&self, server: &str, config: &ServerConfig) -> McpResult<Box<dyn McpSession>> {
         self.connects.fetch_add(1, Ordering::SeqCst);
+        self.seen_configs
+            .lock()
+            .expect("seen configs lock")
+            .push((server.to_string(), config.clone()));
         let delay = self
             .connect_delays
             .lock()
@@ -199,6 +205,21 @@ fn duplicate_and_invalid_server_names_are_refused() {
         manager.add_server("", stdio_config()),
         Err(McpError::InvalidServerName(_))
     ));
+}
+
+#[tokio::test]
+async fn a_server_that_repeats_a_tool_name_is_refused_as_a_whole() {
+    let (mut manager, connector) = manager();
+    manager.add_server("alpha", stdio_config()).unwrap();
+    connector.add("alpha", connected(vec![tool("a"), tool("a")]));
+    assert!(manager.start("alpha").await.is_err());
+    let status = manager.statuses().into_iter().next().unwrap();
+    assert!(matches!(
+        status.status,
+        myharness_mcp::ServerStatus::Failed { .. }
+    ));
+    assert_eq!(connector.shutdowns.load(Ordering::SeqCst), 1);
+    assert!(manager.list_tools().is_empty());
 }
 
 #[tokio::test]
@@ -468,8 +489,8 @@ async fn egress_allows_an_approved_http_host() {
 async fn egress_does_not_inspect_stdio() {
     let connector = Arc::new(MockConnector::default());
     connector.add("local", connected(vec![tool("a")]));
-    let mut manager = McpManager::with_connector(connector.clone())
-        .with_egress(EgressPolicy::deny_all());
+    let mut manager =
+        McpManager::with_connector(connector.clone()).with_egress(EgressPolicy::deny_all());
     manager.add_server("local", stdio_config()).unwrap();
 
     manager.start("local").await.unwrap();
@@ -486,8 +507,8 @@ async fn start_timeout_does_not_block_the_next_server() {
         .insert("slow".to_string(), Duration::from_millis(100));
     connector.add("fast", connected(vec![tool("b")]));
     connector.add("slow", connected(vec![tool("a")]));
-    let mut manager = McpManager::with_connector(connector)
-        .with_start_timeout(Some(Duration::from_millis(10)));
+    let mut manager =
+        McpManager::with_connector(connector).with_start_timeout(Some(Duration::from_millis(10)));
     manager.add_server("fast", stdio_config()).unwrap();
     manager.add_server("slow", stdio_config()).unwrap();
 
@@ -598,4 +619,106 @@ async fn unknown_and_removed_servers_are_reported() {
         manager.remove_server("alpha").await,
         Err(McpError::UnknownServer(_))
     ));
+}
+
+struct FixedAuth {
+    result: Result<Option<(String, String)>, myharness_mcp::AuthError>,
+}
+
+#[async_trait]
+impl myharness_mcp::McpAuthProvider for FixedAuth {
+    async fn authorization_header(
+        &self,
+        _server: &str,
+    ) -> Result<Option<(String, String)>, myharness_mcp::AuthError> {
+        self.result.clone()
+    }
+}
+
+#[tokio::test]
+async fn needs_auth_is_a_distinct_status_and_never_connects() {
+    let (mut manager, connector) = manager();
+    manager
+        .add_server("alpha", http_config("https://mcp.example.test"))
+        .unwrap();
+    let manager = manager.with_auth_provider(Arc::new(FixedAuth {
+        result: Err(myharness_mcp::AuthError::NeedsAuth {
+            server: "alpha".into(),
+            message: "OAuth authorization is required".into(),
+        }),
+    }));
+    let mut manager = manager;
+    let error = manager.start("alpha").await.expect_err("needs auth");
+    assert!(matches!(error, McpError::NeedsAuth { .. }));
+    assert!(connector.seen_configs().is_empty());
+    let view = manager.statuses().into_iter().next().unwrap();
+    assert!(matches!(
+        view.status,
+        myharness_mcp::ServerStatus::NeedsAuth { .. }
+    ));
+}
+
+#[tokio::test]
+async fn an_oauth_header_is_injected_and_an_explicit_header_wins() {
+    let (mut first_manager, connector) = manager();
+    first_manager
+        .add_server("alpha", http_config("https://mcp.example.test"))
+        .unwrap();
+    connector.add("alpha", connected(vec![tool("a")]));
+    let mut auth_manager = first_manager.with_auth_provider(Arc::new(FixedAuth {
+        result: Ok(Some(("Authorization".into(), "Bearer token".into()))),
+    }));
+    auth_manager.start("alpha").await.unwrap();
+    let seen = connector.seen_configs();
+    match &seen[0].1 {
+        ServerConfig::Http { headers, .. } => {
+            assert_eq!(
+                headers.get("Authorization").map(String::as_str),
+                Some("Bearer token")
+            );
+        }
+        other => panic!("expected HTTP config, got {other:?}"),
+    }
+
+    let (mut manager, connector) = manager();
+    let mut config = http_config("https://mcp.example.test");
+    if let ServerConfig::Http { headers, .. } = &mut config {
+        headers.insert("Authorization".into(), "Bearer explicit".into());
+    }
+    manager.add_server("alpha", config).unwrap();
+    connector.add("alpha", connected(vec![tool("a")]));
+    let mut auth_manager = manager.with_auth_provider(Arc::new(FixedAuth {
+        result: Ok(Some(("Authorization".into(), "Bearer oauth".into()))),
+    }));
+    auth_manager.start("alpha").await.unwrap();
+    let seen = connector.seen_configs();
+    match &seen[0].1 {
+        ServerConfig::Http { headers, .. } => {
+            assert_eq!(
+                headers.get("Authorization").map(String::as_str),
+                Some("Bearer explicit")
+            );
+        }
+        other => panic!("expected HTTP config, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn the_schema_cache_is_written_on_start_and_searchable_before_connect() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("schemas.json");
+    let cache = myharness_mcp::SchemaCache::load(&path);
+    let (mut manager, connector) = manager();
+    manager.add_server("alpha", stdio_config()).unwrap();
+    let mut manager = manager.with_schema_cache(cache);
+    connector.add("alpha", connected(vec![tool("a"), tool("b")]));
+    manager.start("alpha").await.unwrap();
+
+    let loaded = myharness_mcp::SchemaCache::load(&path);
+    assert_eq!(loaded.all_tools().len(), 2);
+    let hits = manager.search_tools("a", 20, &std::collections::BTreeSet::new());
+    assert!(hits
+        .iter()
+        .any(|hit| hit.tool.name == "alpha:a" && !hit.cached));
+    assert!(manager.cache_warnings().is_empty());
 }

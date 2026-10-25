@@ -14,21 +14,24 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::config::{
-    MAX_TOOLS_PER_SERVER, MAX_TOOL_SCHEMA_BYTES, ServerConfig, validate_server_name,
-    validate_tool_name,
+    validate_server_name, validate_tool_name, ServerConfig, MAX_TOOLS_PER_SERVER,
+    MAX_TOOL_SCHEMA_BYTES,
 };
 use crate::egress::EgressPolicy;
 use crate::error::{McpError, McpResult};
-use crate::session::{
-    McpConnector, McpSession, RmcpConnector, ServerInfoSummary,
-};
-use crate::tool::{
-    ToolCallResult, ToolDefinition, ToolDescriptor, ToolSnapshot, split_namespaced,
-};
+use crate::oauth::{AuthError, McpAuthProvider};
+use crate::schema_cache::SchemaCache;
+use crate::search::{search_catalogs, ToolSearchHit};
+use crate::session::{McpConnector, McpSession, RmcpConnector, ServerInfoSummary};
+use crate::tool::{split_namespaced, ToolCallResult, ToolDefinition, ToolDescriptor, ToolSnapshot};
 
 /// Current state of one configured server.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "state", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "state",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum ServerStatus {
     /// Configured but not started, or explicitly shut down.
     Stopped,
@@ -44,6 +47,13 @@ pub enum ServerStatus {
     /// The last start attempt failed. The message is redacted and bounded.
     Failed {
         /// Redacted, bounded failure message.
+        message: String,
+    },
+    /// The server needs an OAuth authorization the app does not have.
+    /// Retrying without a token cannot succeed; the UI must offer a sign-in
+    /// path rather than a generic retry.
+    NeedsAuth {
+        /// Redacted, bounded message.
         message: String,
     },
 }
@@ -117,6 +127,9 @@ pub struct McpManager {
     servers: BTreeMap<String, ServerEntry>,
     start_timeout: Option<Duration>,
     egress: Option<EgressPolicy>,
+    auth: Option<Arc<dyn McpAuthProvider>>,
+    cache: Option<SchemaCache>,
+    cache_warnings: Vec<String>,
 }
 
 impl Default for McpManager {
@@ -138,6 +151,9 @@ impl McpManager {
             servers: BTreeMap::new(),
             start_timeout: None,
             egress: None,
+            auth: None,
+            cache: None,
+            cache_warnings: Vec::new(),
         }
     }
 
@@ -162,12 +178,55 @@ impl McpManager {
         self
     }
 
+    /// Supply the per-server OAuth/authorization provider. A provider error
+    /// is recorded per server; it never aborts the rest of startup.
+    pub fn with_auth_provider(mut self, auth: Arc<dyn McpAuthProvider>) -> Self {
+        self.auth = Some(auth);
+        self
+    }
+
+    /// Supply a loaded on-disk schema cache. Cache warnings are retained and
+    /// exposed through [`cache_warnings`](Self::cache_warnings).
+    pub fn with_schema_cache(mut self, cache: SchemaCache) -> Self {
+        self.cache_warnings.extend(cache.warnings().iter().cloned());
+        self.cache = Some(cache);
+        self
+    }
+
+    /// Warnings from the cache loader and from failed cache writes. They are
+    /// diagnostics, never reasons to block a server.
+    pub fn cache_warnings(&self) -> &[String] {
+        &self.cache_warnings
+    }
+
+    /// Cached tools for display/search, independent of live sessions.
+    pub fn cached_tools(&self) -> Vec<ToolDescriptor> {
+        self.cache
+            .as_ref()
+            .map(SchemaCache::all_tools)
+            .unwrap_or_default()
+    }
+
+    /// Search live tools first and cached-only tools second. A cached hit is
+    /// metadata only; it cannot execute until a live session exists.
+    pub fn search_tools(
+        &self,
+        query: &str,
+        limit: usize,
+        disabled: &BTreeSet<String>,
+    ) -> Vec<ToolSearchHit> {
+        let live = self.list_tools();
+        let live_names: BTreeSet<&str> = live.iter().map(|tool| tool.name.as_str()).collect();
+        let cached: Vec<ToolDescriptor> = self
+            .cached_tools()
+            .into_iter()
+            .filter(|tool| !live_names.contains(tool.name.as_str()))
+            .collect();
+        search_catalogs(&live, &cached, query, limit, disabled)
+    }
+
     /// Configure a server. Nothing is spawned until [`start`](Self::start).
-    pub fn add_server(
-        &mut self,
-        name: impl Into<String>,
-        config: ServerConfig,
-    ) -> McpResult<()> {
+    pub fn add_server(&mut self, name: impl Into<String>, config: ServerConfig) -> McpResult<()> {
         let name = name.into();
         validate_server_name(&name)?;
         config.validate()?;
@@ -212,6 +271,7 @@ impl McpManager {
         let connector = Arc::clone(&self.connector);
         let start_timeout = self.start_timeout;
         let egress = self.egress.clone();
+        let auth = self.auth.clone();
         let entry = self
             .servers
             .get_mut(server)
@@ -230,7 +290,45 @@ impl McpManager {
         entry.status = ServerStatus::Starting;
         entry.error = None;
         entry.tools.clear();
-        let config = entry.config.clone();
+        let mut config = entry.config.clone();
+
+        if let Some(auth) = auth {
+            if matches!(config, ServerConfig::Http { .. } | ServerConfig::Sse { .. }) {
+                let authorization = auth.authorization_header(server);
+                let authorization = match start_timeout {
+                    Some(limit) => match tokio::time::timeout(limit, authorization).await {
+                        Ok(result) => result,
+                        Err(_) => {
+                            return Err(record_failure(
+                                entry,
+                                server,
+                                &config,
+                                &format!(
+                                    "OAuth did not resolve within {} ms",
+                                    duration_millis(limit)
+                                ),
+                            ));
+                        }
+                    },
+                    None => authorization.await,
+                };
+                match authorization {
+                    Ok(Some((name, value))) => {
+                        if let Err(error) = insert_authorization_header(&mut config, &name, &value)
+                        {
+                            return Err(record_failure(entry, server, &config, &error));
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(AuthError::NeedsAuth { message, .. }) => {
+                        return Err(record_needs_auth(entry, server, &config, &message));
+                    }
+                    Err(AuthError::Failed { message, .. }) => {
+                        return Err(record_failure(entry, server, &config, &message));
+                    }
+                }
+            }
+        }
 
         if let Some(egress) = &egress {
             if let Err(error) = egress.check_server(&config) {
@@ -268,7 +366,7 @@ impl McpManager {
             Some(limit) => match tokio::time::timeout(limit, list_tools).await {
                 Ok(result) => result,
                 Err(_) => {
-                    let _ = session.shutdown().await;
+                    let _ = shutdown_bounded(server, &mut session).await;
                     return Err(record_failure(
                         entry,
                         server,
@@ -285,7 +383,7 @@ impl McpManager {
         let definitions = match definitions {
             Ok(definitions) => definitions,
             Err(error) => {
-                let _ = session.shutdown().await;
+                let _ = shutdown_bounded(server, &mut session).await;
                 return Err(record_failure(entry, server, &config, &error.to_string()));
             }
         };
@@ -293,19 +391,28 @@ impl McpManager {
         let tools = match validate_catalog(server, definitions) {
             Ok(tools) => tools,
             Err(message) => {
-                let _ = session.shutdown().await;
+                let _ = shutdown_bounded(server, &mut session).await;
                 return Err(record_failure(entry, server, &config, &message));
             }
         };
 
         let info = session.server_info();
         let tool_count = tools.len();
+        let cache_tools = tools.clone();
         entry.tools = tools;
         entry.session = Some(session);
         entry.status = ServerStatus::Connected {
             server: info,
             tool_count,
         };
+
+        if let Some(cache) = self.cache.as_mut() {
+            if let Err(error) = cache.replace_server(server, &cache_tools) {
+                self.cache_warnings.push(format!(
+                    "the MCP schema cache could not be written for {server}: {error}"
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -352,10 +459,8 @@ impl McpManager {
     /// dropped.
     pub fn snapshot(&self, enabled: &[String]) -> ToolSnapshot {
         let all = self.list_tools();
-        let by_name: BTreeMap<&str, &ToolDescriptor> = all
-            .iter()
-            .map(|tool| (tool.name.as_str(), tool))
-            .collect();
+        let by_name: BTreeMap<&str, &ToolDescriptor> =
+            all.iter().map(|tool| (tool.name.as_str(), tool)).collect();
         let mut seen = BTreeSet::new();
         let mut tools = Vec::new();
         let mut missing = Vec::new();
@@ -437,7 +542,7 @@ impl McpManager {
                 continue;
             };
             if let Some(mut session) = entry.session.take() {
-                if let Err(error) = session.shutdown().await {
+                if let Err(error) = shutdown_bounded(&name, &mut session).await {
                     failures.push(ShutdownFailure {
                         server: name.clone(),
                         message: entry.config.redact(&error.to_string()),
@@ -457,17 +562,82 @@ impl McpManager {
             return Err(McpError::UnknownServer(server.to_string()));
         };
         if let Some(mut session) = entry.session.take() {
-            session.shutdown().await.map_err(|error| McpError::Shutdown {
-                server: server.to_string(),
-                message: entry.config.redact(&error.to_string()),
-            })?;
+            shutdown_bounded(server, &mut session)
+                .await
+                .map_err(|error| McpError::Shutdown {
+                    server: server.to_string(),
+                    message: entry.config.redact(&error.to_string()),
+                })?;
+        }
+        if let Some(cache) = self.cache.as_mut() {
+            if let Err(error) = cache.remove_server(server) {
+                self.cache_warnings.push(format!(
+                    "the MCP schema cache could not remove {server}: {error}"
+                ));
+            }
         }
         Ok(())
     }
 }
 
+/// A shutdown is bounded so one wedged transport cannot stall `start_all` or
+/// app exit. The handle is dropped on timeout; it must not keep the manager
+/// alive, and the caller records the failure like any other shutdown error.
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+
+async fn shutdown_bounded(server: &str, session: &mut Box<dyn McpSession>) -> McpResult<()> {
+    match tokio::time::timeout(SHUTDOWN_TIMEOUT, session.shutdown()).await {
+        Ok(result) => result,
+        Err(_) => Err(McpError::Shutdown {
+            server: server.to_string(),
+            message: format!(
+                "the session did not shut down within {} ms",
+                duration_millis(SHUTDOWN_TIMEOUT)
+            ),
+        }),
+    }
+}
+
 fn duration_millis(duration: Duration) -> u64 {
     duration.as_millis().min(u128::from(u64::MAX)) as u64
+}
+
+fn record_needs_auth(
+    entry: &mut ServerEntry,
+    server: &str,
+    config: &ServerConfig,
+    message: &str,
+) -> McpError {
+    let message = config.redact(message);
+    entry.status = ServerStatus::NeedsAuth {
+        message: message.clone(),
+    };
+    entry.error = Some(message.clone());
+    McpError::NeedsAuth {
+        server: server.to_string(),
+        message,
+    }
+}
+
+fn insert_authorization_header(
+    config: &mut ServerConfig,
+    name: &str,
+    value: &str,
+) -> Result<(), String> {
+    let headers = match config {
+        ServerConfig::Http { headers, .. } | ServerConfig::Sse { headers, .. } => headers,
+        ServerConfig::Stdio { .. } => return Ok(()),
+    };
+    if headers
+        .keys()
+        .any(|existing| existing.eq_ignore_ascii_case(name))
+    {
+        // An explicit configured header wins; OAuth never overwrites a
+        // credential the operator supplied.
+        return Ok(());
+    }
+    headers.insert(name.to_string(), value.to_string());
+    config.validate().map_err(|error| error.to_string())
 }
 
 fn record_failure(
@@ -499,8 +669,15 @@ fn validate_catalog(
         ));
     }
     let mut tools = Vec::with_capacity(definitions.len());
+    let mut seen = std::collections::BTreeSet::new();
     for definition in definitions {
         validate_tool_name(&definition.name).map_err(|error| error.to_string())?;
+        if !seen.insert(definition.name.clone()) {
+            return Err(format!(
+                "the server returned the tool name {:?} more than once",
+                definition.name
+            ));
+        }
         let input_size = serde_json::to_vec(&definition.input_schema)
             .map_err(|error| error.to_string())?
             .len();

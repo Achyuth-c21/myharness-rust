@@ -42,6 +42,15 @@ pub enum McpError {
         message: String,
     },
 
+    /// The server needs OAuth authorization the app does not have.
+    #[error("MCP server {server} needs authorization: {message}")]
+    NeedsAuth {
+        /// Configured server name.
+        server: String,
+        /// Redacted, bounded message.
+        message: String,
+    },
+
     /// The SDK reported a protocol or transport failure.
     #[error("MCP protocol error: {0}")]
     Protocol(String),

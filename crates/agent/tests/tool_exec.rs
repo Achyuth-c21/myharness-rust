@@ -1,18 +1,18 @@
 //! Tool execution gate tests (`TEST-MCP-003/004/008`, `TEST-AI-019`).
 
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 use async_trait::async_trait;
 use myharness_agent::tool_exec::{
-    ToolCallRequest, ToolExecution, ToolExecutor, ToolOutput, execute_tool_call,
+    execute_tool_call, ToolCallRequest, ToolExecution, ToolExecutor, ToolOutput,
 };
 use myharness_agent::tool_policy::{
     ApprovalContext, ApprovalScope, ApprovalStore, ArgumentMatch, PolicyEffect, PolicyRule,
     ToolPattern, ToolPolicy,
 };
 use myharness_provider_sdk::ContentPart;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 struct MockExecutor {
     calls: AtomicUsize,

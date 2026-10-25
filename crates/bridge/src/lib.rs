@@ -15,8 +15,10 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod catalog;
 pub mod chat;
 pub mod helper;
+pub mod mcp;
 pub mod setup;
 
 /// Commands the renderer may invoke. The set grows phase by phase and must never become
@@ -49,12 +51,20 @@ pub fn dispatch(command: Command) -> Response {
 /// Everything else under `/` is either a UI asset or a client route with SPA fallback.
 pub fn is_api_path(path: &str) -> bool {
     const PREFIXES: [&str; 7] = [
-        "/api", "/edge-api", "/v1", "/v2", "/mcp-registry", "/sandbox", "/claudeai-rpc",
+        "/api",
+        "/edge-api",
+        "/v1",
+        "/v2",
+        "/mcp-registry",
+        "/sandbox",
+        "/claudeai-rpc",
     ];
     // Strip any query string first.
     let path = path.split('?').next().unwrap_or(path);
     let path = path.trim_end_matches('/');
-    PREFIXES.iter().any(|p| path == *p || path.starts_with(&format!("{p}/")))
+    PREFIXES
+        .iter()
+        .any(|p| path == *p || path.starts_with(&format!("{p}/")))
 }
 
 /// Typed 503 body for paths the endpoint table neither stubs nor forwards (TEST-ARCH-004,

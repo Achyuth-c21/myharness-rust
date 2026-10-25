@@ -88,8 +88,7 @@ pub trait McpSession: Send + Sync {
 pub trait McpConnector: Send + Sync {
     /// Connect and initialize. A failure is returned to the manager, which
     /// records it without aborting other servers.
-    async fn connect(&self, server: &str, config: &ServerConfig)
-        -> McpResult<Box<dyn McpSession>>;
+    async fn connect(&self, server: &str, config: &ServerConfig) -> McpResult<Box<dyn McpSession>>;
 }
 
 /// The production connector over `rmcp`.
@@ -117,10 +116,7 @@ pub struct RmcpSession {
 }
 
 impl RmcpSession {
-    fn new(
-        configured_name: String,
-        service: RunningService<RoleClient, MyHarnessClient>,
-    ) -> Self {
+    fn new(configured_name: String, service: RunningService<RoleClient, MyHarnessClient>) -> Self {
         let info = service
             .peer_info()
             .map(|peer| {
@@ -153,9 +149,10 @@ impl McpSession for RmcpSession {
     }
 
     async fn list_tools(&self) -> McpResult<Vec<ToolDefinition>> {
-        let service = self.service.as_ref().ok_or_else(|| {
-            McpError::Protocol("the MCP session is already closed".to_string())
-        })?;
+        let service = self
+            .service
+            .as_ref()
+            .ok_or_else(|| McpError::Protocol("the MCP session is already closed".to_string()))?;
         let tools = service
             .list_all_tools()
             .await
@@ -183,9 +180,10 @@ impl McpSession for RmcpSession {
     }
 
     async fn call_tool(&self, tool: &str, arguments: Value) -> McpResult<ToolCallResult> {
-        let service = self.service.as_ref().ok_or_else(|| {
-            McpError::Protocol("the MCP session is already closed".to_string())
-        })?;
+        let service = self
+            .service
+            .as_ref()
+            .ok_or_else(|| McpError::Protocol("the MCP session is already closed".to_string()))?;
         let arguments = match arguments {
             Value::Null => serde_json::Map::new(),
             Value::Object(arguments) => arguments,
@@ -196,9 +194,7 @@ impl McpSession for RmcpSession {
             }
         };
         let result = service
-            .call_tool(
-                CallToolRequestParams::new(tool.to_string()).with_arguments(arguments),
-            )
+            .call_tool(CallToolRequestParams::new(tool.to_string()).with_arguments(arguments))
             .await
             .map_err(|error| McpError::Protocol(error.to_string()))?;
         let content = result
@@ -285,17 +281,9 @@ fn map_content(tool: &str, block: ContentBlock) -> McpResult<ToolContent> {
 
 #[async_trait]
 impl McpConnector for RmcpConnector {
-    async fn connect(
-        &self,
-        server: &str,
-        config: &ServerConfig,
-    ) -> McpResult<Box<dyn McpSession>> {
+    async fn connect(&self, server: &str, config: &ServerConfig) -> McpResult<Box<dyn McpSession>> {
         match config {
-            ServerConfig::Stdio {
-                command,
-                args,
-                env,
-            } => {
+            ServerConfig::Stdio { command, args, env } => {
                 let mut child = tokio::process::Command::new(command);
                 child.args(args);
                 for (key, value) in env {

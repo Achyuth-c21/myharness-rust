@@ -97,7 +97,11 @@ impl ToolSnapshot {
 /// Text, images, audio, and embedded resources are preserved rather than
 /// flattened; `docs/13` Phase 5 requires tool-result images to survive.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum ToolContent {
     /// Plain text.
     Text {
@@ -194,7 +198,10 @@ mod tests {
 
     #[test]
     fn namespacing_keeps_a_colon_in_the_tool_name() {
-        assert_eq!(namespaced_name("github", "issues:read").unwrap(), "github:issues:read");
+        assert_eq!(
+            namespaced_name("github", "issues:read").unwrap(),
+            "github:issues:read"
+        );
         assert_eq!(
             split_namespaced("github:issues:read").unwrap(),
             ("github", "issues:read")

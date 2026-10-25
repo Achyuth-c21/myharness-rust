@@ -3,10 +3,10 @@
 use std::collections::BTreeMap;
 
 use myharness_agent::tool_policy::{
-    ApprovalContext, ApprovalError, ApprovalScope, ApprovalStore, ArgumentMatch, PolicyDecision,
-    PolicyEffect, PolicyRule, ToolPattern, ToolPolicy, evaluate,
+    evaluate, ApprovalContext, ApprovalError, ApprovalRecord, ApprovalScope, ApprovalStore,
+    ArgumentMatch, PolicyDecision, PolicyEffect, PolicyRule, ToolPattern, ToolPolicy,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 fn interactive() -> ApprovalContext {
     ApprovalContext::interactive("session-1", true)
@@ -344,6 +344,65 @@ fn once_is_never_stored() {
         ),
         Err(ApprovalError::OnceCannotBeStored)
     );
+}
+
+#[test]
+fn a_persistent_grant_stops_when_the_host_disallows_it_and_never_enters_a_scheduled_task() {
+    let mut store = ApprovalStore::default();
+    store
+        .grant(
+            &interactive(),
+            "safe:read",
+            &json!({}),
+            ApprovalScope::Persistent,
+            10,
+        )
+        .unwrap();
+    assert!(store.check(&interactive(), "safe:read", &json!({}), 20));
+    let disallowed = ApprovalContext::interactive("session-1", false);
+    assert!(!store.check(&disallowed, "safe:read", &json!({}), 20));
+    let scheduled = ApprovalContext::scheduled("task-1", true, 7);
+    assert!(!store.check(&scheduled, "safe:read", &json!({}), 20));
+}
+
+#[test]
+fn restore_keeps_active_session_and_persistent_grants_only() {
+    let mut original = ApprovalStore::default();
+    original
+        .grant(
+            &interactive(),
+            "safe:read",
+            &json!({}),
+            ApprovalScope::Session,
+            10,
+        )
+        .unwrap();
+    let mut read = original.records().into_iter().next().unwrap();
+    read.expires_at = Some(100);
+    let records = vec![
+        read.clone(),
+        ApprovalRecord {
+            session_id: "session-1".into(),
+            tool: "safe:write".into(),
+            arguments_fingerprint: read.arguments_fingerprint.clone(),
+            scope: ApprovalScope::Once,
+            granted_at: 10,
+            expires_at: None,
+        },
+        ApprovalRecord {
+            session_id: "session-1".into(),
+            tool: "safe:expired".into(),
+            arguments_fingerprint: read.arguments_fingerprint.clone(),
+            scope: ApprovalScope::Persistent,
+            granted_at: 10,
+            expires_at: Some(20),
+        },
+    ];
+    let mut store = ApprovalStore::default();
+    assert_eq!(store.restore(records, 50), 1);
+    assert!(store.check(&interactive(), "safe:read", &json!({}), 50));
+    assert!(!store.check(&interactive(), "safe:write", &json!({}), 50));
+    assert!(!store.check(&interactive(), "safe:expired", &json!({}), 50));
 }
 
 #[test]

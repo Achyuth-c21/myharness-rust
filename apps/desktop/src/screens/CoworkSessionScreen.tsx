@@ -22,12 +22,19 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   chat,
   emitSessionsChanged,
+  onToolApproval,
   onTurnEvent,
   SESSIONS_CHANGED,
   plainText,
   reasoningText,
+  toolResults,
+  toolUses,
+  type ApprovalScope,
   type BridgeError,
   type SessionView,
+  type SkillView,
+  type ToolApprovalEvent,
+  type ToolDescriptor,
   type TurnSummary,
 } from "../chat/client";
 import {
@@ -37,6 +44,7 @@ import {
   sessionDraftKey,
 } from "../chat/drafts";
 import { LoadingShell } from "../components/shells";
+import { useFocusTrap } from "../components/focusTrap";
 import { modelLabel } from "../chat/format";
 
 function ArrowUpIcon() {
@@ -129,6 +137,10 @@ function TurnBlock({ turn }: { turn: TurnSummary }) {
   const text = plainText(turn.content);
   const reasoning = reasoningText(turn.content);
 
+  if (turn.role === "tool") {
+    return <ToolResultBlock turn={turn} />;
+  }
+
   if (turn.role === "user") {
     return (
       <div className="turn turn-user">
@@ -151,6 +163,7 @@ function TurnBlock({ turn }: { turn: TurnSummary }) {
         </details>
       ) : null}
       {text ? <AssistantText text={text} /> : null}
+      <ToolUseBlocks turn={turn} />
       {turn.status === "partial" ? <div className="turn-status">Stopped</div> : null}
       {turn.status === "error" && turn.error ? (
         <div className="turn-error" role="alert">
@@ -162,6 +175,260 @@ function TurnBlock({ turn }: { turn: TurnSummary }) {
       ) : null}
       {stopNote ? <div className="turn-meta">Stop reason: {stopNote}</div> : null}
       {text ? <CopyButton text={text} /> : null}
+    </div>
+  );
+}
+
+function ToolUseBlocks({ turn }: { turn: TurnSummary }) {
+  const uses = toolUses(turn.content);
+  if (uses.length === 0) return null;
+  return (
+    <div className="tool-uses">
+      {uses.map((use) => (
+        <details key={use.id} className="tool-use">
+          <summary>
+            Tool call: <span className="tool-name">{use.name}</span>
+          </summary>
+          <pre>{JSON.stringify(use.input, null, 2)}</pre>
+        </details>
+      ))}
+    </div>
+  );
+}
+
+function ToolResultBlock({ turn }: { turn: TurnSummary }) {
+  const results = toolResults(turn.content);
+  if (results.length === 0) {
+    const text = plainText(turn.content);
+    return text ? <div className="turn turn-assistant"><AssistantText text={text} /></div> : null;
+  }
+  return (
+    <div className="turn turn-tool">
+      {results.map((result) => {
+        const text = result.parts
+          .filter((part): part is typeof part & { type: "text"; text: string } =>
+            part.type === "text" && typeof part.text === "string",
+          )
+          .map((part) => part.text)
+          .join("");
+        const media = result.parts.filter(
+          (part) => part.type === "image" || part.type === "document",
+        ).length;
+        return (
+          <div
+            key={result.toolUseId}
+            className={`tool-result${result.isError ? " tool-result-error" : ""}`}
+          >
+            <div className="tool-result-label">
+              {result.isError ? "Tool error" : "Tool result"}
+              <span className="tool-result-id">{result.toolUseId}</span>
+            </div>
+            {text ? <pre>{text}</pre> : null}
+            {media > 0 ? (
+              <div className="tool-result-media">
+                {media} media {media === 1 ? "part" : "parts"} preserved in the transcript
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+const SCOPE_LABEL: Record<ApprovalScope, string> = {
+  once: "Allow once",
+  session: "Allow for this session",
+  persistent: "Always allow (persistent)",
+};
+
+function ApprovalDialog({
+  request,
+  scope,
+  error,
+  onScope,
+  onAllow,
+  onDeny,
+  dialogRef,
+}: {
+  request: ToolApprovalEvent;
+  scope: ApprovalScope;
+  error: BridgeError | null;
+  onScope: (scope: ApprovalScope) => void;
+  onAllow: () => void;
+  onDeny: () => void;
+  dialogRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  const preview = JSON.stringify(request.argumentsPreview, null, 2) ?? "";
+  return (
+    <div className="overlay-backdrop">
+      <div
+        className="approval-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Tool approval"
+        ref={dialogRef as React.Ref<HTMLDivElement>}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            onDeny();
+          }
+        }}
+      >
+        <h2>Allow this tool call?</h2>
+        <p className="approval-tool">{request.displayName || request.toolName}</p>
+        <p className="approval-name">{request.toolName}</p>
+        <pre className="approval-preview">{preview.slice(0, 4096)}</pre>
+        <div className="approval-scopes" role="radiogroup" aria-label="Approval scope">
+          {request.allowedScopes.map((option) => (
+            <label key={option} className="approval-scope">
+              <input
+                type="radio"
+                name="approval-scope"
+                checked={scope === option}
+                onChange={() => onScope(option)}
+              />
+              {SCOPE_LABEL[option]}
+            </label>
+          ))}
+        </div>
+        {error ? (
+          <div className="composer-error" role="alert">
+            <span className="error-code">{error.code}</span>
+            <span>{error.message}</span>
+          </div>
+        ) : null}
+        <div className="approval-actions">
+          <button type="button" className="text-btn" onClick={onDeny}>
+            Deny
+          </button>
+          <button type="button" className="send-btn primary approval-allow" onClick={onAllow}>
+            Allow
+          </button>
+        </div>
+        <p className="approval-note">
+          The shipped approval dialog layout was not captured; this minimal dialog is
+          rebuild-defined. A denial is returned to the model as a tool error.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function ToolPickerDialog({
+  tools,
+  selected,
+  loading,
+  error,
+  onToggle,
+  onApply,
+  onClose,
+  dialogRef,
+}: {
+  tools: ToolDescriptor[];
+  selected: string[];
+  loading: boolean;
+  error: BridgeError | null;
+  onToggle: (name: string) => void;
+  onApply: () => void;
+  onClose: () => void;
+  dialogRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  const [filter, setFilter] = useState("");
+  const query = filter.trim().toLowerCase();
+  const visible = tools.filter(
+    (tool) =>
+      !query ||
+      tool.name.toLowerCase().includes(query) ||
+      (tool.description ?? "").toLowerCase().includes(query),
+  );
+  const missing = selected.filter((name) => !tools.some((tool) => tool.name === name));
+  return (
+    <div className="overlay-backdrop">
+      <div
+        className="tool-picker-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Session tools"
+        ref={dialogRef as React.Ref<HTMLDivElement>}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            onClose();
+          }
+        }}
+      >
+        <h2>Session tools</h2>
+        <p className="settings-note">
+          The shipped tool picker layout was not captured; this minimal picker is
+          rebuild-defined. Selecting a tool does not grant approval — every call still
+          follows the policy and approval path. The selection is frozen for this session
+          until you change it here.
+        </p>
+        <input
+          className="settings-search"
+          placeholder="Filter tools…"
+          aria-label="Filter tools"
+          value={filter}
+          onChange={(event) => setFilter(event.target.value)}
+        />
+        {error ? (
+          <div className="composer-error" role="alert">
+            <span className="error-code">{error.code}</span>
+            <span>{error.message}</span>
+          </div>
+        ) : null}
+        {loading ? (
+          <div className="settings-note">Loading tools…</div>
+        ) : visible.length === 0 && missing.length === 0 ? (
+          <div className="settings-note">
+            No live tools. Connect an MCP server in Settings → Developer first.
+          </div>
+        ) : (
+          <div className="settings-list tool-picker-list">
+            {visible.map((tool) => (
+              <label key={tool.name} className="settings-row tool-picker-row">
+                <div>
+                  <div className="settings-row-title">{tool.title || tool.name}</div>
+                  <div className="settings-row-sub">{tool.name}</div>
+                  {tool.description ? (
+                    <div className="settings-row-sub">{tool.description}</div>
+                  ) : null}
+                </div>
+                <input
+                  type="checkbox"
+                  checked={selected.includes(tool.name)}
+                  onChange={() => onToggle(tool.name)}
+                />
+              </label>
+            ))}
+            {missing.map((name) => (
+              <label key={name} className="settings-row tool-picker-row">
+                <div>
+                  <div className="settings-row-title">{name}</div>
+                  <div className="settings-row-sub">
+                    Not available from a connected server. The next send will fail until
+                    it reconnects; remove it or retry the server.
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked
+                  onChange={() => onToggle(name)}
+                />
+              </label>
+            ))}
+          </div>
+        )}
+        <div className="approval-actions">
+          <button type="button" className="text-btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="button" className="send-btn primary approval-allow" onClick={onApply}>
+            Apply
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -197,6 +464,23 @@ function SessionScreen({ sessionId }: { sessionId: string }) {
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [approval, setApproval] = useState<ToolApprovalEvent | null>(null);
+  const [approvalScope, setApprovalScope] = useState<ApprovalScope>("once");
+  const [approvalError, setApprovalError] = useState<BridgeError | null>(null);
+  const [liveTool, setLiveTool] = useState<string | null>(null);
+  const [skills, setSkills] = useState<SkillView[]>([]);
+  const [skillsAvailable, setSkillsAvailable] = useState(false);
+  const [skillMenuOpen, setSkillMenuOpen] = useState(false);
+  const [skillError, setSkillError] = useState<BridgeError | null>(null);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [toolCatalog, setToolCatalog] = useState<ToolDescriptor[]>([]);
+  const [selectedTools, setSelectedTools] = useState<string[]>([]);
+  const [toolsLoading, setToolsLoading] = useState(false);
+  const [toolsError, setToolsError] = useState<BridgeError | null>(null);
+  const approvalRef = useRef<HTMLDivElement>(null);
+  const toolPickerRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(approvalRef, approval !== null);
+  useFocusTrap(toolPickerRef, toolsOpen);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -240,6 +524,15 @@ function SessionScreen({ sessionId }: { sessionId: string }) {
     setMenuOpen(false);
     setRenaming(false);
     setConfirmDelete(false);
+    setApproval(null);
+    setApprovalError(null);
+    setLiveTool(null);
+    setSkillMenuOpen(false);
+    setSkillError(null);
+    setToolsOpen(false);
+    setToolsError(null);
+    setToolCatalog([]);
+    setSelectedTools([]);
     autoSent.current = false;
     void load();
   }, [sessionId, load]);
@@ -274,6 +567,10 @@ function SessionScreen({ sessionId }: { sessionId: string }) {
       if (sid !== sessionId) return;
       if (event.type === "text_delta") {
         setLiveText((previous) => previous + event.text);
+      } else if (event.type === "tool_call") {
+        setLiveTool(event.name);
+      } else if (event.type === "tool_result") {
+        setLiveTool(null);
       }
     }).then((stop) => {
       if (cancelled) stop();
@@ -284,6 +581,67 @@ function SessionScreen({ sessionId }: { sessionId: string }) {
       unlisten?.();
     };
   }, [sessionId]);
+
+  // Skill catalog for the composer picker. A browser preview has no host, so
+  // the picker stays absent rather than showing invented rows.
+  useEffect(() => {
+    let cancelled = false;
+    void chat({ type: "listSkills" }).then((response) => {
+      if (cancelled) return;
+      if (response.type === "skills") {
+        // Disabled skills stay in the catalog so Settings can re-enable them,
+        // but the composer must not offer a selection the bridge will refuse.
+        setSkills(
+          response.view.skills.filter(
+            (skill) => !response.view.disabled.includes(skill.name),
+          ),
+        );
+        setSkillsAvailable(true);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Approval prompts are per-session; another task's prompt must never appear
+  // over this transcript.
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+    void onToolApproval((event) => {
+      if (event.sessionId !== sessionId) return;
+      setApproval(event);
+      setApprovalScope(event.allowedScopes[0] ?? "once");
+      setApprovalError(null);
+    }).then((stop) => {
+      if (cancelled) stop();
+      else unlisten = stop;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [sessionId]);
+
+  const respondApproval = useCallback(
+    async (decision: "allow" | "deny") => {
+      if (!approval) return;
+      const response = await chat({
+        type: "respondToolApproval",
+        approvalId: approval.id,
+        decision,
+        scope: decision === "allow" ? approvalScope : null,
+      });
+      if (response.type === "ack") {
+        setApproval(null);
+        setApprovalError(null);
+      } else if (response.type === "error") {
+        setApprovalError(response.error);
+      }
+    },
+    [approval, approvalScope],
+  );
 
   const send = useCallback(
     async (text: string) => {
@@ -296,7 +654,7 @@ function SessionScreen({ sessionId }: { sessionId: string }) {
       setLiveText("");
       try {
         const response = await chat({ type: "sendTurn", sessionId, text });
-        if (response.type === "turn") {
+        if (response.type === "turn" || response.type === "toolTurn") {
           // The turn completed: the draft's job is done.
           saveDraft(draftKey, "");
           setDraft("");
@@ -326,6 +684,7 @@ function SessionScreen({ sessionId }: { sessionId: string }) {
       } finally {
         sendingRef.current = false;
         setStreaming(false);
+        setLiveTool(null);
       }
     },
     [draftKey, load, pending?.originKey, sessionId],
@@ -368,6 +727,57 @@ function SessionScreen({ sessionId }: { sessionId: string }) {
   const stop = async () => {
     const response = await chat({ type: "stopTurn", sessionId });
     if (response.type === "error") setActionError(response.error);
+    setApproval(null);
+  };
+
+  const openTools = async () => {
+    const extra = view?.session.extra as { mcpTools?: unknown } | null;
+    setSelectedTools(
+      Array.isArray(extra?.mcpTools)
+        ? extra.mcpTools.filter((name): name is string => typeof name === "string")
+        : [],
+    );
+    setToolsOpen(true);
+    setToolsLoading(true);
+    setToolsError(null);
+    const response = await chat({ type: "mcpTools" });
+    if (response.type === "mcpTools") {
+      setToolCatalog(response.tools);
+    } else if (response.type === "error") {
+      setToolsError(response.error);
+      setToolCatalog([]);
+    }
+    setToolsLoading(false);
+  };
+
+  const applyTools = async () => {
+    setToolsError(null);
+    const response = await chat({
+      type: "setSessionTools",
+      sessionId,
+      tools: selectedTools,
+    });
+    if (response.type === "ack") {
+      setToolsOpen(false);
+      await load();
+    } else if (response.type === "error") {
+      setToolsError(response.error);
+    }
+  };
+
+  const insertSkill = async (name: string) => {
+    setSkillMenuOpen(false);
+    setSkillError(null);
+    const response = await chat({ type: "selectSkill", name });
+    if (response.type === "skillSelection") {
+      const next = draft.trim()
+        ? `${draft}\n\n${response.selection.instructions}`
+        : response.selection.instructions;
+      updateDraft(next);
+      taRef.current?.focus();
+    } else if (response.type === "error") {
+      setSkillError(response.error);
+    }
   };
 
   const updateDraft = (value: string) => {
@@ -500,6 +910,19 @@ function SessionScreen({ sessionId }: { sessionId: string }) {
                     type="button"
                     role="menuitem"
                     className="account-item"
+                    disabled={streaming}
+                    title={streaming ? "Stop the running turn first" : undefined}
+                    onClick={() => {
+                      setMenuOpen(false);
+                      void openTools();
+                    }}
+                  >
+                    Tools…
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="account-item"
                     onClick={() => {
                       setRenameValue(session.title);
                       setRenaming(true);
@@ -583,7 +1006,7 @@ function SessionScreen({ sessionId }: { sessionId: string }) {
               ) : (
                 <div className="working">
                   <WorkingMark />
-                  <span>Working on it…</span>
+                  <span>{liveTool ? `Using ${liveTool}…` : "Working on it…"}</span>
                 </div>
               )}
             </div>
@@ -596,6 +1019,12 @@ function SessionScreen({ sessionId }: { sessionId: string }) {
           <div className="composer-error" role="alert">
             <span className="error-code">{actionError.code}</span>
             <span>{actionError.message}</span>
+          </div>
+        ) : null}
+        {skillError ? (
+          <div className="composer-error" role="alert">
+            <span className="error-code">{skillError.code}</span>
+            <span>{skillError.message}</span>
           </div>
         ) : null}
         {sendError ? (
@@ -636,6 +1065,50 @@ function SessionScreen({ sessionId }: { sessionId: string }) {
             >
               +
             </button>
+            {skillsAvailable ? (
+              <div className="skill-picker">
+                <button
+                  type="button"
+                  className="text-btn"
+                  aria-expanded={skillMenuOpen}
+                  aria-haspopup="menu"
+                  onClick={() => setSkillMenuOpen((open) => !open)}
+                >
+                  Skills
+                </button>
+                {skillMenuOpen ? (
+                  <div className="skill-menu" role="menu">
+                    {skills.length === 0 ? (
+                      <div className="skill-empty">No skills found</div>
+                    ) : (
+                      skills.map((skill) => (
+                        <button
+                          key={skill.name}
+                          type="button"
+                          role="menuitem"
+                          className="account-item skill-item"
+                          disabled={!skill.runnable}
+                          title={
+                            skill.runnable
+                              ? skill.description
+                              : "Bundled body not captured; this catalog entry is listed only"
+                          }
+                          onClick={() => void insertSkill(skill.name)}
+                        >
+                          <span>{skill.displayName}</span>
+                          <span className="skill-source">
+                            {skill.runnable ? skill.source : `${skill.source} · not runnable`}
+                          </span>
+                        </button>
+                      ))
+                    )}
+                    <div className="skill-note">
+                      Selecting inserts instructions; it does not grant tool approvals.
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             <span className="composer-spacer" />
             <span className="composer-model" title="The model is fixed for this task">
               {label}
@@ -667,6 +1140,35 @@ function SessionScreen({ sessionId }: { sessionId: string }) {
           Claude is AI and can make mistakes. Please double-check responses.
         </p>
       </div>
+      {toolsOpen ? (
+        <ToolPickerDialog
+          tools={toolCatalog}
+          selected={selectedTools}
+          loading={toolsLoading}
+          error={toolsError}
+          onToggle={(name) =>
+            setSelectedTools((current) =>
+              current.includes(name)
+                ? current.filter((item) => item !== name)
+                : [...current, name],
+            )
+          }
+          onApply={() => void applyTools()}
+          onClose={() => setToolsOpen(false)}
+          dialogRef={toolPickerRef}
+        />
+      ) : null}
+      {approval ? (
+        <ApprovalDialog
+          request={approval}
+          scope={approvalScope}
+          error={approvalError}
+          onScope={setApprovalScope}
+          onAllow={() => void respondApproval("allow")}
+          onDeny={() => void respondApproval("deny")}
+          dialogRef={approvalRef}
+        />
+      ) : null}
     </div>
   );
 }
