@@ -2301,6 +2301,7 @@ dependencies = [
  "myharness-agent",
  "myharness-config",
  "myharness-mcp",
+ "myharness-memory",
  "myharness-plugins",
  "myharness-projects",
  "myharness-provider-anthropic",
@@ -2341,6 +2342,7 @@ dependencies = [
  "myharness-app-shell",
  "myharness-bridge",
  "myharness-mcp",
+ "myharness-memory",
  "myharness-provider-sdk",
  "myharness-secrets",
  "myharness-sessions",
@@ -2367,6 +2369,18 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "url",
+]
+
+[[package]]
+name = "myharness-memory"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.21",
+ "uuid",
 ]
 
 [[package]]

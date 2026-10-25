@@ -9,6 +9,7 @@ async-trait = { workspace = true }
 myharness-agent = { path = "../agent" }
 myharness-config = { path = "../config" }
 myharness-mcp = { path = "../mcp" }
+myharness-memory = { path = "../memory" }
 myharness-plugins = { path = "../plugins" }
 myharness-projects = { path = "../projects" }
 myharness-scheduler = { path = "../scheduler" }

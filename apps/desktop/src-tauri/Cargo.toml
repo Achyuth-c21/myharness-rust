@@ -17,6 +17,7 @@ tauri-plugin-single-instance = { workspace = true, optional = true }
 myharness-app-shell = { path = "../../../crates/app-shell" }
 myharness-bridge = { path = "../../../crates/bridge" }
 myharness-mcp = { path = "../../../crates/mcp" }
+myharness-memory = { path = "../../../crates/memory" }
 myharness-provider-sdk = { path = "../../../crates/provider-sdk" }
 myharness-secrets = { path = "../../../crates/secrets" }
 myharness-sessions = { path = "../../../crates/sessions" }

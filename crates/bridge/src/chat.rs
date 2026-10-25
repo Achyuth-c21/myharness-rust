@@ -99,6 +99,12 @@ pub trait ChatTargetResolver: Send + Sync {
     fn code_policy(&self) -> Result<CodePolicy, BridgeError> {
         Ok(CodePolicy::default())
     }
+
+    /// Effective memory policy (Phase 7). The production resolver reads the
+    /// merged profile; absence keeps memory enabled (the captured default).
+    fn memory_policy(&self) -> Result<crate::policy::MemoryPolicy, BridgeError> {
+        Ok(crate::policy::MemoryPolicy::default())
+    }
 }
 
 /// Production resolver over the same backend the setup window uses.
@@ -127,6 +133,14 @@ impl ChatTargetResolver for ProfileTargets {
             .lock()
             .map_err(|_| BridgeError::new("CONFIG_IO", "the configuration lock is unavailable"))?;
         backend.code_policy()
+    }
+
+    fn memory_policy(&self) -> Result<crate::policy::MemoryPolicy, BridgeError> {
+        let backend = self
+            .backend
+            .lock()
+            .map_err(|_| BridgeError::new("CONFIG_IO", "the configuration lock is unavailable"))?;
+        backend.memory_policy()
     }
 }
 
@@ -711,6 +725,24 @@ pub enum ChatCommand {
         #[serde(default)]
         count: Option<usize>,
     },
+    /// Memory (Phase 7; `docs/11` §5). The effective `memoryEnabled`
+    /// capability gates every mutating and listing command; the overview
+    /// always answers so the panel can explain a disabled state.
+    MemoryOverview,
+    ListMemoryEntries,
+    CreateMemoryEntry {
+        content: String,
+    },
+    UpdateMemoryEntry {
+        id: String,
+        content: String,
+    },
+    DeleteMemoryEntry {
+        id: String,
+    },
+    /// The explicit "Reset/delete memory" action (`docs/11` §5: explicit and
+    /// auditable). The renderer confirms before sending this.
+    ResetMemory,
 }
 
 /// One command's answer.
@@ -803,6 +835,21 @@ pub enum ChatResponse {
     },
     SchedulePreview {
         times: Vec<i64>,
+    },
+    MemoryOverview {
+        policy: crate::policy::MemoryPolicyView,
+        baseline_hash: Option<String>,
+        baseline_changed: bool,
+        count: usize,
+    },
+    MemoryEntries {
+        entries: Vec<myharness_memory::MemoryEntry>,
+    },
+    MemoryEntry {
+        entry: myharness_memory::MemoryEntry,
+    },
+    MemoryReset {
+        deleted: usize,
     },
     Stopped {
         stopped: bool,
@@ -930,6 +977,18 @@ fn session_failure(error: impl std::fmt::Display) -> ChatFailure {
     ChatFailure::before_send(BridgeError::new("SESSION_ERROR", error.to_string()))
 }
 
+/// Map a memory-layer failure onto the wire. A corrupt entry file is its
+/// own visible code — "unreadable and set aside" — never a generic error.
+fn memory_failure(error: myharness_memory::MemoryError) -> ChatFailure {
+    let code = match &error {
+        myharness_memory::MemoryError::NotFound => "MEMORY_MISSING",
+        myharness_memory::MemoryError::Validation(_) => "CONFIG_VALIDATION",
+        myharness_memory::MemoryError::Corrupt(_) => "MEMORY_CORRUPT",
+        myharness_memory::MemoryError::Io(_) => "CONFIG_IO",
+    };
+    ChatFailure::before_send(BridgeError::new(code, error.to_string()))
+}
+
 /// A cron parse failure is always the caller's input problem.
 fn schedule_failure(error: myharness_scheduler::CronError) -> ChatFailure {
     ChatFailure::before_send(BridgeError::new(
@@ -966,6 +1025,7 @@ pub struct ChatService<K: AuditKeyStore, R: ChatTargetResolver> {
     running: Mutex<HashMap<String, CancellationToken>>,
     tools: Option<std::sync::Arc<ToolRuntime>>,
     catalog: Option<std::sync::Arc<CatalogRuntime>>,
+    memory: Option<std::sync::Arc<myharness_memory::MemoryStore>>,
 }
 
 impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
@@ -976,6 +1036,7 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
             running: Mutex::new(HashMap::new()),
             tools: None,
             catalog: None,
+            memory: None,
         }
     }
 
@@ -989,6 +1050,17 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
     /// Attach the skills/plugins catalog.
     pub fn with_catalog(mut self, catalog: std::sync::Arc<CatalogRuntime>) -> ChatService<K, R> {
         self.catalog = Some(catalog);
+        self
+    }
+
+    /// Attach the memory store. `None` (a broken memory directory) makes
+    /// every memory command an explicit `UNSUPPORTED` — memory degrades,
+    /// never chat (the MCP posture).
+    pub fn with_memory(
+        mut self,
+        memory: Option<std::sync::Arc<myharness_memory::MemoryStore>>,
+    ) -> ChatService<K, R> {
+        self.memory = memory;
         self
     }
 
@@ -1280,6 +1352,14 @@ async fn run<K: AuditKeyStore, R: ChatTargetResolver>(
         ChatCommand::PreviewSchedule { cron, count } => {
             service.preview_schedule(&cron, count.unwrap_or(3))
         }
+        ChatCommand::MemoryOverview => service.memory_overview(),
+        ChatCommand::ListMemoryEntries => service.list_memory_entries(),
+        ChatCommand::CreateMemoryEntry { content } => service.create_memory_entry(&content),
+        ChatCommand::UpdateMemoryEntry { id, content } => {
+            service.update_memory_entry(&id, &content)
+        }
+        ChatCommand::DeleteMemoryEntry { id } => service.delete_memory_entry(&id),
+        ChatCommand::ResetMemory => service.reset_memory(),
     }
 }
 
@@ -2044,6 +2124,94 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
             }
         }
         notes
+    }
+
+    // -----------------------------------------------------------------------
+    // Memory (Phase 7; docs/11 §5, REQ-PRIV-04's store half)
+    // -----------------------------------------------------------------------
+
+    /// The memory store, or the honest `UNSUPPORTED` when the directory
+    /// could not be opened (memory degrades, chat does not).
+    fn memory(
+        &self,
+    ) -> Result<&std::sync::Arc<myharness_memory::MemoryStore>, ChatFailure> {
+        self.memory.as_ref().ok_or_else(|| {
+            ChatFailure::before_send(BridgeError::new(
+                "UNSUPPORTED",
+                "memory is not configured in this build",
+            ))
+        })
+    }
+
+    /// The gate every memory command runs through: the effective
+    /// `memoryEnabled` capability is re-resolved per call, so disabling
+    /// memory actually prevents the prohibited operations rather than
+    /// changing a UI preference.
+    fn memory_gate(&self) -> Result<(), ChatFailure> {
+        let policy = self.targets.memory_policy()?;
+        if !policy.enabled {
+            return Err(ChatFailure::before_send(BridgeError::new(
+                "MEMORY_DISABLED",
+                "memory is disabled by the applied configuration",
+            )));
+        }
+        Ok(())
+    }
+
+    fn memory_overview(&self) -> Result<ChatResponse, ChatFailure> {
+        let policy = self.targets.memory_policy()?;
+        if self.memory.is_none() {
+            return Ok(ChatResponse::MemoryOverview {
+                policy: policy.view(),
+                baseline_hash: None,
+                baseline_changed: false,
+                count: 0,
+            });
+        }
+        let store = self.memory.as_ref().expect("checked above");
+        let entries = store.list().map_err(memory_failure)?;
+        Ok(ChatResponse::MemoryOverview {
+            policy: policy.view(),
+            baseline_hash: Some(store.baseline_hash().map_err(memory_failure)?),
+            baseline_changed: store.baseline_changed().map_err(memory_failure)?,
+            count: entries.len(),
+        })
+    }
+
+    fn list_memory_entries(&self) -> Result<ChatResponse, ChatFailure> {
+        self.memory_gate()?;
+        let entries = self.memory()?.list().map_err(memory_failure)?;
+        Ok(ChatResponse::MemoryEntries { entries })
+    }
+
+    fn create_memory_entry(&self, content: &str) -> Result<ChatResponse, ChatFailure> {
+        self.memory_gate()?;
+        let entry = self
+            .memory()?
+            .create(content, now_ms())
+            .map_err(memory_failure)?;
+        Ok(ChatResponse::MemoryEntry { entry })
+    }
+
+    fn update_memory_entry(&self, id: &str, content: &str) -> Result<ChatResponse, ChatFailure> {
+        self.memory_gate()?;
+        let entry = self
+            .memory()?
+            .update(id, content, now_ms())
+            .map_err(memory_failure)?;
+        Ok(ChatResponse::MemoryEntry { entry })
+    }
+
+    fn delete_memory_entry(&self, id: &str) -> Result<ChatResponse, ChatFailure> {
+        self.memory_gate()?;
+        self.memory()?.delete(id).map_err(memory_failure)?;
+        Ok(ChatResponse::Ack)
+    }
+
+    fn reset_memory(&self) -> Result<ChatResponse, ChatFailure> {
+        self.memory_gate()?;
+        let deleted = self.memory()?.reset().map_err(memory_failure)?;
+        Ok(ChatResponse::MemoryReset { deleted })
     }
 
     fn catalog(&self) -> Result<&std::sync::Arc<CatalogRuntime>, ChatFailure> {

@@ -178,6 +178,17 @@ export interface ScheduledRunRecord {
   finishedAt: number | null;
 }
 
+/**
+ * One stored memory entry (`crates/memory` `MemoryEntry`): Markdown content
+ * with its timestamps. Content is personal and local-only.
+ */
+export interface MemoryEntryRecord {
+  id: string;
+  content: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 /** One captured template card (name + schedule label are the captured copy). */
 export interface ScheduledTemplateCard {
   name: string;
@@ -269,6 +280,12 @@ export type ChatCommand =
   | { type: "deleteScheduledTask"; id: string }
   | { type: "runScheduledTaskNow"; id: string }
   | { type: "previewSchedule"; cron: string; count?: number | null }
+  | { type: "memoryOverview" }
+  | { type: "listMemoryEntries" }
+  | { type: "createMemoryEntry"; content: string }
+  | { type: "updateMemoryEntry"; id: string; content: string }
+  | { type: "deleteMemoryEntry"; id: string }
+  | { type: "resetMemory" }
   | { type: "listCodeSessions"; archived?: boolean | null }
   | {
       type: "createCodeSession";
@@ -327,6 +344,16 @@ export type ChatResponse =
   | { type: "scheduledRun"; run: ScheduledRunRecord }
   | { type: "templates"; templates: ScheduledTemplateCard[] }
   | { type: "schedulePreview"; times: number[] }
+  | {
+      type: "memoryOverview";
+      policy: { memoryEnabled: boolean };
+      baselineHash: string | null;
+      baselineChanged: boolean;
+      count: number;
+    }
+  | { type: "memoryEntries"; entries: MemoryEntryRecord[] }
+  | { type: "memoryEntry"; entry: MemoryEntryRecord }
+  | { type: "memoryReset"; deleted: number }
   | { type: "codeDashboard"; summary: CodeUsageSummary; sessions: SessionRecord[]; repositories: CodeRepositoryView[]; policy: CodePolicyView }
   | {
       type: "turn";

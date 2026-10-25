@@ -47,6 +47,7 @@ struct ScriptedTargets {
     tail: Tail,
     calls: Arc<Mutex<Vec<NativeTurnRequest>>>,
     policy: CodePolicy,
+    memory_policy: myharness_bridge::policy::MemoryPolicy,
 }
 
 impl ChatTargetResolver for ScriptedTargets {
@@ -70,6 +71,10 @@ impl ChatTargetResolver for ScriptedTargets {
 
     fn code_policy(&self) -> Result<CodePolicy, BridgeError> {
         Ok(self.policy.clone())
+    }
+
+    fn memory_policy(&self) -> Result<myharness_bridge::policy::MemoryPolicy, BridgeError> {
+        Ok(self.memory_policy.clone())
     }
 }
 
@@ -185,6 +190,15 @@ impl Fixture {
         tail: Tail,
         policy: CodePolicy,
     ) -> Fixture {
+        Self::with_policies(script, tail, policy, myharness_bridge::policy::MemoryPolicy::default())
+    }
+
+    fn with_policies(
+        script: Vec<Result<TurnEvent, ProviderError>>,
+        tail: Tail,
+        policy: CodePolicy,
+        memory_policy: myharness_bridge::policy::MemoryPolicy,
+    ) -> Fixture {
         let dir = TempDir::new().expect("temp dir");
         let store = Store::open(&dir.path().join("chat.db"), &dir.path().join("files-root"))
             .expect("open store");
@@ -196,7 +210,13 @@ impl Fixture {
                 tail,
                 calls: Arc::clone(&calls),
                 policy,
+                memory_policy,
             },
+        )
+        .with_memory(
+            myharness_memory::MemoryStore::open(&dir.path().join("memory"))
+                .map(Arc::new)
+                .ok(),
         );
         Fixture {
             dir,
@@ -2166,4 +2186,148 @@ async fn run_now_creates_one_session_and_the_terminal_run_row() {
         .find(|turn| turn.role == "user")
         .expect("user turn");
     assert!(user_text.content.plain_text().contains("What needs my attention today?"));
+}
+
+// ---------------------------------------------------------------------
+// Memory (Phase 7; docs/11 §5, TEST-CFG-009-adjacent enforcement)
+// ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn memory_commands_crud_through_the_bridge_and_persist() {
+    let fixture = Fixture::new(reply("ok"), Tail::End);
+
+    let created = dispatch(
+        fixture.service.as_ref(),
+        ChatCommand::CreateMemoryEntry {
+            content: "  prefers concise answers  ".into(),
+        },
+        None,
+    )
+    .await;
+    let ChatResponse::MemoryEntry { entry } = created else {
+        panic!("expected a memory entry, got {created:?}");
+    };
+    assert_eq!(entry.content, "prefers concise answers");
+
+    let listed = dispatch(
+        fixture.service.as_ref(),
+        ChatCommand::ListMemoryEntries,
+        None,
+    )
+    .await;
+    let ChatResponse::MemoryEntries { entries } = listed else {
+        panic!("expected entries, got {listed:?}");
+    };
+    assert_eq!(entries.len(), 1);
+
+    let overview = dispatch(fixture.service.as_ref(), ChatCommand::MemoryOverview, None).await;
+    let ChatResponse::MemoryOverview {
+        policy,
+        baseline_hash,
+        baseline_changed,
+        count,
+    } = overview
+    else {
+        panic!("expected an overview, got {overview:?}");
+    };
+    assert!(policy.memory_enabled, "the default policy keeps memory on");
+    assert_eq!(count, 1);
+    assert!(baseline_hash.is_some());
+    assert!(!baseline_changed);
+
+    let updated = dispatch(
+        fixture.service.as_ref(),
+        ChatCommand::UpdateMemoryEntry {
+            id: entry.id.clone(),
+            content: "prefers terse answers".into(),
+        },
+        None,
+    )
+    .await;
+    let ChatResponse::MemoryEntry { entry: updated } = updated else {
+        panic!("expected an entry, got {updated:?}");
+    };
+    assert_eq!(updated.content, "prefers terse answers");
+
+    let deleted = dispatch(
+        fixture.service.as_ref(),
+        ChatCommand::DeleteMemoryEntry { id: entry.id },
+        None,
+    )
+    .await;
+    assert!(matches!(deleted, ChatResponse::Ack));
+    let empty = dispatch(
+        fixture.service.as_ref(),
+        ChatCommand::ListMemoryEntries,
+        None,
+    )
+    .await;
+    let ChatResponse::MemoryEntries { entries: empty } = empty else {
+        panic!("expected entries, got {empty:?}");
+    };
+    assert!(empty.is_empty());
+}
+
+#[tokio::test]
+async fn a_disabled_memory_capability_blocks_every_prohibited_operation() {
+    let fixture = Fixture::with_policies(
+        reply("ok"),
+        Tail::End,
+        CodePolicy::default(),
+        myharness_bridge::policy::MemoryPolicy { enabled: false },
+    );
+    for command in [
+        ChatCommand::ListMemoryEntries,
+        ChatCommand::CreateMemoryEntry {
+            content: "should not store".into(),
+        },
+        ChatCommand::UpdateMemoryEntry {
+            id: "00000000-0000-0000-0000-00000000000c".into(),
+            content: "x".into(),
+        },
+        ChatCommand::DeleteMemoryEntry {
+            id: "00000000-0000-0000-0000-00000000000c".into(),
+        },
+        ChatCommand::ResetMemory,
+    ] {
+        let response = dispatch(fixture.service.as_ref(), command, None).await;
+        assert!(
+            matches!(response, ChatResponse::Error { ref error, .. } if error.code == "MEMORY_DISABLED"),
+            "a disabled capability must gate the command, got {response:?}"
+        );
+    }
+    // The overview still answers (the panel must be able to explain why).
+    let overview = dispatch(fixture.service.as_ref(), ChatCommand::MemoryOverview, None).await;
+    let ChatResponse::MemoryOverview { policy, .. } = overview else {
+        panic!("expected an overview, got {overview:?}");
+    };
+    assert!(!policy.memory_enabled);
+}
+
+#[tokio::test]
+async fn memory_reset_is_explicit_and_reports_the_count() {
+    let fixture = Fixture::new(reply("ok"), Tail::End);
+    for content in ["one", "two", "three"] {
+        dispatch(
+            fixture.service.as_ref(),
+            ChatCommand::CreateMemoryEntry { content: content.into() },
+            None,
+        )
+        .await;
+    }
+    let reset = dispatch(fixture.service.as_ref(), ChatCommand::ResetMemory, None).await;
+    let ChatResponse::MemoryReset { deleted } = reset else {
+        panic!("expected a reset report, got {reset:?}");
+    };
+    assert_eq!(deleted, 3);
+    let listed = dispatch(
+        fixture.service.as_ref(),
+        ChatCommand::ListMemoryEntries,
+        None,
+    )
+    .await;
+    let ChatResponse::MemoryEntries { entries } = listed else {
+        panic!("expected entries, got {listed:?}");
+    };
+    assert!(entries.is_empty());
 }

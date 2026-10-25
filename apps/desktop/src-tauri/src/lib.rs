@@ -262,6 +262,15 @@ fn init_chat(app: &tauri::AppHandle) -> Result<Chat, String> {
             "the MCP directory could not be created; MCP is disabled: {error}"
         ));
     }
+    // Memory (Phase 7): a broken memory directory degrades memory, never
+    // chat — every memory command then answers UNSUPPORTED honestly.
+    let memory = match myharness_memory::MemoryStore::open(&data.join("memory")) {
+        Ok(store) => Some(Arc::new(store)),
+        Err(error) => {
+            dlog(&format!("memory is unavailable: {error}"));
+            None
+        }
+    };
     let catalog = Arc::new(CatalogRuntime::load(data.join("catalog")));
     let mut loaded = McpConfig::load(&mcp_root);
     loaded.warnings.extend(mcp_warnings);
@@ -290,6 +299,7 @@ fn init_chat(app: &tauri::AppHandle) -> Result<Chat, String> {
                 oauth_store,
                 mcp_root,
                 catalog,
+                memory,
             ));
         }
     };
@@ -320,9 +330,11 @@ fn init_chat(app: &tauri::AppHandle) -> Result<Chat, String> {
         oauth_store,
         mcp_root,
         catalog,
+        memory,
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn chat_with_tools(
     app: &tauri::AppHandle,
     sessions: SessionService<KeyringAuditKeys>,
@@ -331,6 +343,7 @@ fn chat_with_tools(
     oauth_store: Arc<dyn myharness_mcp::OAuthStore>,
     mcp_root: std::path::PathBuf,
     catalog: Arc<CatalogRuntime>,
+    memory: Option<Arc<myharness_memory::MemoryStore>>,
 ) -> Chat {
     let handle = app.clone();
     let prompt = Arc::new(BridgeApprovalPrompt::new(Arc::new(move |event| {
@@ -342,6 +355,7 @@ fn chat_with_tools(
         Some(mcp_root.join("approvals.json")),
         Some(oauth_store),
     ));
+
     let boot = Arc::clone(&runtime);
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -359,6 +373,7 @@ fn chat_with_tools(
     ChatService::new(sessions, targets)
         .with_tools(runtime)
         .with_catalog(catalog)
+        .with_memory(memory)
 }
 
 /// The chat subset of `web.LocalAgentModeSessions` (docs/18 §3.4/§4). Content

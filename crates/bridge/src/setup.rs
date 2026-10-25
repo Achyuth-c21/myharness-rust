@@ -247,6 +247,12 @@ impl ConfigBackend {
             &self.library.get_merged()?,
         ))
     }
+
+    pub fn memory_policy(&self) -> Result<crate::policy::MemoryPolicy, BridgeError> {
+        Ok(crate::policy::MemoryPolicy::from_merged(
+            &self.library.get_merged()?,
+        ))
+    }
 }
 
 impl SetupBackend for ConfigBackend {

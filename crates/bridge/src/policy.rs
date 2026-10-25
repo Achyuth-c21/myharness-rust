@@ -111,6 +111,47 @@ pub struct CodePolicyView {
     pub workspace_restricted: bool,
 }
 
+/// The effective memory policy. The captured default is on (`docs/11`
+/// lists `memoryEnabled` among the capability keys and the capture shows
+/// memory on), so absence keeps it enabled; only an explicit `false`
+/// disables it, and a malformed value fails closed like every other
+/// capability gate (`crates/bridge/src/policy.rs` conventions).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemoryPolicy {
+    pub enabled: bool,
+}
+
+impl Default for MemoryPolicy {
+    fn default() -> Self {
+        MemoryPolicy { enabled: true }
+    }
+}
+
+impl MemoryPolicy {
+    pub fn from_merged(merged: &MergedConfig) -> MemoryPolicy {
+        let enabled = match merged.value("capabilities", "memoryEnabled") {
+            None | Some(Value::Null) | Some(Value::Bool(true)) => true,
+            Some(Value::Bool(false)) => false,
+            Some(_) => false,
+        };
+        MemoryPolicy { enabled }
+    }
+
+    /// The renderer-safe subset (a single fact; nothing sensitive).
+    pub fn view(&self) -> MemoryPolicyView {
+        MemoryPolicyView {
+            memory_enabled: self.enabled,
+        }
+    }
+}
+
+/// Policy facts the memory panel may render.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryPolicyView {
+    pub memory_enabled: bool,
+}
+
 /// Validate and canonicalize a folder selected by the renderer.
 ///
 /// Rules:
