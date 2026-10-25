@@ -420,6 +420,75 @@ Scheduled, and Search remain later slices, in that order.
   (owner decision pending); E2E needs the Vite dev server on 5173 **and** a
   served-title check (trap #13); use `apps/desktop/node_modules/.bin/tsc`.
 
+## 7l. Phase 6 slices 2–5 — Projects, Artifacts, Scheduled, Search (2026-10-26)
+
+The `phase-6-code` lane completes `docs/13` Phase 6's build areas on top of
+slice 1 (§7k): Projects (`35958b8`), Artifacts (`8aa7987`), Scheduled
+(`48eb6ac`), Search (`424eabc`). **Not merged and not pushed — owner
+approval required.** Gates at completion: workspace 485 cargo tests /
+0 failed, clippy clean on the touched crates, `cargo metadata`, `tsc
+--noEmit`, `vite build`, E2E `shell.spec.mjs` 47/47 (T01–T47),
+`setup-window.spec.mjs` 16/16.
+
+- **Projects** — schema v3 (`projects`, soft `sessions.project_id` — no
+  FK, deleting a project never deletes or retargets sessions and the
+  deletion answer reports the orphan count). `crates/projects::ProjectService`
+  borrows `&Store` per call. The bridge reuses the ONE folder validator
+  (`policy::validate_workspace_folder`) for project folders; `CreateSession`
+  gained `projectId`/`cwd` binding and folder-bound Cowork turns carry the
+  Code-style quoted path-as-data system block. Folder "availability" =
+  `canonicalize(stored) == stored`. Project instructions are stored/displayed
+  but NOT injected into turns (no captured bootstrap assembly; item 61).
+- **Artifacts** — `CreateArtifactTask` = one normal Cowork session with
+  `extra.artifactTask: true`; no auto-send (the shipped generated prompt was
+  never captured — recorded deviation). The empty-state suggestion sends its
+  own visible copy as the first turn. No content model, no viewer — stated
+  Unavailable (artifactsPane gate was never available).
+- **Scheduled** — `crates/scheduler` is pure math (cron subset: `*`, lists,
+  ranges `a-b`, `*/step` on minute/hour; dom/mon must be `*`; DST gap skips
+  the minute, fall-back takes the earlier occurrence; `decide()` grace 60 s).
+  Schema v4 (`scheduled_tasks` + `scheduled_runs`; every occurrence gets a
+  run row; skips never stamp `last_run_at`). Bridge arms on create/enable/
+  update, disarms on disable, `scheduled_tick(now)` runs due occurrences on
+  the interactive send path with `scheduled=true` (the scheduled approval
+  lifetime), records skips with the truthful reason, and rearms strictly
+  forward; the shell spawns a 30 s tick loop with arm-on-boot. Keep-awake
+  ships disabled.
+- **Search** — palette combines `listSessions` + `listCodeSessions` +
+  `listProjects`; case-insensitive title/name match; recent set on empty
+  query; a labelled "Go to" route tail (full fallback in the browser
+  preview). Sidebar filter menu composes AND with immediate apply, badge,
+  reset, and a distinct filtered-empty state; Unread is disabled (no unread
+  tracking); pinning is not built; filters persist in
+  `localStorage["tasks.filters"]`.
+
+Traps carried forward from this batch (all hit for real):
+
+- **`i64::saturating_sub` is not `max(0, a-b)`** — `1000.saturating_sub(2000)`
+  is `-1000`, and a "how late is it" check built on it misclassifies.
+- **chrono 0.4 `TimeZone` for a hand-rolled zone needs `from_offset`,
+  `offset_from_local_date`, and `offset_from_utc_date` too, and
+  `offset_from_utc_datetime` takes `&NaiveDateTime`** (not `DateTime<Utc>`).
+  `Local.timestamp_millis_opt` no longer exists — use
+  `DateTime::from_timestamp_millis(ms).with_timezone(&Local)`.
+  `impl Offset for FixedOffset` is an orphan violation (it already
+  implements it).
+- **Associated fns on generic types defeat `map_err` inference** (E0283):
+  error mappers like `project_failure` are free functions, not
+  `ChatService::<K, R>::` methods.
+- **`#[serde(flatten)]` does not inherit the outer `rename_all`** —
+  `ProjectRow`/`ScheduledTaskRow` spell their own fields (`memory_enabled`
+  snake_case next to `createdAt` camelCase, like `SessionRow`'s stored-row
+  convention; documented in `client.ts`).
+- **E2E: `.switch input` has `pointer-events: none`** — click the `.switch`
+  label. **`hasText` matches row VALUES too** — the filter menu rows carry
+  `data-filter-row` for exact targeting; applying an option closes the menu.
+  `waitForSelector("#composer")` before Ctrl+K, or the keypress races
+  hydration.
+- Store row views returned to the wire must include the new `project_id`
+  everywhere `NewSession` is constructed — the compiler catches struct
+  literals, but the E2E mocks had to add `projectId` to their fixtures.
+
 ## 8. Status vocabulary (`docs/17`)
 
 `Available` · `Available, unexercised` · `Partial` · `Policy-disabled` · `Unavailable` ·

@@ -74,8 +74,9 @@ fn migrations_are_forward_only_and_idempotent() {
 
     // The crate exposes no down path: the supported height is a forward-only
     // constant, and the ledger keeps one row per applied revision. Revision 3
-    // is Phase 6 slice 2 (projects + sessions.project_id).
-    assert_eq!(myharness_store::LATEST_SCHEMA_VERSION, 3);
+    // is Phase 6 slice 2 (projects + sessions.project_id); revision 4 is
+    // slice 4 (scheduled tasks + runs).
+    assert_eq!(myharness_store::LATEST_SCHEMA_VERSION, 4);
 }
 
 /// The `payload` passthrough preserves unknown keys across a close/reopen
