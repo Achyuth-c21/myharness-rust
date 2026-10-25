@@ -702,3 +702,92 @@ Next: Phase 5 slice 3 (agent tool loop + MCP executor adapter + bridge
 approval events) or skills/plugin discovery. The deferred retention timer/UI,
 retry, picker, attachments, and per-surface usage remain unknown/deferred, not
 invented.
+
+## 7j. Phase 5 slice 3 — tool turns, approvals, catalog, app integration (2026-10-25)
+
+Slice 3 (`03d5102`) completes Phase 5's local/stdio path. The lane is
+`phase-5`; **nothing has been merged or pushed** — owner approval is required.
+
+- **Agent tool loop (`crates/agent`):** `run_turn_with_tools` is a bounded
+  multi-round executor (`DEFAULT_MAX_TOOL_ROUNDS = 16`). It replays `tool` rows
+  as provider tool-result messages (`Role::User` + `ContentPart::ToolResult`),
+  filters unconditional denies before the request, validates arguments against
+  the tool schema, maps internal `<server>:<tool>` names to provider-safe
+  `mcp_<sanitized-prefix>_<16-hex-sha256>` names and back, persists each tool
+  result, and emits `TurnEvent::ToolResult`. A policy-denied call becomes a
+  model-visible tool error so the transcript stays grammatically valid; this
+  denial-result gate is **rebuild-defined** because the shipped behavior was
+  not observed. Output is sanitized to text/images/documents, capped at
+  `MAX_TOOL_OUTPUT_BYTES = 1 MiB`; audio is an explicit error (no provider SDK
+  audio part). A tool-enabled send calls `list_models`, then
+  `adapter.capabilities`; absent `tools_supported` fails `MODEL_UNSUPPORTED`
+  and no tools are sent.
+- **Policy/approvals (`crates/agent/src/tool_policy.rs`):** `Once` is never
+  stored; `Session`/`Persistent` are durable. `Persistent` needs
+  `context.persistent_allowed` (`mcpPersistentAlwaysAllowEnabled`); a scheduled
+  task with lifetime `0` offers only `Once` and never inherits an interactive
+  grant with no expiry. `ApprovalStore::restore` skips expired/`Once` records.
+  Fingerprints are canonical SHA-256 over exact arguments.
+- **Bridge (`crates/bridge/src/mcp.rs`):** `McpConfig::load(root)` reads
+  `root/servers.json` (bounded at 2 MiB); `McpConfig::build` returns
+  `BuiltMcp { manager, config, warnings }`. `ToolRuntime` holds the manager
+  behind `Arc<tokio::sync::Mutex<_>>`, the policy, approvals, prompt, frozen
+  snapshots, OAuth store, and warnings. `set_session_tools` validates live
+  names, persists `extra.mcpTools`, then installs the snapshot; a missing name
+  fails before storage/send; a running turn refuses changes
+  (`TURN_IN_PROGRESS`). `snapshot_for` freezes on first send. `clear_session`
+  drops the snapshot and session grants but keeps persistent grants.
+  Approvals persist to `mcp/approvals.json` (0600, bounded 2 MiB); new grants
+  are chained as `mcp.tool.approved` with tool name + fingerprint only.
+- **OAuth/schema/search (`crates/mcp`):** per-server token store; production
+  keychain account `mcp-oauth/<server>`; refresh is rebuild-defined OAuth 2.0
+  (`grant_type=refresh_token`, form-encoded) behind an injectable `OAuthHttp`;
+  an explicit configured `Authorization` header wins over OAuth. No
+  authorization-code/PKCE flow — a server needing it surfaces `NeedsAuth`.
+  Schema cache is `mcp/schemas.json` (atomic, 0600); cached tools are
+  metadata-only. Tool search is deterministic; `toolSearchEnabled` defaults
+  `false`; `McpTools` bypasses the flag for the session picker but filters
+  disabled and policy-hidden tools.
+- **Skills (`crates/skills`):** directory + `manifest.json`; precedence
+  `Org > User > Plugin > Bundled`; bundled placeholders are non-runnable;
+  scripts never execute; assets are declared-only, path-confined, capped;
+  symlinked directories rejected; truncation is UTF-8-safe.
+- **Plugins (`crates/plugins`):** local `plugin.json` install into a managed
+  root; org bundles read-only; no network marketplace. Signature verification
+  is **not implemented**: `Required` refuses every install; `Optional` accepts
+  unsigned/unverified and reports `Unverified`. Plugin MCP servers are
+  namespaced `<plugin>.<server>` and use normal MCP policy/approval; a server
+  name collision is skipped with a warning; disabled plugins contribute
+  nothing. Enablement changes apply on next app start, never to a frozen
+  session snapshot.
+- **Catalog (`crates/bridge/src/catalog.rs`):** root `app_data/catalog`;
+  `skills.json`/`plugins.json` plus `skills/`, `plugins/`, `org/skills/`,
+  `org/plugins/`. Lock ordering matters: catalog settings first, then MCP
+  config; never hold both across an await.
+- **App boot / renderer:** `apps/desktop/src-tauri/src/lib.rs` builds the
+  catalog, appends plugin servers, builds MCP, starts `start_all` in the
+  background, emits `chat://mcp-status` and `chat://tool-approval`, and wires
+  `ToolRuntime`/`CatalogRuntime`. A broken MCP directory degrades MCP, never
+  chat. Renderer: approval modal, live tool status, session tool picker, skill
+  picker, `SkillsPanel`/`PluginsPanel`/`DeveloperPanel`. `#settings/developer`
+  is a rebuild-defined placeholder key; `skills`/`plugins` stand in for the
+  uncaptured Customize route; `connectors` stays disabled. Browser preview
+  reports `BRIDGE_UNAVAILABLE` and never fakes rows/totals.
+- **Gates:** bridge 54 unit + 11 chat + 4 `mcp_tools`; MCP 25 unit + 22
+  manager + 2 real-stdio (`--features fixture-server`); agent 57; skills 7;
+  plugins 7; provider wire batteries unchanged; `cargo check -p
+  myharness-desktop`; `tsc --noEmit`; `vite build`; browser E2E 38/38; clippy
+  `-D warnings` on affected crates.
+- **Traps:** `run_turn` holds one global approval mutex across a turn, so tool
+  turns serialize across sessions; a pending approval can be lost if the
+  renderer navigates away; no default MCP start/tool-call timeout
+  (`None` unless configured); HTTP redirects are followed by the transport and
+  not re-checked by egress; stdio is not inspected; legacy SSE is explicitly
+  unsupported; tool schema validation is a bounded subset (`pattern`,
+  `format`, external `$ref` not enforced); no live HTTP MCP fixture or live
+  OAuth/keychain exercise; no marketplace/signature verification; no
+  persistent actionable failure toast; no model-driven on-demand tool search.
+- **Docs:** `docs/17` §4.16, `docs/14` §9 items 44–52, `docs/18` §4.5, `docs/19`
+  IMP-31..37, `docs/04` Phase 5 row 3. `docs/**` is modified on disk only and is
+  **never committed**. `apps/desktop/src/components/Untitled-1` remains untracked and
+  untouched. Do not run `cargo fmt --all` (it churns unrelated baseline files).
