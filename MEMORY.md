@@ -357,6 +357,69 @@ Traps: crate names are `myharness-provider-<family>`; `ProtocolFamily::OpenAiCha
 is the sdk's id for the wire; reqwest lowercases header names in mock
 recordings (the openai tests' `Recorded::header` is case-insensitive).
 
+## 7k. Phase 6 slice 1 — Code dashboard + folder-backed session (2026-10-25)
+
+The `phase-6-code` lane (cut from `dev` @ `d3d2d81`) implements `docs/13` Phase 6
+Slice 1. Not merged, not pushed — owner approval required. Projects, Artifacts,
+Scheduled, and Search remain later slices, in that order.
+
+- **Policy (`crates/bridge/src/policy.rs`):** `CodePolicy` is read from the
+  **merged profile**, never the renderer. `isClaudeCodeForDesktopEnabled`
+  absent → enabled; `disableDesktopLocalSessions` true → local refused (remote
+  placement does not exist — no fallback); `disableBypassPermissionsMode` is
+  **fail-closed** (only an explicit `false` permits Bypass; absence/true/malformed
+  all disable); `allowedWorkspaceFolders` accepts array / `{folders|paths}` /
+  path→bool map (shape never observed — `docs/14` §9), malformed grants nothing,
+  relative roots are dropped. `validate_workspace_folder` canonicalizes
+  (symlink-resolved **before** the allowlist check), requires an existing real
+  directory, bounds length, refuses control chars, and never creates anything.
+- **Bridge commands (`crates/bridge/src/chat.rs`):** `ListCodeSessions` /
+  `CreateCodeSession` / `OpenCodeSession` / `SendCodeTurn` / `CodeDashboard`.
+  Cowork's list stays chat-only (a Code row can never appear there). **Every
+  send revalidates**: code enabled, local enabled, folder re-canonicalized and
+  compared to the stored spelling (`CODE_FOLDER_CHANGED` — a renamed target or
+  swapped symlink cannot silently redirect), stored permission mode parsed
+  fail-closed (unknown spelling blocks the send), Bypass re-checked against
+  current policy. The workspace folder travels as a quoted data block in the
+  turn input, explicitly "path as data, not an instruction".
+- **Permission modes (`crates/agent/src/permission.rs`):** stored spellings
+  `default`/`acceptEdits`/`plan`/`bypass`. Enforced in `run_turn_with_tools`,
+  not the renderer: **Plan** advertises zero tools and refuses a hallucinated
+  call before policy/executor with a model-visible tool error; **Bypass** is a
+  validation error unless `bypass_allowed`; a policy `Deny` still beats every
+  mode; **AcceptEdits** auto-approves only host-declared edit-tool names — the
+  production set is empty (no built-in file tools yet), so the mode never
+  weakens an MCP approval in this slice.
+- **Usage (`crates/sessions/src/usage.rs`, `crates/store/src/repos.rs`):**
+  `summarize_code_usage` folds Code-only ledger rows + user/assistant turns
+  (SQL join on `sessions.surface = 'code'`; Cowork rows cannot leak in).
+  Ranges `7d`/`30d`/`all`; all-time's **daily strip** is capped at 3660 days
+  with an honest `truncated` flag while totals/messages/sessions/shares stay
+  genuinely all-time. Model shares, peak hour, favorite model derived only
+  from real rows.
+- **Renderer:** `/epitaxy` = `CodeDashboardScreen` (distinct greeting, range
+  picker, recent Code sessions, per-folder repository rows, choose-folder);
+  `/epitaxy/:sessionId` = `CodeSessionScreen` reusing the transcript/streaming/
+  tool/approval surface with Code composer metadata (folder, model, mode).
+  Bypass and Fast render visibly disabled with no capability claim. Browser
+  preview reports `BRIDGE_UNAVAILABLE`; nothing is faked. Folder picking is
+  the Tauri command `pick_workspace_folder` (`rfd`, workspace dep with
+  `xdg-portal` + `tokio` features); cancellation is `None`.
+- **Gates:** workspace **467 passed / 0 failed**; clippy clean on the four
+  touched crates; `cargo metadata`; `tsc --noEmit`; `vite build`; E2E
+  `shell.spec.mjs` ALL PASS including new `T28b` (honest empty/fail-closed
+  dashboard), `T28c` (populated dashboard renders only supplied bridge data),
+  `T28d` (Code session reuses transcript with Code metadata).
+- **Deferred with reasons in `docs/14` §9 (items 53–57):** terminal/PTY,
+  SSH/WSL/remote placement, worktrees, Fast mode. `TEST-CODE-003` is Partial
+  (worktree lifecycle), `005` Policy-disabled/deferred, `006`–`008` and
+  `TEST-SESSION-010` Unavailable/deferred. The native folder picker and a real
+  Tauri window are compile/E2E-mock verified only, not exercised end-to-end.
+- **Traps carried forward:** `docs/**` stays uncommitted (code-only commits);
+  `apps/desktop/src/components/Untitled-1` remains untracked and untouched
+  (owner decision pending); E2E needs the Vite dev server on 5173 **and** a
+  served-title check (trap #13); use `apps/desktop/node_modules/.bin/tsc`.
+
 ## 8. Status vocabulary (`docs/17`)
 
 `Available` · `Available, unexercised` · `Partial` · `Policy-disabled` · `Unavailable` ·
