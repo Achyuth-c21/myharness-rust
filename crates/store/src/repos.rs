@@ -180,6 +180,19 @@ pub struct UsageEventRow {
     pub timestamp: i64,
 }
 
+/// Local row counts for the diagnostic bundle (Phase 7). Counts only — the
+/// bundle never reads content (`docs/features/updates-telemetry-privacy.md`
+/// §3, §7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticCounts {
+    pub sessions: i64,
+    pub cowork_sessions: i64,
+    pub code_sessions: i64,
+    pub turns: i64,
+    pub usage_events: i64,
+}
+
 /// One user/assistant turn on the Code surface, used by the Code dashboard's
 /// message count. Only the fields the aggregate needs are selected; transcript
 /// content stays behind its blob reference.
@@ -1064,6 +1077,23 @@ impl Store {
             .collect::<Result<Vec<_>, _>>()?;
         drop(stmt);
         Ok(rows)
+    }
+
+    /// Count sessions by surface, turns, and usage events for the diagnostic
+    /// bundle (Phase 7). Pure counts; no title, content, or model name is
+    /// read (`docs/features/updates-telemetry-privacy.md` §3, §7).
+    pub fn diagnostic_counts(&self) -> Result<DiagnosticCounts, StoreError> {
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        let scalar = |sql: &str| -> Result<i64, StoreError> {
+            Ok(conn.query_row(sql, [], |row| row.get(0))?)
+        };
+        Ok(DiagnosticCounts {
+            sessions: scalar("SELECT COUNT(*) FROM sessions")?,
+            cowork_sessions: scalar("SELECT COUNT(*) FROM sessions WHERE surface = 'chat'")?,
+            code_sessions: scalar("SELECT COUNT(*) FROM sessions WHERE surface = 'code'")?,
+            turns: scalar("SELECT COUNT(*) FROM turns")?,
+            usage_events: scalar("SELECT COUNT(*) FROM usage_events")?,
+        })
     }
 
     /// Usage events of one surface (Phase 7's split usage view). Same shape

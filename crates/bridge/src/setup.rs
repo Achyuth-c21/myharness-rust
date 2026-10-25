@@ -253,6 +253,29 @@ impl ConfigBackend {
             &self.library.get_merged()?,
         ))
     }
+
+    /// The effective telemetry policy (Phase 7; `REQ-PRIV-02`). Nothing in
+    /// this build emits; the policy drives the Privacy pane and the
+    /// diagnostic bundle.
+    pub fn telemetry_policy(
+        &self,
+    ) -> Result<myharness_telemetry::TelemetryPolicy, BridgeError> {
+        Ok(myharness_telemetry::TelemetryPolicy::from_merged(
+            &self.library.get_merged()?,
+        ))
+    }
+
+    /// The applied profile for the diagnostic bundle, still unredacted (the
+    /// builder redacts it with the export rules). `None` when no profile is
+    /// applied — the bundle then states that the configuration is omitted.
+    pub fn diagnostic_profile(
+        &self,
+    ) -> Result<Option<myharness_config::ProfileDocument>, BridgeError> {
+        let Some(entry) = self.library.active()? else {
+            return Ok(None);
+        };
+        Ok(Some(self.library.read(&entry.id)?))
+    }
 }
 
 impl SetupBackend for ConfigBackend {

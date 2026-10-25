@@ -2314,6 +2314,7 @@ dependencies = [
  "myharness-sessions",
  "myharness-skills",
  "myharness-store",
+ "myharness-telemetry",
  "rand 0.8.8",
  "reqwest 0.12.28",
  "secrecy",
@@ -2561,6 +2562,11 @@ dependencies = [
 [[package]]
 name = "myharness-telemetry"
 version = "0.1.0"
+dependencies = [
+ "myharness-config",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "myharness-updates"

@@ -296,6 +296,8 @@ export type ChatCommand =
   | { type: "updateMemoryEntry"; id: string; content: string }
   | { type: "deleteMemoryEntry"; id: string }
   | { type: "resetMemory" }
+  | { type: "diagnosticsPreview" }
+  | { type: "diagnosticsBuild"; consent: boolean }
   | { type: "listCodeSessions"; archived?: boolean | null }
   | {
       type: "createCodeSession";
@@ -364,6 +366,8 @@ export type ChatResponse =
   | { type: "memoryEntries"; entries: MemoryEntryRecord[] }
   | { type: "memoryEntry"; entry: MemoryEntryRecord }
   | { type: "memoryReset"; deleted: number }
+  | { type: "diagnosticsPreview"; entries: string[] }
+  | { type: "diagnosticsBundle"; file: string; entries: string[] }
   | { type: "codeDashboard"; summary: CodeUsageSummary; sessions: SessionRecord[]; repositories: CodeRepositoryView[]; policy: CodePolicyView }
   | {
       type: "turn";

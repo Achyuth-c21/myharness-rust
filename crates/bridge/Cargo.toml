@@ -22,6 +22,7 @@ myharness-provider-sdk = { path = "../provider-sdk" }
 myharness-secrets = { path = "../secrets" }
 myharness-sessions = { path = "../sessions" }
 myharness-store = { path = "../store" }
+myharness-telemetry = { path = "../telemetry" }
 rand = { workspace = true }
 reqwest = { workspace = true }
 secrecy = { workspace = true }

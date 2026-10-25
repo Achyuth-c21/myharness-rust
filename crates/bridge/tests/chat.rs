@@ -48,6 +48,8 @@ struct ScriptedTargets {
     calls: Arc<Mutex<Vec<NativeTurnRequest>>>,
     policy: CodePolicy,
     memory_policy: myharness_bridge::policy::MemoryPolicy,
+    telemetry: myharness_telemetry::TelemetryPolicy,
+    profile: Option<myharness_config::ProfileDocument>,
 }
 
 impl ChatTargetResolver for ScriptedTargets {
@@ -75,6 +77,18 @@ impl ChatTargetResolver for ScriptedTargets {
 
     fn memory_policy(&self) -> Result<myharness_bridge::policy::MemoryPolicy, BridgeError> {
         Ok(self.memory_policy.clone())
+    }
+
+    fn telemetry_policy(
+        &self,
+    ) -> Result<myharness_telemetry::TelemetryPolicy, BridgeError> {
+        Ok(self.telemetry.clone())
+    }
+
+    fn diagnostic_profile(
+        &self,
+    ) -> Result<Option<myharness_config::ProfileDocument>, BridgeError> {
+        Ok(self.profile.clone())
     }
 }
 
@@ -211,6 +225,8 @@ impl Fixture {
                 calls: Arc::clone(&calls),
                 policy,
                 memory_policy,
+                telemetry: myharness_telemetry::TelemetryPolicy::default(),
+                profile: None,
             },
         )
         .with_memory(
@@ -218,6 +234,42 @@ impl Fixture {
                 .map(Arc::new)
                 .ok(),
         );
+        Fixture {
+            dir,
+            service: Arc::new(service),
+            calls,
+        }
+    }
+
+    /// A fixture with the diagnostics directory attached and, optionally, an
+    /// applied profile the bundle may include.
+    fn with_diagnostics(
+        script: Vec<Result<TurnEvent, ProviderError>>,
+        tail: Tail,
+        profile: Option<myharness_config::ProfileDocument>,
+    ) -> Fixture {
+        let dir = TempDir::new().expect("temp dir");
+        let store = Store::open(&dir.path().join("chat.db"), &dir.path().join("files-root"))
+            .expect("open store");
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let service = ChatService::new(
+            SessionService::new(store, InMemoryAuditKeys::new()),
+            ScriptedTargets {
+                script,
+                tail,
+                calls: Arc::clone(&calls),
+                policy: CodePolicy::default(),
+                memory_policy: myharness_bridge::policy::MemoryPolicy::default(),
+                telemetry: myharness_telemetry::TelemetryPolicy::default(),
+                profile,
+            },
+        )
+        .with_memory(
+            myharness_memory::MemoryStore::open(&dir.path().join("memory"))
+                .map(Arc::new)
+                .ok(),
+        )
+        .with_diagnostics(Some(dir.path().join("diagnostics")));
         Fixture {
             dir,
             service: Arc::new(service),
@@ -2424,4 +2476,93 @@ async fn memory_reset_is_explicit_and_reports_the_count() {
         panic!("expected entries, got {listed:?}");
     };
     assert!(entries.is_empty());
+}
+
+// ---------------------------------------------------------------------
+// Diagnostics (Phase 7; `TEST-PRIV-003`, `TEST-DATA-009`)
+// ---------------------------------------------------------------------
+
+/// The preview enumerates exactly what a bundle would include, and writes
+/// nothing anywhere.
+#[tokio::test]
+async fn diagnostics_preview_enumerates_and_writes_nothing() {
+    let fixture = Fixture::new(reply("unused"), Tail::End);
+    let response = dispatch(
+        fixture.service.as_ref(),
+        ChatCommand::DiagnosticsPreview,
+        None,
+    )
+    .await;
+    let ChatResponse::DiagnosticsPreview { entries } = response else {
+        panic!("expected a diagnostics preview, got {response:?}");
+    };
+    assert_eq!(entries.len(), 5);
+    assert!(entries[0].starts_with("Application version"));
+    assert!(
+        entries[1].contains("omitted"),
+        "the default resolver has no profile, so the manifest must say so"
+    );
+    assert!(entries.iter().any(|entry| entry.starts_with("Never included")));
+}
+
+/// Building without explicit consent is refused before anything is written
+/// (`TEST-PRIV-003`, `REQ-PRIV-03`).
+#[tokio::test]
+async fn a_diagnostic_bundle_requires_explicit_consent() {
+    let fixture = Fixture::with_diagnostics(reply("unused"), Tail::End, None);
+    let response = dispatch(
+        fixture.service.as_ref(),
+        ChatCommand::DiagnosticsBuild { consent: false },
+        None,
+    )
+    .await;
+    assert!(
+        matches!(response, ChatResponse::Error { ref error, .. } if error.code == "CONSENT_REQUIRED"),
+        "got {response:?}"
+    );
+    let dir = fixture.dir.path().join("diagnostics");
+    assert!(!dir.exists() || std::fs::read_dir(&dir).unwrap().count() == 0);
+}
+
+/// A consented bundle is written to the diagnostics directory, carries the
+/// redacted configuration (the fake key never appears), and the action is
+/// logged without contents.
+#[tokio::test]
+async fn a_consented_bundle_is_written_redacted_and_logged() {
+    let mut profile = myharness_config::ProfileDocument::default();
+    profile.connection = myharness_config::Section(serde_json::json!({
+        "inferenceProvider": "gateway",
+        "inferenceGatewayApiKey": "sk-ant-api03-FAKE0123456789",
+        "inferenceGatewayBaseUrl": "https://gateway.internal.example/v1?token=secret",
+    }));
+    let fixture = Fixture::with_diagnostics(reply("unused"), Tail::End, Some(profile));
+    let response = dispatch(
+        fixture.service.as_ref(),
+        ChatCommand::DiagnosticsBuild { consent: true },
+        None,
+    )
+    .await;
+    let ChatResponse::DiagnosticsBundle { file, entries } = response else {
+        panic!("expected a diagnostics bundle, got {response:?}");
+    };
+    assert!(file.starts_with("bundle-"));
+    assert_eq!(entries.len(), 5);
+    let path = fixture.dir.path().join("diagnostics").join(&file);
+    let body = std::fs::read_to_string(&path).expect("bundle file");
+    assert!(body.contains("myharness-desktop"));
+    assert!(body.contains("sessions: 0"));
+    assert!(
+        !body.contains("sk-ant-api03-FAKE0123456789"),
+        "the credential value must never appear in the bundle"
+    );
+    assert!(
+        !body.contains("token=secret"),
+        "URL query strings must never appear in the bundle"
+    );
+    let log = std::fs::read_to_string(
+        fixture.dir.path().join("diagnostics").join("log.jsonl"),
+    )
+    .expect("the action log");
+    assert!(log.contains("bundle-built"));
+    assert!(!log.contains("FAKE0123456789"));
 }

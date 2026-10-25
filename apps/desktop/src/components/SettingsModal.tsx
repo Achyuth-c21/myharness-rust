@@ -13,6 +13,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { SETTINGS_GROUPS } from "../routes";
 import { applyMode, loadMode, type ThemeMode } from "../theme";
 import { UsagePanel } from "../settings/UsagePanel";
+import { PrivacyPanel } from "../settings/PrivacyPanel";
 import { MemoryPanel } from "../settings/MemoryPanel";
 import { DeveloperPanel } from "../settings/DeveloperPanel";
 import { PluginsPanel } from "../settings/PluginsPanel";
@@ -185,6 +186,8 @@ export function SettingsModal({ section, onSection, onClose }: Props) {
               </>
             ) : section === "usage" ? (
               <UsagePanel />
+            ) : section === "data-privacy-controls" ? (
+              <PrivacyPanel />
             ) : section === "cowork" ? (
               <MemoryPanel />
             ) : section === "developer" ? (
