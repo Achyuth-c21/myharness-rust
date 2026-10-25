@@ -376,7 +376,8 @@ async fn chat_command(app: tauri::AppHandle, command: ChatCommand) -> ChatRespon
         }
     };
     let session_id = match &command {
-        ChatCommand::SendTurn { session_id, .. } => Some(session_id.clone()),
+        ChatCommand::SendTurn { session_id, .. }
+        | ChatCommand::SendCodeTurn { session_id, .. } => Some(session_id.clone()),
         _ => None,
     };
     let handle = app.clone();
@@ -390,6 +391,83 @@ async fn chat_command(app: tauri::AppHandle, command: ChatCommand) -> ChatRespon
         }
     };
     chat_dispatch(service, command, Some(&observer)).await
+}
+
+/// Native folder selection for Code and Projects. The browser preview has no
+/// Tauri host and reports `BRIDGE_UNAVAILABLE`; it never invents a folder.
+/// Cancellation is `None`; `rfd` does not expose a separate platform-picker
+/// failure, so a failed portal is also observed as `None` and the bridge
+/// still revalidates any path it receives.
+#[tauri::command]
+async fn pick_workspace_folder() -> Result<Option<String>, BridgeError> {
+    let picked = rfd::AsyncFileDialog::new()
+        .set_title("Choose a folder")
+        .pick_folder()
+        .await;
+    let Some(folder) = picked else {
+        return Ok(None);
+    };
+    folder
+        .path()
+        .to_str()
+        .map(|path| Some(path.to_string()))
+        .ok_or_else(|| {
+            BridgeError::new(
+                "CONFIG_VALIDATION",
+                "the selected folder path is not valid UTF-8",
+            )
+        })
+}
+
+/// Open a project/session folder in the OS file manager (REQ-PROJ-06's
+/// "open the folder" minimum for project detail). The path is untrusted
+/// renderer input: it must be absolute, exist, be a directory, and still
+/// canonicalize to itself — the same availability posture the bridge uses —
+/// before anything is opened. The opener runs without a shell, so the path
+/// is passed as one argument and cannot inject anything.
+#[tauri::command]
+fn reveal_workspace_folder(path: String) -> Result<(), BridgeError> {
+    if path.is_empty() || path.contains('\0') || path.chars().any(char::is_control) {
+        return Err(BridgeError::new(
+            "CONFIG_VALIDATION",
+            "the folder path is empty or contains an unsafe character",
+        ));
+    }
+    let candidate = std::path::PathBuf::from(&path);
+    if !candidate.is_absolute() {
+        return Err(BridgeError::new(
+            "CONFIG_VALIDATION",
+            "the folder path must be absolute",
+        ));
+    }
+    let canonical = std::fs::canonicalize(&candidate).map_err(|_| {
+        BridgeError::new(
+            "FOLDER_UNAVAILABLE",
+            "the folder is not available; it may have been moved or deleted",
+        )
+    })?;
+    if !canonical.is_dir() || canonical.to_str() != Some(path.as_str()) {
+        return Err(BridgeError::new(
+            "FOLDER_UNAVAILABLE",
+            "the folder no longer resolves to the recorded path",
+        ));
+    }
+    #[cfg(target_os = "macos")]
+    let program = "open";
+    #[cfg(target_os = "windows")]
+    let program = "explorer";
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let program = "xdg-open";
+    std::process::Command::new(program)
+        .arg(&canonical)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| {
+            BridgeError::new(
+                "FOLDER_UNAVAILABLE",
+                format!("the file manager could not be opened: {error}"),
+            )
+        })
 }
 
 /// The `settings.Custom3pSetup` namespace (docs/18 §3.4): profiles, config
@@ -522,6 +600,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             ping,
             chat_command,
+            pick_workspace_folder,
+            reveal_workspace_folder,
             setup_command,
             setup_discover_models,
             setup_discover_openai_models,
@@ -548,6 +628,35 @@ pub fn run() {
                     }
                     None => dlog("cold-start deep-link dropped: main window not present at setup"),
                 }
+            }
+            // The scheduler loop (Phase 6 slice 4): a per-30s tick over the
+            // armed scheduled tasks. Runs execute on the interactive send
+            // path with the scheduled approval context; a missed occurrence
+            // becomes a recorded skip, never a late execution
+            // (`docs/features/scheduled-tasks.md`, TEST-SCHED-003/004). The
+            // first tick initializes the chat service (the store) even when
+            // no renderer command has run yet, so boot-time catch-up works.
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    loop {
+                        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|elapsed| elapsed.as_millis() as i64)
+                            .unwrap_or(0);
+                        match chat_state(&handle) {
+                            Ok(service) => {
+                                for note in service.scheduled_tick(now).await {
+                                    dlog(&format!("scheduler: {note}"));
+                                }
+                            }
+                            Err(message) => {
+                                dlog(&format!("the scheduler is idle: {message}"));
+                            }
+                        }
+                    }
+                });
             }
             Ok(())
         })

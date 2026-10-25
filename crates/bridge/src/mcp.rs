@@ -38,7 +38,7 @@ use myharness_agent::tool_exec::{ApprovalPrompt, ApprovalRequest, ToolExecutor, 
 use myharness_agent::tool_policy::{
     ApprovalContext, ApprovalRecord, ApprovalScope, ApprovalStore, ToolPolicy,
 };
-use myharness_agent::ToolTurnOutcome;
+use myharness_agent::{PermissionMode, ToolTurnOutcome};
 use myharness_mcp::{
     EgressPolicy, McpManager, OAuthConfig, OAuthError, OAuthHttp, OAuthManager, OAuthStore,
     OAuthToken, SchemaCache, ServerConfig, ServerView, ToolCallResult, ToolContent, ToolSearchHit,
@@ -1041,8 +1041,8 @@ impl ToolRuntime {
         }
     }
 
-    /// Run one tool-enabled turn. This owns the approval lock across the turn
-    /// so two sends cannot race grants.
+    /// Run one tool-enabled turn with the default permission mode. This owns
+    /// the approval lock across the turn so two sends cannot race grants.
     pub async fn run_turn<K: myharness_sessions::AuditKeyStore>(
         &self,
         run: myharness_agent::TurnRun<'_, K>,
@@ -1050,6 +1050,32 @@ impl ToolRuntime {
         session_id: &str,
         scheduled: bool,
         now: u64,
+    ) -> Result<ToolTurnOutcome, myharness_agent::AgentError> {
+        self.run_turn_with_permission(
+            run,
+            snapshot,
+            session_id,
+            scheduled,
+            now,
+            PermissionMode::Default,
+            false,
+        )
+        .await
+    }
+
+    /// Run one tool-enabled turn with a Code permission mode. The mode is
+    /// enforced in the agent gate; `bypass_allowed` is the bridge's
+    /// policy fact, never a renderer claim.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn run_turn_with_permission<K: myharness_sessions::AuditKeyStore>(
+        &self,
+        run: myharness_agent::TurnRun<'_, K>,
+        snapshot: &ToolSnapshot,
+        session_id: &str,
+        scheduled: bool,
+        now: u64,
+        permission_mode: PermissionMode,
+        bypass_allowed: bool,
     ) -> Result<ToolTurnOutcome, myharness_agent::AgentError> {
         let executor =
             McpToolExecutor::new(Arc::clone(&self.manager), snapshot.clone(), self.timeout);
@@ -1059,15 +1085,18 @@ impl ToolRuntime {
             self.context(session_id)
         };
         let mut approvals = self.approvals.lock().await;
-        let result = myharness_agent::run_turn_with_tools(myharness_agent::ToolTurnRun::new(
-            run,
-            &self.policy,
-            &mut approvals,
-            context,
-            &executor,
-            self.prompt.as_ref(),
-            now,
-        ))
+        let result = myharness_agent::run_turn_with_tools(
+            myharness_agent::ToolTurnRun::new(
+                run,
+                &self.policy,
+                &mut approvals,
+                context,
+                &executor,
+                self.prompt.as_ref(),
+                now,
+            )
+            .with_permission_mode(permission_mode, bypass_allowed),
+        )
         .await;
         drop(approvals);
         self.persist_approvals().await;

@@ -36,6 +36,9 @@ type HmacSha256 = Hmac<Sha256>;
 /// field the captures did not document — unknown keys survive round trips
 /// (`TEST-DATA-001`); the documented fields above are the typed half
 /// (`docs/11` §4.2's observed groups carried into `docs/11` §14's table).
+///
+/// `project_id` is a soft association (no foreign key): deleting a project
+/// never deletes or silently retargets its sessions (`REQ-PROJ-06`).
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SessionRow {
     pub id: String,
@@ -45,6 +48,8 @@ pub struct SessionRow {
     pub model: Option<String>,
     pub effort: Option<String>,
     pub permission_mode: Option<String>,
+    #[serde(rename = "projectId")]
+    pub project_id: Option<String>,
     pub archived: bool,
     pub legal_hold: bool,
     #[serde(rename = "createdAt")]
@@ -65,6 +70,7 @@ pub struct NewSession<'a> {
     pub model: Option<&'a str>,
     pub effort: Option<&'a str>,
     pub permission_mode: Option<&'a str>,
+    pub project_id: Option<&'a str>,
     pub extra: serde_json::Value,
 }
 
@@ -174,6 +180,18 @@ pub struct UsageEventRow {
     pub timestamp: i64,
 }
 
+/// One user/assistant turn on the Code surface, used by the Code dashboard's
+/// message count. Only the fields the aggregate needs are selected; transcript
+/// content stays behind its blob reference.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CodeTurnActivity {
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+    pub role: String,
+    #[serde(rename = "createdAt")]
+    pub created_at: i64,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct NewUsageEvent<'a> {
     pub model: &'a str,
@@ -208,8 +226,8 @@ pub struct AuditEventRow {
 // Validation
 // ---------------------------------------------------------------------
 
-fn session_columns() -> &'static str {
-    "id, surface, title, cwd, model, effort, permission_mode,
+pub(crate) fn session_columns() -> &'static str {
+    "id, surface, title, cwd, model, effort, permission_mode, project_id,
      archived, legal_hold, created_at, last_activity_at, payload"
 }
 
@@ -220,6 +238,11 @@ fn turn_columns() -> &'static str {
 fn usage_columns() -> &'static str {
     "id, session_id, model, input_tokens, output_tokens, cache_read_tokens,
      cache_write_tokens, search_requests, error, timestamp"
+}
+
+fn usage_columns_qualified() -> &'static str {
+    "u.id, u.session_id, u.model, u.input_tokens, u.output_tokens, u.cache_read_tokens,
+     u.cache_write_tokens, u.search_requests, u.error, u.timestamp"
 }
 
 fn audit_columns() -> &'static str {
@@ -258,23 +281,24 @@ fn usage_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<UsageEventRow> {
 
 /// The raw session row before validation.
 #[derive(Debug, serde::Serialize)]
-struct SessionRowParsed {
-    id: String,
-    surface: String,
-    title: String,
-    cwd: Option<String>,
-    model: Option<String>,
-    effort: Option<String>,
-    permission_mode: Option<String>,
-    archived: bool,
-    legal_hold: bool,
-    created_at: i64,
-    last_activity_at: i64,
-    payload: String,
+pub(crate) struct SessionRowParsed {
+    pub(crate) id: String,
+    pub(crate) surface: String,
+    pub(crate) title: String,
+    pub(crate) cwd: Option<String>,
+    pub(crate) model: Option<String>,
+    pub(crate) effort: Option<String>,
+    pub(crate) permission_mode: Option<String>,
+    pub(crate) project_id: Option<String>,
+    pub(crate) archived: bool,
+    pub(crate) legal_hold: bool,
+    pub(crate) created_at: i64,
+    pub(crate) last_activity_at: i64,
+    pub(crate) payload: String,
 }
 
 impl SessionRowParsed {
-    fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRowParsed> {
+    pub(crate) fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRowParsed> {
         Ok(SessionRowParsed {
             id: row.get(0)?,
             surface: row.get(1)?,
@@ -283,15 +307,16 @@ impl SessionRowParsed {
             model: row.get(4)?,
             effort: row.get(5)?,
             permission_mode: row.get(6)?,
-            archived: row.get::<_, i64>(7)? != 0,
-            legal_hold: row.get::<_, i64>(8)? != 0,
-            created_at: row.get(9)?,
-            last_activity_at: row.get(10)?,
-            payload: row.get(11)?,
+            project_id: row.get(7)?,
+            archived: row.get::<_, i64>(8)? != 0,
+            legal_hold: row.get::<_, i64>(9)? != 0,
+            created_at: row.get(10)?,
+            last_activity_at: row.get(11)?,
+            payload: row.get(12)?,
         })
     }
 
-    fn into_row(mut self) -> SessionRow {
+    pub(crate) fn into_row(mut self) -> SessionRow {
         // `payload` was validated as JSON before this point; the passthrough
         // is the caller's unknown fields, returned exactly as stored.
         let extra = serde_json::from_str::<serde_json::Value>(&self.payload).unwrap_or_default();
@@ -303,6 +328,7 @@ impl SessionRowParsed {
             model: self.model.take(),
             effort: self.effort.take(),
             permission_mode: self.permission_mode.take(),
+            project_id: self.project_id.take(),
             archived: self.archived,
             legal_hold: self.legal_hold,
             created_at: self.created_at,
@@ -313,7 +339,7 @@ impl SessionRowParsed {
 }
 
 /// Validate one raw session row; `Err(reason)` names the field only.
-fn valid_session(row: &SessionRowParsed) -> Result<(), String> {
+pub(crate) fn valid_session(row: &SessionRowParsed) -> Result<(), String> {
     if !is_uuid(&row.id) {
         return Err("id is not a uuid".into());
     }
@@ -396,8 +422,9 @@ impl Store {
         let conn = self.conn.lock().expect("store mutex poisoned");
         conn.execute(
             "INSERT INTO sessions (id, surface, title, cwd, model, effort, permission_mode,
-                                   archived, legal_hold, created_at, last_activity_at, payload)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, 0, ?8, ?8, ?9)",
+                                   project_id, archived, legal_hold, created_at,
+                                   last_activity_at, payload)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, 0, ?9, ?9, ?10)",
             params![
                 id,
                 session.surface,
@@ -406,6 +433,7 @@ impl Store {
                 session.model,
                 session.effort,
                 session.permission_mode,
+                session.project_id,
                 now,
                 session.extra.to_string(),
             ],
@@ -868,6 +896,18 @@ impl Store {
         session_id: &str,
         event: NewUsageEvent<'_>,
     ) -> Result<UsageEventRow, StoreError> {
+        self.record_usage_at(session_id, event, now_ms())
+    }
+
+    /// Record one usage event at an explicit timestamp. This is the import
+    /// seam used by fixtures; the live path calls [`Self::record_usage`], which
+    /// stamps the current time. A non-positive timestamp is refused.
+    pub fn record_usage_at(
+        &self,
+        session_id: &str,
+        event: NewUsageEvent<'_>,
+        timestamp: i64,
+    ) -> Result<UsageEventRow, StoreError> {
         if !is_uuid(session_id) {
             return Err(StoreError::Validation("the session id is not a uuid"));
         }
@@ -882,10 +922,14 @@ impl Store {
         {
             return Err(StoreError::Validation("a usage count is negative"));
         }
+        if timestamp <= 0 {
+            return Err(StoreError::Validation(
+                "the usage timestamp must be positive",
+            ));
+        }
         let id = uuid::Uuid::new_v4().to_string();
         let conn = self.conn.lock().expect("store mutex poisoned");
         self.require_session(&conn, session_id)?;
-        let timestamp = now_ms();
         conn.execute(
             "INSERT INTO usage_events (id, session_id, model, input_tokens, output_tokens,
                                        cache_read_tokens, cache_write_tokens, search_requests,
@@ -988,6 +1032,98 @@ impl Store {
         ))?;
         let rows: Vec<UsageEventRow> = stmt
             .query_map(params![from_ms, to_ms, session_id], usage_from_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(stmt);
+        Ok(rows)
+    }
+
+    /// Usage events in a closed window for Code sessions only. The join is on
+    /// the session's stored surface, so a chat event can never leak into the
+    /// Code dashboard (`TEST-CODE-001`).
+    pub fn list_code_usage_between(
+        &self,
+        from_ms: i64,
+        to_ms: i64,
+    ) -> Result<Vec<UsageEventRow>, StoreError> {
+        if to_ms < from_ms {
+            return Err(StoreError::Validation(
+                "the usage window ends before it starts",
+            ));
+        }
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {} FROM usage_events u
+             JOIN sessions s ON s.id = u.session_id
+             WHERE s.surface = 'code'
+               AND u.timestamp >= ?1 AND u.timestamp <= ?2
+             ORDER BY u.timestamp ASC, u.id ASC",
+            usage_columns_qualified()
+        ))?;
+        let rows: Vec<UsageEventRow> = stmt
+            .query_map(params![from_ms, to_ms], usage_from_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(stmt);
+        Ok(rows)
+    }
+
+    /// The earliest Code activity, if any: a usage event or a user/assistant
+    /// turn. The all-time dashboard uses this so the first user turn is not
+    /// dropped merely because its usage event was written a moment later.
+    pub fn earliest_code_activity_ms(&self) -> Result<Option<i64>, StoreError> {
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        let value: Option<i64> = conn
+            .query_row(
+                "SELECT MIN(activity_ts) FROM (
+                     SELECT u.timestamp AS activity_ts
+                     FROM usage_events u
+                     JOIN sessions s ON s.id = u.session_id
+                     WHERE s.surface = 'code'
+                     UNION ALL
+                     SELECT t.created_at AS activity_ts
+                     FROM turns t
+                     JOIN sessions s ON s.id = t.session_id
+                     WHERE s.surface = 'code'
+                       AND t.role IN ('user', 'assistant')
+                 )",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(value)
+    }
+
+    /// User/assistant turns on the Code surface in a closed window. Tool and
+    /// system rows are excluded so the dashboard's Messages stat means what
+    /// the docs say it means.
+    pub fn list_code_turns_between(
+        &self,
+        from_ms: i64,
+        to_ms: i64,
+    ) -> Result<Vec<CodeTurnActivity>, StoreError> {
+        if to_ms < from_ms {
+            return Err(StoreError::Validation(
+                "the turn window ends before it starts",
+            ));
+        }
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT t.session_id, t.role, t.created_at
+             FROM turns t
+             JOIN sessions s ON s.id = t.session_id
+             WHERE s.surface = 'code'
+               AND t.role IN ('user', 'assistant')
+               AND t.created_at >= ?1 AND t.created_at <= ?2
+             ORDER BY t.created_at ASC, t.id ASC",
+        )?;
+        let rows: Vec<CodeTurnActivity> = stmt
+            .query_map(params![from_ms, to_ms], |row| {
+                Ok(CodeTurnActivity {
+                    session_id: row.get(0)?,
+                    role: row.get(1)?,
+                    created_at: row.get(2)?,
+                })
+            })?
             .collect::<Result<Vec<_>, _>>()?;
         drop(stmt);
         Ok(rows)

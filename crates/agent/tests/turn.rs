@@ -46,6 +46,7 @@ impl Fixture {
     fn start(&self) -> String {
         self.service
             .start(NewSession {
+                project_id: None,
                 surface: "chat",
                 title: "slice 2",
                 ..Default::default()
@@ -797,6 +798,7 @@ async fn a_crashed_stream_is_marked_interrupted_and_not_replayed() {
         let service = SessionService::new(store, Arc::clone(&keys));
         session = service
             .start(NewSession {
+                project_id: None,
                 surface: "chat",
                 title: "crash",
                 ..Default::default()

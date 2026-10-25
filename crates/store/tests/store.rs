@@ -37,6 +37,7 @@ impl TestStore {
     fn fresh_session(&self, title: &str) -> myharness_store::repos::SessionRow {
         self.store
             .create_session(NewSession {
+                project_id: None,
                 surface: "chat",
                 title,
                 ..Default::default()
@@ -72,8 +73,10 @@ fn migrations_are_forward_only_and_idempotent() {
     drop(reopened);
 
     // The crate exposes no down path: the supported height is a forward-only
-    // constant, and the ledger keeps one row per applied revision.
-    assert_eq!(myharness_store::LATEST_SCHEMA_VERSION, 2);
+    // constant, and the ledger keeps one row per applied revision. Revision 3
+    // is Phase 6 slice 2 (projects + sessions.project_id); revision 4 is
+    // slice 4 (scheduled tasks + runs).
+    assert_eq!(myharness_store::LATEST_SCHEMA_VERSION, 4);
 }
 
 /// The `payload` passthrough preserves unknown keys across a close/reopen
@@ -85,6 +88,7 @@ fn unknown_payload_keys_survive_reopen() {
     let created = probe
         .store
         .create_session(NewSession {
+            project_id: None,
             surface: "chat",
             title: "documented fields only",
             extra: serde_json::json!({
@@ -277,6 +281,7 @@ fn an_injection_shaped_title_stores_as_data() {
     probe
         .store
         .create_session(NewSession {
+            project_id: None,
             surface: "chat",
             title: payload,
             ..Default::default()

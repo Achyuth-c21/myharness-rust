@@ -4,39 +4,6 @@
  * is invented. Header action buttons are rendered per docs but stay disabled until
  * their flows arrive (docs/05 §4.4 "The header also has New project", etc.).
  */
-import type { ScreenDef } from "../routes";
-
-function ClockGlyph() {
-  return (
-    <svg width="40" height="40" viewBox="0 0 40 40" fill="none" aria-hidden="true">
-      <circle cx="20" cy="21.5" r="13" stroke="currentColor" strokeWidth="1.6" />
-      <path d="M20 14.5v7l4.5 3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-      <path d="M13 5.5h14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function FolderGlyph({ size = 40 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 40 40" fill="none" aria-hidden="true">
-      <path
-        d="M5 12a3 3 0 0 1 3-3h7l4 4.5h13a3 3 0 0 1 3 3V28a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V12Z"
-        stroke="currentColor"
-        strokeWidth="1.6"
-      />
-    </svg>
-  );
-}
-
-function DocGlyph() {
-  return (
-    <svg width="40" height="40" viewBox="0 0 40 40" fill="none" aria-hidden="true">
-      <path d="M11 6h13l6 6v22H11V6Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
-      <path d="M24 6v6h6M16 18h9M16 23h9M16 28h6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-    </svg>
-  );
-}
-
 function ChevronRight() {
   return (
     <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -86,76 +53,10 @@ export function ScreenHead({ label, action }: { label: string; action?: string }
   );
 }
 
-/** /projects — docs/05 §4.4 empty state, exact copy. */
-export function ProjectsScreen() {
-  return (
-    <>
-      <ScreenHead label="Projects" action="New project" />
-      <EmptyState
-        icon={<FolderGlyph />}
-        headline="Looking to start a project?"
-        copy="Give Claude a folder you already work from"
-        action="New project"
-      />
-    </>
-  );
-}
+/** /projects — the real screen (Phase 6 slice 2) lives in ProjectsScreen.tsx. */
 
-/** /cowork-artifact — docs/05 §4.5 empty state, exact copy (no sentence captured). */
-export function ArtifactsScreen() {
-  return (
-    <>
-      <ScreenHead label="Artifacts" action="New artifact" />
-      <EmptyState
-        icon={<DocGlyph />}
-        headline="Create your first artifact"
-        copy=""
-        action="What needs my attention"
-      />
-    </>
-  );
-}
+/** /cowork-artifact — the real screen (Phase 6 slice 3) lives in ArtifactsScreen.tsx. */
 
-/** /scheduled-task — docs/05 §4.6: banner, keep-awake switch, empty copy. */
-export function ScheduledScreen() {
-  return (
-    <>
-      <ScreenHead label="Scheduled tasks" action="New Task" />
-      <div className="info-banner" role="status">
-        <span>
-          Scheduled tasks run only while the computer is awake and online.{" "}
-          {/* banner semantics per docs/05 §4.6; exact sentence copy pending locale catalog */}
-        </span>
-        <label className="switch">
-          <input type="checkbox" disabled title="Keep awake control arrives with scheduling (docs/08 UI-INT-084)" />
-          <span className="switch-track" aria-hidden="true" />
-          <span className="switch-label">Keep awake</span>
-        </label>
-      </div>
-      <EmptyState
-        icon={<ClockGlyph />}
-        headline="No scheduled tasks yet."
-        copy=""
-        action="New Task"
-      />
-    </>
-  );
-}
-
-/** /epitaxy — docs/05 §4.3: Code greeting differs from Cowork and must not reuse it. */
-export function CodeScreen({ screen }: { screen: ScreenDef }) {
-  return (
-    <>
-      <ScreenHead label={screen.label} />
-      <div className="new-task">
-        <h1 className="greeting">What’s up next?</h1>
-        <p className="code-note">
-          The Code dashboard (overview stats, activity heatmap, repository composer) is specified in{" "}
-          docs/05 §4.3 and lands in its own phase.
-        </p>
-      </div>
-    </>
-  );
-}
+/** /scheduled-task — the real screen (Phase 6 slice 4) lives in ScheduledScreen.tsx. */
 
 /** Generic fallthrough for routed surfaces without captured copy yet. */

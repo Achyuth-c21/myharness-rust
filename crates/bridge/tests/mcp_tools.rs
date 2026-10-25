@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use futures::stream;
 use myharness_agent::tool_policy::{PolicyEffect, ToolPolicy};
+use myharness_agent::PermissionMode;
 use myharness_bridge::chat::{
     dispatch, ChatCommand, ChatResponse, ChatService, ChatTarget, ChatTargetResolver,
 };
@@ -218,6 +219,7 @@ struct Fixture {
     dir: TempDir,
     service: Arc<ChatService<InMemoryAuditKeys, ScriptedTargets>>,
     calls: Arc<Mutex<Vec<NativeTurnRequest>>>,
+    runtime: Arc<ToolRuntime>,
 }
 
 impl Fixture {
@@ -308,11 +310,12 @@ impl Fixture {
                 calls: Arc::clone(&calls),
             },
         )
-        .with_tools(runtime);
+        .with_tools(Arc::clone(&runtime));
         Fixture {
             dir,
             service: Arc::new(service),
             calls,
+            runtime,
         }
     }
 
@@ -320,6 +323,8 @@ impl Fixture {
         let response = dispatch(
             self.service.as_ref(),
             ChatCommand::CreateSession {
+                project_id: None,
+                cwd: None,
                 title: Some("tools".into()),
             },
             None,
@@ -343,6 +348,70 @@ impl Fixture {
             other => panic!("expected a session, got {other:?}"),
         }
     }
+}
+
+#[tokio::test]
+async fn plan_mode_does_not_require_a_live_selected_mcp_server() {
+    let fixture = Fixture::new().await;
+    let folder = fixture.dir.path().join("plan-repo");
+    std::fs::create_dir_all(&folder).expect("folder");
+    let cwd = std::fs::canonicalize(&folder).expect("canonical");
+    let created = dispatch(
+        fixture.service.as_ref(),
+        ChatCommand::CreateCodeSession {
+            title: Some("plan".into()),
+            cwd: cwd.to_str().expect("utf-8").into(),
+            permission_mode: PermissionMode::Plan,
+        },
+        None,
+    )
+    .await;
+    let ChatResponse::Session { session } = created else {
+        panic!("expected a Code session, got {created:?}");
+    };
+    let session = session.session.id;
+
+    let selected = dispatch(
+        fixture.service.as_ref(),
+        ChatCommand::SetSessionTools {
+            session_id: session.clone(),
+            tools: vec!["echo:greet".into()],
+        },
+        None,
+    )
+    .await;
+    assert!(matches!(selected, ChatResponse::Ack));
+    // Remove the cached snapshot and the server. Plan must not resolve either:
+    // it advertises no tools, and a selected-but-offline server cannot block it.
+    fixture.runtime.clear_session(&session).await;
+    fixture
+        .runtime
+        .manager()
+        .lock()
+        .await
+        .remove_server("echo")
+        .await
+        .expect("remove server");
+
+    let response = dispatch(
+        fixture.service.as_ref(),
+        ChatCommand::SendCodeTurn {
+            session_id: session,
+            text: "plan only".into(),
+            max_tokens: Some(64),
+        },
+        None,
+    )
+    .await;
+    let ChatResponse::ToolTurn { tool_turns, .. } = response else {
+        panic!("expected the Plan turn to complete, got {response:?}");
+    };
+    // The scripted provider ignores the empty tool list and emits a call; the
+    // agent refuses it as undeclared and persists a tool error, never executes.
+    assert_eq!(tool_turns.len(), 1);
+    let calls = fixture.calls.lock().expect("calls mutex").clone();
+    assert_eq!(calls.len(), 2);
+    assert!(calls[0].tools.is_empty());
 }
 
 #[tokio::test]

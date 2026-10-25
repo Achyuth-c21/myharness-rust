@@ -32,14 +32,18 @@ pub mod blobs;
 pub mod migrate;
 pub mod quarantine;
 pub mod repos;
+pub mod repos_projects;
+pub mod repos_scheduler;
 
 pub use blobs::BlobStore;
 pub use migrate::LATEST_SCHEMA_VERSION;
 pub use quarantine::quarantined_records;
 pub use repos::{
-    AuditEventRow, NewSession, NewUsageEvent, SessionRow, TurnRole, TurnStatus, TurnRow,
-    UsageEventRow,
+    AuditEventRow, CodeTurnActivity, NewSession, NewUsageEvent, SessionRow, TurnRole, TurnStatus,
+    TurnRow, UsageEventRow,
 };
+pub use repos_projects::{NewProject, ProjectRow};
+pub use repos_scheduler::{NewScheduledTask, ScheduledRunRow, ScheduledTaskRow};
 
 pub(crate) mod secure {
     //! Owner-only file modes (`TEST-CFG-106` posture carried into storage). The

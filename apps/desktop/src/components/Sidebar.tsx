@@ -13,13 +13,24 @@
  * placeholder and no personal name is baked into source), the "· Gateway"
  * provider label, and a disclosure chevron; its menu behavior is unchanged.
  */
-import { useState } from "react";
-import { Link, NavLink } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { Link, NavLink, useLocation } from "react-router-dom";
 import { NAV_ITEMS } from "../routes";
 import { ModeSwitch } from "./ModeSwitch";
 import { openSetupWindow } from "../setup/client";
 import { useChatSessions } from "../chat/useSessions";
+import { chat, type ProjectRecord } from "../chat/client";
 import { formatRelative } from "../chat/format";
+import {
+  activeFilterCount,
+  dateGroupLabel,
+  DEFAULT_FILTERS,
+  loadFilters,
+  saveFilters,
+  TaskFilterMenu,
+  withinActivity,
+  type TaskFilters,
+} from "./TaskFilterMenu";
 
 interface Props {
   onOpenSettings: () => void;
@@ -162,7 +173,85 @@ const NAV_ICONS: Record<string, () => JSX.Element> = {
 
 export function Sidebar({ onOpenSettings, onOpenSearch }: Props) {
   const [accountOpen, setAccountOpen] = useState(false);
-  const { sessions } = useChatSessions(false);
+  const { pathname } = useLocation();
+  const codeMode = pathname.startsWith("/epitaxy");
+  const surface = codeMode ? "code" : "chat";
+  // The Status filter chooses which side of the archive the list shows; the
+  // remaining filters compose client-side over those rows (AND, immediate).
+  const [filters, setFilters] = useState<TaskFilters>(loadFilters);
+  const [filterMenuOpen, setFilterMenuOpen] = useState(false);
+  const [projects, setProjects] = useState<ProjectRecord[]>([]);
+  const { sessions, unavailable } = useChatSessions(
+    filters.status === "archived" ? true : false,
+    surface,
+  );
+
+  useEffect(() => {
+    saveFilters(filters);
+  }, [filters]);
+
+  // Group-by-Project needs the project names; fetch lazily for that mode only.
+  useEffect(() => {
+    if (filters.groupBy !== "project") return;
+    let cancelled = false;
+    void chat({ type: "listProjects" }).then((response) => {
+      if (cancelled) return;
+      if (response.type === "projects") setProjects(response.projects);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [filters.groupBy]);
+
+  const matching = useMemo(
+    () =>
+      sessions.filter(
+        (session) =>
+          (filters.type === "all" || session.surface === (filters.type === "code" ? "code" : "chat")) &&
+          withinActivity(filters, session.lastActivityAt),
+      ),
+    [sessions, filters],
+  );
+
+  const ordered = useMemo(() => {
+    const rows = [...matching];
+    if (filters.sortBy === "name") rows.sort((a, b) => a.title.localeCompare(b.title));
+    else if (filters.sortBy === "created") rows.sort((a, b) => b.createdAt - a.createdAt);
+    else rows.sort((a, b) => b.lastActivityAt - a.lastActivityAt);
+    return rows;
+  }, [matching, filters.sortBy]);
+
+  const projectName = (session: (typeof sessions)[number]): string => {
+    if (!session.projectId) return "No project";
+    return projects.find((project) => project.id === session.projectId)?.name ?? "Project missing";
+  };
+
+  // Grouped view: contiguous groups in the ordered row order, each with a
+  // header row. Date uses the captured recency vocabulary; Project and
+  // Status group by their value; None renders no headers.
+  const grouped = useMemo(() => {
+    if (filters.groupBy === "none") return null;
+    const groups: { label: string; rows: typeof ordered }[] = [];
+    for (const row of ordered) {
+      const label =
+        filters.groupBy === "date"
+          ? dateGroupLabel(row.lastActivityAt)
+          : filters.groupBy === "project"
+            ? projectName(row)
+            : row.archived
+              ? "Archived"
+              : "Active";
+      const last = groups[groups.length - 1];
+      if (last && last.label === label) last.rows.push(row);
+      else groups.push({ label, rows: [row] });
+    }
+    // Group by Date/Project keep recency order; grouping by Name should not
+    // resurrect the sort order, so groups follow the applied sort.
+    return groups;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ordered, filters.groupBy, projects]);
+
+  const filterBadge = activeFilterCount(filters);
 
   return (
     <nav className="sidebar" aria-label="Primary">
@@ -171,10 +260,11 @@ export function Sidebar({ onOpenSettings, onOpenSearch }: Props) {
         <div className="sidebar-list">
           {NAV_ITEMS.map((item) => {
             const Icon = NAV_ICONS[item.path];
+            const to = item.path === "/new" && codeMode ? "/epitaxy" : item.path;
             return (
               <NavLink
                 key={item.path}
-                to={item.path}
+                to={to}
                 className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
               >
                 {Icon ? <Icon /> : null}
@@ -195,8 +285,7 @@ export function Sidebar({ onOpenSettings, onOpenSearch }: Props) {
 
         {/* Tasks header + independent list scroll (docs/05 §2 sidebar scrolls alone).
             The chevron is the section's disclosure indicator in the reference, not
-            an interactive control. Filter is disabled until a list exists to filter
-            (Unavailable state, docs/05 §3); search opens the palette (docs/06 §2). */}
+            an interactive control. Filter composes immediately (UI-SCREEN-23). */}
         <div className="sidebar-scroll">
           <div className="tasks-head">
             <span className="tasks-title">
@@ -213,26 +302,65 @@ export function Sidebar({ onOpenSettings, onOpenSearch }: Props) {
               >
                 <SearchIcon />
               </button>
-              <button
-                type="button"
-                className="icon-btn icon-btn-sm"
-                aria-label="Filter tasks"
-                disabled
-                title="Filter arrives with the task list (Phase 4 — docs/13)"
-              >
-                <FilterIcon />
-              </button>
+              <span className="filter-anchor">
+                <button
+                  type="button"
+                  className="icon-btn icon-btn-sm"
+                  aria-label="Filter tasks"
+                  aria-haspopup="menu"
+                  aria-expanded={filterMenuOpen}
+                  title="Filter tasks"
+                  onClick={() => setFilterMenuOpen((open) => !open)}
+                >
+                  <FilterIcon />
+                  {filterBadge > 0 ? (
+                    <span className="filter-badge" aria-label={`${filterBadge} active filters`} />
+                  ) : null}
+                </button>
+                {filterMenuOpen ? (
+                  <TaskFilterMenu
+                    filters={filters}
+                    onChange={setFilters}
+                    surface={surface}
+                    onClose={() => setFilterMenuOpen(false)}
+                  />
+                ) : null}
+              </span>
             </div>
           </div>
-          {sessions.map((session) => (
-            <Link key={session.id} to={`/cowork/${session.id}`} className="task-row">
-              <span className="task-icon">
-                <TaskIcon />
-              </span>
-              <span className="task-title">{session.title}</span>
-              <span className="task-time">{formatRelative(session.lastActivityAt)}</span>
-            </Link>
-          ))}
+          {/* Filtered-empty (docs/screens/search-palette.md): with non-default
+              filters and no rows, say so and offer the reset — never the plain
+              empty state, which belongs to a store with no tasks at all. */}
+          {filterBadge > 0 && !unavailable && ordered.length === 0 ? (
+            <div className="tasks-filtered-empty">
+              <span>No tasks</span>
+              <button type="button" className="text-btn" onClick={() => setFilters(DEFAULT_FILTERS)}>
+                Reset filters
+              </button>
+            </div>
+          ) : null}
+          {(grouped ?? ordered.map((row) => ({ label: null as string | null, rows: [row] }))).map(
+            (group, groupIndex) => (
+              <div key={group.label ?? `g${groupIndex}`} className="task-group">
+                {group.label !== null ? (
+                  <div className="task-group-label">{group.label}</div>
+                ) : null}
+                {group.rows.map((session) => (
+                  <Link
+                    key={session.id}
+                    to={`${codeMode ? "/epitaxy" : "/cowork"}/${session.id}`}
+                    className="task-row"
+                  >
+                    <span className="task-icon">
+                      <TaskIcon />
+                    </span>
+                    <span className="task-title">{session.title}</span>
+                    <span className="task-time">{formatRelative(session.lastActivityAt)}</span>
+                  </Link>
+                ))}
+              </div>
+            ),
+          )}
         </div>
       </div>
 

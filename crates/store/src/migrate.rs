@@ -109,12 +109,81 @@ CREATE TABLE quarantined_records (
         name: "turns_stop_reason",
         sql: "ALTER TABLE turns ADD COLUMN stop_reason TEXT;",
     },
+    // Revision 3 (Phase 6 slice 2): projects. The shipped schema was never
+    // observed (`docs/features/projects.md`, `docs/11`); this is the rebuild
+    // model. `sessions.project_id` is a **soft** association on purpose — no
+    // foreign key — because deleting a project must not delete or retarget its
+    // sessions (`REQ-PROJ-06`); a session keeps its own `cwd` and stays open.
+    Migration {
+        version: 3,
+        name: "phase6_projects",
+        sql: r#"
+CREATE TABLE projects (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    instructions TEXT,
+    cwd TEXT NOT NULL,
+    memory_enabled INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL,
+    last_activity_at INTEGER NOT NULL,
+    payload TEXT NOT NULL
+);
+
+CREATE INDEX idx_projects_activity ON projects(last_activity_at DESC);
+
+ALTER TABLE sessions ADD COLUMN project_id TEXT;
+
+CREATE INDEX idx_sessions_project ON sessions(project_id);
+"#,
+    },
+    // Revision 4 (Phase 6 slice 4): scheduled tasks and their runs. The
+    // shipped `scheduled-tasks.json` file layout was captured only at the
+    // schema level (docs/screens/scheduled-tasks.md §Data); this is the
+    // rebuild's normalized model. A run row exists for every due occurrence —
+    // completed, failed, or skipped — so a missed run is recorded, never
+    // silently backfilled (TEST-SCHED-003). Run rows belong to their task:
+    // deleting the task removes the schedule and its run records, while the
+    // sessions a run created stay (they follow session retention).
+    Migration {
+        version: 4,
+        name: "phase6_scheduled_tasks",
+        sql: r#"
+CREATE TABLE scheduled_tasks (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    cron TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    project_id TEXT,
+    cwd TEXT,
+    created_at INTEGER NOT NULL,
+    armed_at INTEGER,
+    last_run_at INTEGER,
+    payload TEXT NOT NULL
+);
+
+CREATE INDEX idx_tasks_armed ON scheduled_tasks(enabled, armed_at);
+
+CREATE TABLE scheduled_runs (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    started_at INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    reason TEXT,
+    session_id TEXT,
+    finished_at INTEGER,
+    payload TEXT NOT NULL
+);
+
+CREATE INDEX idx_runs_task ON scheduled_runs(task_id, started_at DESC);
+"#,
+    },
 ];
 
 /// The newest schema revision this binary understands. Kept as a flat constant
 /// (const-eval cannot iterate the table); the unit test below pins it to the
 /// last migration so the two can never drift apart.
-pub const LATEST_SCHEMA_VERSION: i64 = 2;
+pub const LATEST_SCHEMA_VERSION: i64 = 4;
 
 /// Apply every missing migration inside one transaction each, recording the
 /// version row together with the schema it belongs to. Idempotent: an already

@@ -54,9 +54,12 @@
 //! A tool result is data. It is inserted only as a `ToolResult` content block;
 //! no result can add a tool, change policy, or approve itself.
 
+pub mod permission;
 pub mod tool_exec;
 pub mod tool_policy;
 pub mod tool_schema;
+
+pub use permission::PermissionMode;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -76,7 +79,9 @@ use crate::tool_exec::{
     execute_tool_call, ApprovalPrompt, ApprovalRequest, ToolCallRequest, ToolExecution,
     ToolExecutor, ToolOutput,
 };
-use crate::tool_policy::{ApprovalContext, ApprovalScope, ApprovalStore, ToolPolicy};
+use crate::tool_policy::{
+    evaluate, ApprovalContext, ApprovalScope, ApprovalStore, PolicyDecision, ToolPolicy,
+};
 use crate::tool_schema::validate_arguments;
 
 /// The rebuild's default tool-round bound. The shipped value was not
@@ -645,6 +650,15 @@ pub struct ToolTurnRun<'a, K: AuditKeyStore> {
     pub now: u64,
     /// Bound on provider rounds. Defaults to [`DEFAULT_MAX_TOOL_ROUNDS`].
     pub max_rounds: usize,
+    /// Code permission mode. `Default` for every non-Code caller.
+    pub permission_mode: PermissionMode,
+    /// True only when policy explicitly permits `Bypass`. A `Bypass` mode with
+    /// this false is a validation error, never a silent downgrade.
+    pub bypass_allowed: bool,
+    /// Host-declared file-edit tools. `AcceptEdits` auto-approves only names in
+    /// this set. No built-in edit tools exist in this slice, so production
+    /// leaves it empty.
+    pub edit_tools: Option<&'a BTreeSet<String>>,
 }
 
 impl<'a, K: AuditKeyStore> ToolTurnRun<'a, K> {
@@ -666,11 +680,32 @@ impl<'a, K: AuditKeyStore> ToolTurnRun<'a, K> {
             prompt,
             now,
             max_rounds: DEFAULT_MAX_TOOL_ROUNDS,
+            permission_mode: PermissionMode::Default,
+            bypass_allowed: false,
+            edit_tools: None,
         }
     }
 
     pub fn with_max_rounds(mut self, max_rounds: usize) -> ToolTurnRun<'a, K> {
         self.max_rounds = max_rounds;
+        self
+    }
+
+    /// Apply a Code permission mode and the policy fact that gates `Bypass`.
+    pub fn with_permission_mode(
+        mut self,
+        mode: PermissionMode,
+        bypass_allowed: bool,
+    ) -> ToolTurnRun<'a, K> {
+        self.permission_mode = mode;
+        self.bypass_allowed = bypass_allowed;
+        self
+    }
+
+    /// Declare the host's file-edit tools for `AcceptEdits`. Production has no
+    /// built-in edit tools yet; the set is a seam, not a claim.
+    pub fn with_edit_tools(mut self, edit_tools: &'a BTreeSet<String>) -> ToolTurnRun<'a, K> {
+        self.edit_tools = Some(edit_tools);
         self
     }
 }
@@ -714,6 +749,9 @@ pub async fn run_turn_with_tools<K: AuditKeyStore>(
         prompt,
         now,
         max_rounds,
+        permission_mode,
+        bypass_allowed,
+        edit_tools,
     } = run;
     let TurnRun {
         sessions,
@@ -730,6 +768,11 @@ pub async fn run_turn_with_tools<K: AuditKeyStore>(
             "the tool round limit must be greater than zero",
         ));
     }
+    if permission_mode == PermissionMode::Bypass && !bypass_allowed {
+        return Err(AgentError::Validation(
+            "bypass permissions are disabled by policy",
+        ));
+    }
     input.validate(adapter.id(), true)?;
     if cancel.is_cancelled() {
         return Err(AgentError::CancelledBeforeSend);
@@ -741,13 +784,18 @@ pub async fn run_turn_with_tools<K: AuditKeyStore>(
     let (history, next_seq) = replay(sessions, session_id)?;
 
     // The provider sees only tools whose policy effect is not an
-    // unconditional deny (`TEST-AI-019`). The full schema map is kept so a
-    // stale/undeclared call can be refused by the gate with a useful message.
-    let visible: BTreeSet<String> = policy
-        .visible_tool_names(input.tools.iter().map(|tool| tool.name.as_str()), &context)
-        .into_iter()
-        .map(str::to_string)
-        .collect();
+    // unconditional deny (`TEST-AI-019`). Plan mode is stricter: it advertises
+    // no tools at all. The full schema map is kept so a stale/undeclared call
+    // can still be refused by the gate with a useful message.
+    let visible: BTreeSet<String> = if permission_mode == PermissionMode::Plan {
+        BTreeSet::new()
+    } else {
+        policy
+            .visible_tool_names(input.tools.iter().map(|tool| tool.name.as_str()), &context)
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+    };
     let schemas: BTreeMap<String, Value> = input
         .tools
         .iter()
@@ -855,6 +903,8 @@ pub async fn run_turn_with_tools<K: AuditKeyStore>(
                     call,
                     schemas.get(&call.name),
                     cancel,
+                    permission_mode,
+                    edit_tools,
                 )
                 .await?
             };
@@ -927,6 +977,8 @@ async fn execute_one_tool(
     call: &ToolCallRequest,
     schema: Option<&Value>,
     cancel: &CancellationToken,
+    permission_mode: PermissionMode,
+    edit_tools: Option<&BTreeSet<String>>,
 ) -> Result<ToolOutput, AgentError> {
     let Some(schema) = schema else {
         return Ok(ToolOutput::error(
@@ -937,6 +989,39 @@ async fn execute_one_tool(
         return Ok(ToolOutput::error(format!(
             "invalid tool arguments: {reason}"
         )));
+    }
+
+    // Plan mode never advertises tools, but a provider can still hallucinate a
+    // call. Refuse it here, before the policy or the executor.
+    if permission_mode == PermissionMode::Plan {
+        return Ok(ToolOutput::error(
+            "the tool call was denied by Plan mode: no changes are executed",
+        ));
+    }
+
+    // `Bypass` auto-approves an `Ask` decision only when policy permitted the
+    // mode (validated before the turn). `AcceptEdits` auto-approves only the
+    // host's declared edit tools. A policy `Deny` is never bypassed.
+    let auto_allow = match permission_mode {
+        PermissionMode::Bypass => true,
+        PermissionMode::AcceptEdits => edit_tools
+            .is_some_and(|tools| tools.contains(&call.name)),
+        PermissionMode::Default | PermissionMode::Plan => false,
+    };
+    if auto_allow {
+        match evaluate(policy, approvals, context, &call.name, &call.arguments, now) {
+            PolicyDecision::Deny { reason } => {
+                return Ok(ToolOutput::error(format!(
+                    "the tool call was denied by policy: {reason}"
+                )));
+            }
+            PolicyDecision::Allow | PolicyDecision::Ask { .. } => {
+                return match executor.execute(&call.name, call.arguments.clone()).await {
+                    Ok(output) => Ok(output),
+                    Err(message) => Ok(ToolOutput::error(message)),
+                };
+            }
+        }
     }
 
     match execute_tool_call(policy, approvals, context, call, executor, now).await {

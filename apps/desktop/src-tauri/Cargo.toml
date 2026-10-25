@@ -22,6 +22,7 @@ myharness-secrets = { path = "../../../crates/secrets" }
 myharness-sessions = { path = "../../../crates/sessions" }
 myharness-store = { path = "../../../crates/store" }
 reqwest = { workspace = true }
+rfd = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 

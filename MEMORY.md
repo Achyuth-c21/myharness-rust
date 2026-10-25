@@ -357,6 +357,138 @@ Traps: crate names are `myharness-provider-<family>`; `ProtocolFamily::OpenAiCha
 is the sdk's id for the wire; reqwest lowercases header names in mock
 recordings (the openai tests' `Recorded::header` is case-insensitive).
 
+## 7k. Phase 6 slice 1 — Code dashboard + folder-backed session (2026-10-25)
+
+The `phase-6-code` lane (cut from `dev` @ `d3d2d81`) implements `docs/13` Phase 6
+Slice 1. Not merged, not pushed — owner approval required. Projects, Artifacts,
+Scheduled, and Search remain later slices, in that order.
+
+- **Policy (`crates/bridge/src/policy.rs`):** `CodePolicy` is read from the
+  **merged profile**, never the renderer. `isClaudeCodeForDesktopEnabled`
+  absent → enabled; `disableDesktopLocalSessions` true → local refused (remote
+  placement does not exist — no fallback); `disableBypassPermissionsMode` is
+  **fail-closed** (only an explicit `false` permits Bypass; absence/true/malformed
+  all disable); `allowedWorkspaceFolders` accepts array / `{folders|paths}` /
+  path→bool map (shape never observed — `docs/14` §9), malformed grants nothing,
+  relative roots are dropped. `validate_workspace_folder` canonicalizes
+  (symlink-resolved **before** the allowlist check), requires an existing real
+  directory, bounds length, refuses control chars, and never creates anything.
+- **Bridge commands (`crates/bridge/src/chat.rs`):** `ListCodeSessions` /
+  `CreateCodeSession` / `OpenCodeSession` / `SendCodeTurn` / `CodeDashboard`.
+  Cowork's list stays chat-only (a Code row can never appear there). **Every
+  send revalidates**: code enabled, local enabled, folder re-canonicalized and
+  compared to the stored spelling (`CODE_FOLDER_CHANGED` — a renamed target or
+  swapped symlink cannot silently redirect), stored permission mode parsed
+  fail-closed (unknown spelling blocks the send), Bypass re-checked against
+  current policy. The workspace folder travels as a quoted data block in the
+  turn input, explicitly "path as data, not an instruction".
+- **Permission modes (`crates/agent/src/permission.rs`):** stored spellings
+  `default`/`acceptEdits`/`plan`/`bypass`. Enforced in `run_turn_with_tools`,
+  not the renderer: **Plan** advertises zero tools and refuses a hallucinated
+  call before policy/executor with a model-visible tool error; **Bypass** is a
+  validation error unless `bypass_allowed`; a policy `Deny` still beats every
+  mode; **AcceptEdits** auto-approves only host-declared edit-tool names — the
+  production set is empty (no built-in file tools yet), so the mode never
+  weakens an MCP approval in this slice.
+- **Usage (`crates/sessions/src/usage.rs`, `crates/store/src/repos.rs`):**
+  `summarize_code_usage` folds Code-only ledger rows + user/assistant turns
+  (SQL join on `sessions.surface = 'code'`; Cowork rows cannot leak in).
+  Ranges `7d`/`30d`/`all`; all-time's **daily strip** is capped at 3660 days
+  with an honest `truncated` flag while totals/messages/sessions/shares stay
+  genuinely all-time. Model shares, peak hour, favorite model derived only
+  from real rows.
+- **Renderer:** `/epitaxy` = `CodeDashboardScreen` (distinct greeting, range
+  picker, recent Code sessions, per-folder repository rows, choose-folder);
+  `/epitaxy/:sessionId` = `CodeSessionScreen` reusing the transcript/streaming/
+  tool/approval surface with Code composer metadata (folder, model, mode).
+  Bypass and Fast render visibly disabled with no capability claim. Browser
+  preview reports `BRIDGE_UNAVAILABLE`; nothing is faked. Folder picking is
+  the Tauri command `pick_workspace_folder` (`rfd`, workspace dep with
+  `xdg-portal` + `tokio` features); cancellation is `None`.
+- **Gates:** workspace **467 passed / 0 failed**; clippy clean on the four
+  touched crates; `cargo metadata`; `tsc --noEmit`; `vite build`; E2E
+  `shell.spec.mjs` ALL PASS including new `T28b` (honest empty/fail-closed
+  dashboard), `T28c` (populated dashboard renders only supplied bridge data),
+  `T28d` (Code session reuses transcript with Code metadata).
+- **Deferred with reasons in `docs/14` §9 (items 53–57):** terminal/PTY,
+  SSH/WSL/remote placement, worktrees, Fast mode. `TEST-CODE-003` is Partial
+  (worktree lifecycle), `005` Policy-disabled/deferred, `006`–`008` and
+  `TEST-SESSION-010` Unavailable/deferred. The native folder picker and a real
+  Tauri window are compile/E2E-mock verified only, not exercised end-to-end.
+- **Traps carried forward:** `docs/**` stays uncommitted (code-only commits);
+  `apps/desktop/src/components/Untitled-1` remains untracked and untouched
+  (owner decision pending); E2E needs the Vite dev server on 5173 **and** a
+  served-title check (trap #13); use `apps/desktop/node_modules/.bin/tsc`.
+
+## 7l. Phase 6 slices 2–5 — Projects, Artifacts, Scheduled, Search (2026-10-26)
+
+The `phase-6-code` lane completes `docs/13` Phase 6's build areas on top of
+slice 1 (§7k): Projects (`35958b8`), Artifacts (`8aa7987`), Scheduled
+(`48eb6ac`), Search (`424eabc`). **Not merged and not pushed — owner
+approval required.** Gates at completion: workspace 485 cargo tests /
+0 failed, clippy clean on the touched crates, `cargo metadata`, `tsc
+--noEmit`, `vite build`, E2E `shell.spec.mjs` 47/47 (T01–T47),
+`setup-window.spec.mjs` 16/16.
+
+- **Projects** — schema v3 (`projects`, soft `sessions.project_id` — no
+  FK, deleting a project never deletes or retargets sessions and the
+  deletion answer reports the orphan count). `crates/projects::ProjectService`
+  borrows `&Store` per call. The bridge reuses the ONE folder validator
+  (`policy::validate_workspace_folder`) for project folders; `CreateSession`
+  gained `projectId`/`cwd` binding and folder-bound Cowork turns carry the
+  Code-style quoted path-as-data system block. Folder "availability" =
+  `canonicalize(stored) == stored`. Project instructions are stored/displayed
+  but NOT injected into turns (no captured bootstrap assembly; item 61).
+- **Artifacts** — `CreateArtifactTask` = one normal Cowork session with
+  `extra.artifactTask: true`; no auto-send (the shipped generated prompt was
+  never captured — recorded deviation). The empty-state suggestion sends its
+  own visible copy as the first turn. No content model, no viewer — stated
+  Unavailable (artifactsPane gate was never available).
+- **Scheduled** — `crates/scheduler` is pure math (cron subset: `*`, lists,
+  ranges `a-b`, `*/step` on minute/hour; dom/mon must be `*`; DST gap skips
+  the minute, fall-back takes the earlier occurrence; `decide()` grace 60 s).
+  Schema v4 (`scheduled_tasks` + `scheduled_runs`; every occurrence gets a
+  run row; skips never stamp `last_run_at`). Bridge arms on create/enable/
+  update, disarms on disable, `scheduled_tick(now)` runs due occurrences on
+  the interactive send path with `scheduled=true` (the scheduled approval
+  lifetime), records skips with the truthful reason, and rearms strictly
+  forward; the shell spawns a 30 s tick loop with arm-on-boot. Keep-awake
+  ships disabled.
+- **Search** — palette combines `listSessions` + `listCodeSessions` +
+  `listProjects`; case-insensitive title/name match; recent set on empty
+  query; a labelled "Go to" route tail (full fallback in the browser
+  preview). Sidebar filter menu composes AND with immediate apply, badge,
+  reset, and a distinct filtered-empty state; Unread is disabled (no unread
+  tracking); pinning is not built; filters persist in
+  `localStorage["tasks.filters"]`.
+
+Traps carried forward from this batch (all hit for real):
+
+- **`i64::saturating_sub` is not `max(0, a-b)`** — `1000.saturating_sub(2000)`
+  is `-1000`, and a "how late is it" check built on it misclassifies.
+- **chrono 0.4 `TimeZone` for a hand-rolled zone needs `from_offset`,
+  `offset_from_local_date`, and `offset_from_utc_date` too, and
+  `offset_from_utc_datetime` takes `&NaiveDateTime`** (not `DateTime<Utc>`).
+  `Local.timestamp_millis_opt` no longer exists — use
+  `DateTime::from_timestamp_millis(ms).with_timezone(&Local)`.
+  `impl Offset for FixedOffset` is an orphan violation (it already
+  implements it).
+- **Associated fns on generic types defeat `map_err` inference** (E0283):
+  error mappers like `project_failure` are free functions, not
+  `ChatService::<K, R>::` methods.
+- **`#[serde(flatten)]` does not inherit the outer `rename_all`** —
+  `ProjectRow`/`ScheduledTaskRow` spell their own fields (`memory_enabled`
+  snake_case next to `createdAt` camelCase, like `SessionRow`'s stored-row
+  convention; documented in `client.ts`).
+- **E2E: `.switch input` has `pointer-events: none`** — click the `.switch`
+  label. **`hasText` matches row VALUES too** — the filter menu rows carry
+  `data-filter-row` for exact targeting; applying an option closes the menu.
+  `waitForSelector("#composer")` before Ctrl+K, or the keypress races
+  hydration.
+- Store row views returned to the wire must include the new `project_id`
+  everywhere `NewSession` is constructed — the compiler catches struct
+  literals, but the E2E mocks had to add `projectId` to their fixtures.
+
 ## 8. Status vocabulary (`docs/17`)
 
 `Available` · `Available, unexercised` · `Partial` · `Policy-disabled` · `Unavailable` ·

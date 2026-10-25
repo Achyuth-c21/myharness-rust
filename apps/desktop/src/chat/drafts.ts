@@ -18,9 +18,15 @@
  */
 
 const NEW_DRAFT_KEY = "composer-draft:new";
+const CODE_DRAFT_KEY = "composer-draft:code";
 
 export function newDraftKey(): string {
   return NEW_DRAFT_KEY;
+}
+
+/** The Code dashboard composer is a distinct surface from the Cowork home. */
+export function codeDraftKey(): string {
+  return CODE_DRAFT_KEY;
 }
 
 export function sessionDraftKey(sessionId: string): string {
