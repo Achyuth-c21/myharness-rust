@@ -360,8 +360,8 @@ recordings (the openai tests' `Recorded::header` is case-insensitive).
 ## 7k. Phase 6 slice 1 — Code dashboard + folder-backed session (2026-10-25)
 
 The `phase-6-code` lane (cut from `dev` @ `d3d2d81`) implements `docs/13` Phase 6
-Slice 1. Not merged, not pushed — owner approval required. Projects, Artifacts,
-Scheduled, and Search remain later slices, in that order.
+Slice 1. Merged to `dev` and pushed 2026-10-26 with the owner's approval (merge
+`f3fdc70`). Projects, Artifacts, Scheduled, and Search are slices 2–5 (§7l).
 
 - **Policy (`crates/bridge/src/policy.rs`):** `CodePolicy` is read from the
   **merged profile**, never the renderer. `isClaudeCodeForDesktopEnabled`
@@ -424,11 +424,15 @@ Scheduled, and Search remain later slices, in that order.
 
 The `phase-6-code` lane completes `docs/13` Phase 6's build areas on top of
 slice 1 (§7k): Projects (`35958b8`), Artifacts (`8aa7987`), Scheduled
-(`48eb6ac`), Search (`424eabc`). **Not merged and not pushed — owner
-approval required.** Gates at completion: workspace 485 cargo tests /
-0 failed, clippy clean on the touched crates, `cargo metadata`, `tsc
---noEmit`, `vite build`, E2E `shell.spec.mjs` 47/47 (T01–T47),
-`setup-window.spec.mjs` 16/16.
+(`48eb6ac`), Search (`424eabc`). **Merged to `dev` and pushed 2026-10-26**
+with the owner's approval (`f3fdc70`); a follow-up fix made the run-row
+ordering and `runScheduledTaskNow` response deterministic (`3229372` —
+the `running`/terminal rows of one occurrence share `started_at`, so a
+random-uuid tie-break made the "latest run row" a coin flip; ties now
+order by `rowid` and the response reads the exact terminal row). Gates on
+merged `dev`: workspace 485 cargo tests / 0 failed, clippy clean on the
+touched crates, `cargo metadata`, `tsc --noEmit`, `vite build`, E2E
+`shell.spec.mjs` 47/47 (T01–T47), `setup-window.spec.mjs` 16/16.
 
 - **Projects** — schema v3 (`projects`, soft `sessions.project_id` — no
   FK, deleting a project never deletes or retargets sessions and the
