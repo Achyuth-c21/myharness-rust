@@ -1896,3 +1896,43 @@ async fn deleting_a_project_leaves_its_sessions_and_reports_the_count() {
         "reading a deleted project is PROJECT_MISSING, got {missing:?}"
     );
 }
+
+// ---------------------------------------------------------------------
+// Artifacts (Phase 6 slice 3; docs/features/artifacts.md, TEST-ART-001..003)
+// ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn an_artifact_task_is_one_marked_session_the_library_can_filter() {
+    let fixture = Fixture::new(reply("artifact"), Tail::End);
+
+    let created = dispatch(fixture.service.as_ref(), ChatCommand::CreateArtifactTask, None).await;
+    let ChatResponse::Session { session } = created else {
+        panic!("expected a session, got {created:?}");
+    };
+    assert_eq!(
+        session.session.extra.get("artifactTask"),
+        Some(&serde_json::Value::Bool(true)),
+        "the library marker must be the only artifact fact this slice claims"
+    );
+    assert_eq!(session.session.surface, "chat", "an artifact task is a normal session");
+    assert_eq!(session.turns.len(), 0, "no turn is generated on the task's behalf");
+    assert_eq!(session.session.title, "New artifact");
+
+    // The Cowork list shows the task (a normal session), and the marker
+    // survives a close/reopen so the library can derive its rows from real
+    // rows only — never from an invented completed artifact.
+    let listed = dispatch(
+        fixture.service.as_ref(),
+        ChatCommand::ListSessions { archived: None },
+        None,
+    )
+    .await;
+    let ChatResponse::Sessions { sessions } = listed else {
+        panic!("expected sessions, got {listed:?}");
+    };
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(
+        sessions[0].extra.get("artifactTask"),
+        Some(&serde_json::Value::Bool(true))
+    );
+}

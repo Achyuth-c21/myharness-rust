@@ -657,6 +657,13 @@ pub enum ChatCommand {
     DeleteProject {
         id: String,
     },
+    /// Start one live-artifact task (Phase 6 slice 3; `docs/features/
+    /// artifacts.md`). "New artifact" is deliberately destructive-but-explicit:
+    /// it creates the task session immediately and never opens a creation
+    /// modal. The shipped task's auto-generated prompt was never captured, so
+    /// this creates the task only — the renderer navigates to it and the user's
+    /// first send starts generation (recorded in `docs/14` §9).
+    CreateArtifactTask,
 }
 
 /// One command's answer.
@@ -1153,6 +1160,7 @@ async fn run<K: AuditKeyStore, R: ChatTargetResolver>(
             memory_enabled,
         } => service.update_project(&id, name, instructions, memory_enabled.unwrap_or(true)),
         ChatCommand::DeleteProject { id } => service.delete_project(&id),
+        ChatCommand::CreateArtifactTask => service.create_artifact_task(),
     }
 }
 
@@ -1424,6 +1432,37 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
             .delete(id)
             .map_err(project_failure)?;
         Ok(ChatResponse::ProjectDeleted { orphaned_sessions: orphaned })
+    }
+
+    /// One live-artifact task: a normal Cowork session carrying the
+    /// `artifactTask` marker the library filters on. The library never
+    /// claims a completed artifact from this row — content capture does not
+    /// exist in this slice (`TEST-ART-003`'s no-phantom rule by construction).
+    fn create_artifact_task(&self) -> Result<ChatResponse, ChatFailure> {
+        let target = self.targets.resolve()?;
+        let session = self
+            .sessions
+            .start(NewSession {
+                project_id: None,
+                surface: "chat",
+                title: "New artifact",
+                cwd: None,
+                model: Some(&target.model.model_id),
+                effort: None,
+                permission_mode: None,
+                extra: serde_json::json!({
+                    "providerId": target.model.provider_id,
+                    "profileId": target.profile_id,
+                    "artifactTask": true,
+                }),
+            })
+            .map_err(session_failure)?;
+        Ok(ChatResponse::Session {
+            session: SessionView {
+                session,
+                turns: Vec::new(),
+            },
+        })
     }
 
     fn catalog(&self) -> Result<&std::sync::Arc<CatalogRuntime>, ChatFailure> {

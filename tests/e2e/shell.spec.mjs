@@ -1029,6 +1029,120 @@ try {
     await mockContext.close();
   });
 
+  await step("T42 artifacts preview is honest: captured copy, explicit suggestion, no invented rows", async () => {
+    await page.goto(`${BASE}/cowork-artifact`);
+    await page.getByText("Create your first artifact").waitFor();
+    await expectTrue(
+      (await page.locator(".project-row").count()) === 0,
+      "the preview must not invent artifact rows",
+    );
+    // The suggestion starts the task with the prompt the button itself shows;
+    // without a desktop host the creation reports the boundary instead of
+    // navigating to a fake task (REQ-ART-01/02).
+    await page.getByRole("button", { name: "What needs my attention" }).click();
+    await page.locator(".composer-error", { hasText: "Artifacts are available in the desktop app." }).waitFor();
+    await expectTrue(
+      !page.url().includes("/cowork/"),
+      "the preview must never navigate to an invented artifact task",
+    );
+    await expectTrue(
+      await page.getByRole("button", { name: "New artifact" }).count() === 1,
+      "the header keeps the captured New artifact button",
+    );
+  });
+
+  await step("T43 populated artifacts render only supplied rows; New artifact creates exactly one task", async () => {
+    const mockContext = await browser.newContext({
+      colorScheme: "dark",
+      viewport: { width: 1200, height: 900 },
+    });
+    const mockPage = await mockContext.newPage();
+    const now = Date.now();
+    const artifactTask = {
+      id: "00000000-0000-0000-0000-00000000c001",
+      surface: "chat",
+      title: "Weekly report draft",
+      cwd: null,
+      model: "model-a",
+      effort: null,
+      permission_mode: null,
+      projectId: null,
+      archived: false,
+      legal_hold: false,
+      createdAt: now - 100_000,
+      lastActivityAt: now - 40_000,
+      extra: { artifactTask: true },
+    };
+    const plainTask = {
+      ...artifactTask,
+      id: "00000000-0000-0000-0000-00000000c002",
+      title: "Plain chat task",
+      extra: {},
+    };
+    await mockPage.addInitScript(
+      ({ artifactTask, plainTask }) => {
+        let creates = 0;
+        window.__artifactCreates = () => creates;
+        window.__TAURI_INTERNALS__ = {
+          invoke: async (cmd, args) => {
+            if (cmd !== "chat_command") throw new Error(`unexpected command ${cmd}`);
+            const command = args.command;
+            if (command.type === "listSessions") {
+              return { type: "sessions", sessions: [artifactTask, plainTask] };
+            }
+            if (command.type === "createArtifactTask") {
+              creates += 1;
+              return {
+                type: "session",
+                session: {
+                  session: {
+                    id: `00000000-0000-0000-0000-00000000d00${creates}`,
+                    surface: "chat",
+                    title: "New artifact",
+                    cwd: null,
+                    model: "model-a",
+                    effort: null,
+                    permission_mode: null,
+                    projectId: null,
+                    archived: false,
+                    legal_hold: false,
+                    createdAt: Date.now(),
+                    lastActivityAt: Date.now(),
+                    extra: { artifactTask: true },
+                  },
+                  turns: [],
+                },
+              };
+            }
+            throw new Error(`unexpected chat command ${command.type}`);
+          },
+        };
+      },
+      { artifactTask, plainTask },
+    );
+    await mockPage.goto(`${BASE}/cowork-artifact`);
+    await mockPage.locator(".project-row", { hasText: "Weekly report draft" }).waitFor();
+    await expectTrue(
+      (await mockPage.locator(".project-row").count()) === 1,
+      "only the marked artifact task is a library row; plain tasks stay out",
+    );
+    await mockPage.locator('input[aria-label="Search artifacts"]').fill("weekly");
+    await expectTrue((await mockPage.locator(".project-row").count()) === 1, "search narrows");
+    await mockPage.locator('input[aria-label="Search artifacts"]').fill("nothing matches this");
+    await expectTrue(
+      (await mockPage.locator(".palette-empty").count()) === 1,
+      "no-results keeps the query editable",
+    );
+    await mockPage.locator('input[aria-label="Search artifacts"]').fill("");
+    await mockPage.getByRole("button", { name: "New artifact" }).click();
+    await mockPage.waitForURL("**/cowork/**");
+    await expectTrue(
+      (await mockPage.evaluate(() => window.__artifactCreates())) === 1,
+      "one click creates exactly one task (TEST-ART-002)",
+    );
+    await mockContext.close();
+  });
+
 } finally {
   await browser.close();
 }

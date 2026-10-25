@@ -211,6 +211,7 @@ export type ChatCommand =
       memoryEnabled?: boolean | null;
     }
   | { type: "deleteProject"; id: string }
+  | { type: "createArtifactTask" }
   | { type: "listCodeSessions"; archived?: boolean | null }
   | {
       type: "createCodeSession";

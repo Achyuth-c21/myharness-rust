@@ -2691,3 +2691,17 @@ body {
 .project-chip-clear {
   color: var(--mh-text-2);
 }
+
+/* ---------- Artifacts (Phase 6 slice 3; docs/features/artifacts.md) ---------- */
+
+.artifact-suggestion {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--mh-unit) * 2);
+}
+
+.artifacts-note {
+  margin: 0 calc(var(--mh-unit) * 8) calc(var(--mh-unit) * 3);
+  font-size: 12px;
+  color: var(--mh-text-3);
+}

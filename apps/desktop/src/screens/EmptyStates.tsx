@@ -14,15 +14,6 @@ function ClockGlyph() {
   );
 }
 
-function DocGlyph() {
-  return (
-    <svg width="40" height="40" viewBox="0 0 40 40" fill="none" aria-hidden="true">
-      <path d="M11 6h13l6 6v22H11V6Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
-      <path d="M24 6v6h6M16 18h9M16 23h9M16 28h6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-    </svg>
-  );
-}
-
 function ChevronRight() {
   return (
     <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -74,20 +65,7 @@ export function ScreenHead({ label, action }: { label: string; action?: string }
 
 /** /projects — the real screen (Phase 6 slice 2) lives in ProjectsScreen.tsx. */
 
-/** /cowork-artifact — docs/05 §4.5 empty state, exact copy (no sentence captured). */
-export function ArtifactsScreen() {
-  return (
-    <>
-      <ScreenHead label="Artifacts" action="New artifact" />
-      <EmptyState
-        icon={<DocGlyph />}
-        headline="Create your first artifact"
-        copy=""
-        action="What needs my attention"
-      />
-    </>
-  );
-}
+/** /cowork-artifact — the real screen (Phase 6 slice 3) lives in ArtifactsScreen.tsx. */
 
 /** /scheduled-task — docs/05 §4.6: banner, keep-awake switch, empty copy. */
 export function ScheduledScreen() {
