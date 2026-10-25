@@ -705,7 +705,7 @@ invented.
 
 ## 7j. Phase 5 slice 3 — tool turns, approvals, catalog, app integration (2026-10-25)
 
-Slice 3 (`03d5102`, hardening `12d508a`) completes Phase 5's local/stdio path. The lane is
+Slice 3 (`03d5102`, hardening `12d508a`, `b8391ae`) completes Phase 5's local/stdio path. The lane is
 `phase-5`; **nothing has been merged or pushed** — owner approval is required.
 
 - **Agent tool loop (`crates/agent`):** `run_turn_with_tools` is a bounded
