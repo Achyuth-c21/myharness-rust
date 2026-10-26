@@ -38,6 +38,7 @@ use myharness_provider_anthropic::AnthropicAdapter;
 use myharness_provider_bedrock::BedrockAdapter;
 use myharness_provider_gateway::{GatewayAdapter, GatewayClientConfig};
 use myharness_provider_openai::{AdapterKind, OpenAiClientConfig, OpenAiCompatAdapter};
+use myharness_provider_openai_responses::{ResponsesAdapter, ResponsesClientConfig};
 use myharness_provider_sdk::{
     AuthContext, ModelKey, ProviderAdapter, SystemBlock, TurnEvent,
 };
@@ -343,6 +344,35 @@ impl ConfigBackend {
                 );
                 (Box::new(adapter), secret)
             }
+            myharness_config::ProviderKind::OpenAiResponses => {
+                // The Responses extension (Phase 8; `docs/13` Phase 8; the
+                // readings are `docs/14` §9 item 71): first-party OpenAI
+                // only, a static key required (the wire has no keyless
+                // variant), base URL optional (empty = the first-party
+                // host). The provider id is the wall's own `id()` spelling —
+                // the agent loop refuses a model whose provider id is not
+                // the adapter's.
+                let base = optional_string(connection, "inferenceOpenAiResponsesBaseUrl")?
+                    .unwrap_or_default();
+                let secret = required_secret(
+                    connection,
+                    self.secrets(),
+                    "inferenceOpenAiResponsesApiKey",
+                    false,
+                )?;
+                let adapter = ResponsesAdapter::new(
+                    ResponsesClientConfig {
+                        base_url: base,
+                        idle_timeout: idle_timeout(
+                            connection,
+                            myharness_provider_openai_responses::DEFAULT_IDLE_TIMEOUT,
+                        ),
+                        custom_headers: custom_headers_for_probe(connection)?,
+                    },
+                    reqwest::Client::new(),
+                );
+                (Box::new(adapter), secret)
+            }
             // Locked until their adapters land (`docs/04` §3.1): a chat send
             // must refuse, never route through another family.
             myharness_config::ProviderKind::BedrockMantle => {
@@ -385,6 +415,7 @@ fn provider_id(provider: myharness_config::ProviderKind) -> &'static str {
         ProviderKind::Gateway => "gateway",
         ProviderKind::OpenAi => "openai",
         ProviderKind::Custom => "custom",
+        ProviderKind::OpenAiResponses => "openai-responses",
     }
 }
 

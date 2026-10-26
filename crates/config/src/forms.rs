@@ -123,7 +123,10 @@ pub struct FieldOption {
 impl FieldOption {
     /// An option whose value and label are the same word.
     pub const fn plain(value: &'static str) -> Self {
-        FieldOption { value, label: value }
+        FieldOption {
+            value,
+            label: value,
+        }
     }
 }
 
@@ -187,6 +190,10 @@ fn schema_kinds(provider: ProviderKind) -> &'static [(&'static str, CredentialKi
             ("Helper script", CredentialKind::HelperScript),
         ],
         ProviderKind::OpenAi => &[("Static API key", CredentialKind::Static)],
+        // Phase 8's Responses extension (`docs/13` Phase 8; `docs/14` §9
+        // item 71): first-party only — a static key is the family's only
+        // offered credential kind, like the Chat Completions `openai` one.
+        ProviderKind::OpenAiResponses => &[("Static API key", CredentialKind::Static)],
         ProviderKind::Custom => &[
             ("Static API key", CredentialKind::Static),
             // A company gateway resolves its key through the family's helper
@@ -557,6 +564,37 @@ pub fn validate_connection(provider: ProviderKind, connection: &Value) -> Vec<Fo
             }
             idle_timeout_check(&conn, &mut issues);
         }
+        ProviderKind::OpenAiResponses => {
+            // First-party OpenAI over the Responses wire (Phase 8 slice 1's
+            // extension, `docs/13` Phase 8; the readings are `docs/14` §9
+            // item 71): a static key is required — the wire has no keyless
+            // variant — and the base URL is optional (empty = the
+            // first-party host). The field spellings are owner-defined
+            // rebuild keys recorded like every open-layer family's.
+            if static_like
+                && !secret_slot_present(
+                    get("inferenceOpenAiResponsesApiKey").unwrap_or(&Value::Null),
+                )
+            {
+                issues.push(error(
+                    "inferenceOpenAiResponsesApiKey",
+                    "OpenAI API key is required for static credential kind".to_string(),
+                ));
+            }
+            match url_value(get("inferenceOpenAiResponsesBaseUrl")) {
+                Err(e) => issues.push(error("inferenceOpenAiResponsesBaseUrl", e)),
+                Ok(Some(u)) => {
+                    if !u.starts_with("https://") && !u.starts_with("http://") {
+                        issues.push(error(
+                            "inferenceOpenAiResponsesBaseUrl",
+                            "base URL must start with http:// or https://".to_string(),
+                        ));
+                    }
+                }
+                Ok(None) => {}
+            }
+            idle_timeout_check(&conn, &mut issues);
+        }
         ProviderKind::Custom => {
             // An OpenAI-compatible endpoint the user defines. The base URL is
             // required; the key is optional — self-hosted servers often serve
@@ -677,17 +715,12 @@ fn validate_model_list(list: Option<&Value>, issues: &mut Vec<FormIssue>) {
 
 /// The stream idle-timeout field's shared shape check (`docs/20`
 /// `inferenceStreamIdleTimeoutSec`): present ⇒ a positive integer of seconds.
-fn idle_timeout_check(
-    conn: &serde_json::Map<String, Value>,
-    issues: &mut Vec<FormIssue>,
-) {
+fn idle_timeout_check(conn: &serde_json::Map<String, Value>, issues: &mut Vec<FormIssue>) {
     if let Some(t) = conn.get("inferenceStreamIdleTimeoutSec") {
         if !t.as_u64().is_some_and(|secs| secs > 0) {
             issues.push(error(
                 "inferenceStreamIdleTimeoutSec",
-                format!(
-                    "stream idle timeout must be a positive number of seconds, found {t:?}"
-                ),
+                format!("stream idle timeout must be a positive number of seconds, found {t:?}"),
             ));
         }
     }
@@ -845,6 +878,39 @@ pub fn connection_schema(provider: ProviderKind) -> FormSchema {
             fields.push(with_help(
                 field(
                     "inferenceOpenAiBaseUrl",
+                    "OpenAI base URL",
+                    FieldKind::Url,
+                    FieldGroup::Endpoint,
+                ),
+                "Leave empty for the first-party endpoint (https://api.openai.com/v1).",
+            ));
+            fields.push(with_help(
+                field(
+                    "inferenceStreamIdleTimeoutSec",
+                    "Stream idle timeout",
+                    FieldKind::Number,
+                    FieldGroup::Advanced,
+                ),
+                "Default 300 s.",
+            ));
+        }
+        ProviderKind::OpenAiResponses => {
+            // The Responses extension's fields (Phase 8 slice 2; the readings
+            // are `docs/14` §9 item 71): the family's own key spellings — a
+            // profile that switches family resets the family-specific ones,
+            // so the Chat Completions slot never leaks onto this wire.
+            fields.push(required_for(
+                field(
+                    "inferenceOpenAiResponsesApiKey",
+                    "OpenAI API key",
+                    FieldKind::Secret,
+                    FieldGroup::Credentials,
+                ),
+                &[CredentialKind::Static],
+            ));
+            fields.push(with_help(
+                field(
+                    "inferenceOpenAiResponsesBaseUrl",
                     "OpenAI base URL",
                     FieldKind::Url,
                     FieldGroup::Endpoint,
@@ -1252,6 +1318,7 @@ mod tests {
             ProviderKind::Foundry,
             ProviderKind::OpenAi,
             ProviderKind::Custom,
+            ProviderKind::OpenAiResponses,
         ] {
             let issues = connection(provider, json!({}));
             let fields = errors(&issues);
@@ -1308,6 +1375,7 @@ mod tests {
         // no leakage from the shipped five or from each other.
         let openai = connection_schema(ProviderKind::OpenAi);
         let custom = connection_schema(ProviderKind::Custom);
+        let responses = connection_schema(ProviderKind::OpenAiResponses);
         assert!(openai
             .fields
             .iter()
@@ -1316,6 +1384,16 @@ mod tests {
             .fields
             .iter()
             .any(|f| f.key == "inferenceCustomBaseUrl"));
+        // The Responses extension's keys are its own — the Chat Completions
+        // slot never leaks onto the Responses wire (`docs/14` §9 item 71).
+        assert!(responses
+            .fields
+            .iter()
+            .any(|f| f.key == "inferenceOpenAiResponsesApiKey"));
+        assert!(responses
+            .fields
+            .iter()
+            .any(|f| f.key == "inferenceOpenAiResponsesBaseUrl"));
         assert!(!openai
             .fields
             .iter()
@@ -1324,6 +1402,14 @@ mod tests {
             .fields
             .iter()
             .any(|f| f.key == "inferenceOpenAiApiKey"));
+        assert!(!responses
+            .fields
+            .iter()
+            .any(|f| f.key == "inferenceOpenAiApiKey"));
+        assert!(!responses
+            .fields
+            .iter()
+            .any(|f| f.key == "inferenceOpenAiBaseUrl"));
     }
 
     /// TEST-CFG-005 (credential kind is exclusive, no fallback): a kind the family
@@ -1383,6 +1469,33 @@ mod tests {
             }),
         );
         assert!(errors(&issues).contains(&"inferenceOpenAiBaseUrl"));
+    }
+
+    /// The Responses extension's family (Phase 8): the key is required for
+    /// static (the wire has no keyless variant), the base URL is optional
+    /// (empty = first-party), and a nonsense host is refused.
+    #[test]
+    fn openai_responses_family_validation() {
+        // Missing key on the static kind is the error.
+        let issues = connection(ProviderKind::OpenAiResponses, json!({}));
+        assert!(errors(&issues).contains(&"inferenceOpenAiResponsesApiKey"));
+
+        // Key + nothing else validates clean (first-party endpoint).
+        let issues = connection(
+            ProviderKind::OpenAiResponses,
+            json!({ "inferenceOpenAiResponsesApiKey": "placeholder-credential" }),
+        );
+        assert!(errors(&issues).is_empty(), "{issues:?}");
+
+        // A nonsense host is an error.
+        let issues = connection(
+            ProviderKind::OpenAiResponses,
+            json!({
+                "inferenceOpenAiResponsesApiKey": "placeholder-credential",
+                "inferenceOpenAiResponsesBaseUrl": "not-a-url",
+            }),
+        );
+        assert!(errors(&issues).contains(&"inferenceOpenAiResponsesBaseUrl"));
     }
 
     /// The Custom family: base URL required, credential optional (self-hosted

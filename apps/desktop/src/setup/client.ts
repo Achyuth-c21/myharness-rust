@@ -27,7 +27,10 @@ export type SetupTab =
  * family — removed from rebuild scope, owner decision 2026-10-23, docs/04 §3.1).
  * The open model layer adds the two OpenAI-compatible families (owner decision
  * recorded 2026-10-23, docs/14 §9): first-party `openai` and the user-defined
- * `custom` OpenAI-compatible endpoint (base URL required, key optional). */
+ * `custom` OpenAI-compatible endpoint (base URL required, key optional). Phase 8
+ * adds the Responses extension (`docs/13` Phase 8): first-party `openai-responses`
+ * over its own native wall — a static key is required, this wire has no keyless
+ * variant (docs/14 §9 item 71). */
 export type ProviderKind =
   | "anthropic"
   | "bedrock"
@@ -35,7 +38,8 @@ export type ProviderKind =
   | "foundry"
   | "gateway"
   | "openai"
-  | "custom";
+  | "custom"
+  | "openai-responses";
 
 /** A profile as the renderer sees it — never a document. */
 export interface ProfileSummary {
@@ -279,6 +283,39 @@ export async function discoverOpenAiModels(request: {
     return await invoke<DiscoveryOutcome>("setup_discover_openai_models", {
       request: {
         kind: request.kind,
+        baseUrl: request.baseUrl,
+        apiKey: request.apiKey ?? null,
+        customHeaders: Object.entries(request.customHeaders ?? {}),
+      },
+    });
+  } catch (error) {
+    return {
+      error: {
+        code: "PROVIDER_UNREACHABLE",
+        message:
+          typeof error === "string" ? error : "The provider could not be reached.",
+        retryable: true,
+      },
+    };
+  }
+}
+
+/**
+ * Run model discovery against the Responses wall's listing — Phase 8's
+ * extension (`docs/13` Phase 8; the readings are docs/14 §9 item 71):
+ * first-party OpenAI only, base URL optional (empty = the first-party
+ * host), and the credential the family's rule requires. The typed
+ * credential travels on the request — the user typed it — and is never
+ * stored by the probe.
+ */
+export async function discoverOpenAiResponsesModels(request: {
+  baseUrl: string;
+  apiKey?: string;
+  customHeaders?: Record<string, string>;
+}): Promise<DiscoveryOutcome | { error: BridgeError }> {
+  try {
+    return await invoke<DiscoveryOutcome>("setup_discover_openai_responses_models", {
+      request: {
         baseUrl: request.baseUrl,
         apiKey: request.apiKey ?? null,
         customHeaders: Object.entries(request.customHeaders ?? {}),

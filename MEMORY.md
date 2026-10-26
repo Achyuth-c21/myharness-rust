@@ -636,6 +636,36 @@ fixed in `tests/wire.rs`):
   the stream's bare `error` event carries only a `code` (its `type` is the
   event name).
 
+### 7n (slice 2). The Responses family's setup surface (2026-10-26)
+
+Slice 2, same lane, committed after slice 1's merge: `ProviderKind::OpenAiResponses`
+(serde `"openai-responses"`) with the family's OWN key spellings
+`inferenceOpenAiResponsesApiKey` / `inferenceOpenAiResponsesBaseUrl`
+(owner-defined rebuild keys — the Chat Completions slot never leaks across;
+`changeFamily` resets family-specific keys). Form: static key required (the
+wire has no keyless variant), base URL optional (empty = first-party).
+Egress: override or `api.openai.com`. Bridge: `test_connection_openai_responses`
+runs the STRICT resolver (`allow_helper: false`) — an absent credential is a
+`CONFIG_VALIDATION` refusal at the BRIDGE with zero requests, NOT the
+adapter's `PROVIDER_ERROR` (that class only appears on the keyless-optional
+openai lane); the chat factory arm sets `provider_id` = the wall's own
+`id()` spelling `openai-responses` — the agent loop refuses a model whose
+provider id is not the adapter's, so this must match exactly. Discovery is
+the additive command `setup_discover_openai_responses_models` (do not touch
+the existing two); the wall's discovery outcome (`{models, warnings}`) maps
+onto the shared setup shape (`pages: 1, partial: false, first warning`) in
+`crates/bridge::helper::discover_responses_models`, which required a public
+request-facing `discovery::discover_models` + `DiscoveryRequest` in the
+responses crate (its `discover_with` is `pub(crate)`). Renderer: family
+option "OpenAI (Responses)", probe unlock, discovery arm.
+
+Gates at slice end: config 64, bridge 64+32+5, workspace **548 / 0 failed**
+(544 + 4), clippy `-D warnings` on config/bridge/responses, `cargo metadata`,
+`tsc --noEmit`, `vite build`, E2E `shell.spec.mjs` ALL PASS (T01–T49),
+`setup-window.spec.mjs` 16/16. The chat-send path through the family is
+compile/unit-verified only — no E2E drives a live Responses stream (no
+Tauri host in the browser; same posture as every family).
+
 ## 8. Status vocabulary (`docs/17`)
 
 `Available` · `Available, unexercised` · `Partial` · `Policy-disabled` · `Unavailable` ·

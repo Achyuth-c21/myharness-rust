@@ -18,6 +18,7 @@ myharness-provider-anthropic = { path = "../providers/anthropic" }
 myharness-provider-bedrock = { path = "../providers/bedrock" }
 myharness-provider-gateway = { path = "../providers/gateway" }
 myharness-provider-openai = { path = "../providers/openai" }
+myharness-provider-openai-responses = { path = "../providers/openai-responses" }
 myharness-provider-sdk = { path = "../provider-sdk" }
 myharness-secrets = { path = "../secrets" }
 myharness-sessions = { path = "../sessions" }

@@ -97,6 +97,13 @@ pub enum ProviderKind {
     /// rebuild-defined key (`docs/14` §9).
     #[serde(rename = "custom")]
     Custom,
+    /// First-party OpenAI over the **Responses** wire (Phase 8 slice 1's
+    /// reference extension — `docs/13` Phase 8, `docs/14` §9 item 71): its
+    /// own native wall (`crates/providers/openai-responses`), first-party
+    /// only (a static key is required; this wire has no keyless variant),
+    /// endpoint first-party by default and overridable.
+    #[serde(rename = "openai-responses")]
+    OpenAiResponses,
 }
 
 /// Credential source for a provider. Singular by construction: a profile holds at
@@ -747,6 +754,10 @@ mod tests {
             ProviderKind::Custom => json!({
                 "inferenceCredentialKind": "static",
                 "inferenceCustomBaseUrl": "https://gateway.selfhosted.example/v1",
+            }),
+            ProviderKind::OpenAiResponses => json!({
+                "inferenceCredentialKind": "static",
+                "inferenceOpenAiResponsesApiKey": "placeholder-credential",
             }),
         }
     }

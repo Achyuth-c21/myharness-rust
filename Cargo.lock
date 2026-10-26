@@ -2308,6 +2308,7 @@ dependencies = [
  "myharness-provider-bedrock",
  "myharness-provider-gateway",
  "myharness-provider-openai",
+ "myharness-provider-openai-responses",
  "myharness-provider-sdk",
  "myharness-scheduler",
  "myharness-secrets",

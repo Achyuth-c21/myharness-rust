@@ -10,11 +10,56 @@ use std::time::Duration;
 use myharness_provider_sdk::{
     DescriptorSource, ErrorClass, ModelCapabilities, ModelDescriptor, ModelKey, ProviderError,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// The documented discovery window (the same 10 s per page the setup
 /// discovery protocol uses — `docs/18` §5; `docs/14` §9).
 pub const RESPONSES_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The setup discovery request (Phase 8 slice 2): the endpoint to read and
+/// the credential the user typed — never logged, never stored by the probe
+/// (`docs/09` §4).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveryRequest {
+    /// The base URL; empty falls to the first-party host (this family is
+    /// first-party only — `docs/14` §9 item 71).
+    pub base_url: String,
+    /// The credential, when the user typed one. The family's rule makes it
+    /// required; the field stays optional so the refusal is the adapter's
+    /// own empty-credential gate, never a substituted value
+    /// (`AI-PROVIDER-03`, `AI-ADAPTER-12`).
+    #[serde(default)]
+    pub api_key: Option<String>,
+    /// Extra headers the profile forwards.
+    #[serde(default)]
+    pub custom_headers: Vec<(String, String)>,
+    /// The listing timeout, in seconds. The documented bound is 10.
+    #[serde(default = "default_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+fn default_timeout_secs() -> u64 {
+    RESPONSES_DISCOVERY_TIMEOUT.as_secs()
+}
+
+/// Run the setup discovery against this family's listing surface
+/// (`GET {base}/models`, single page). The base URL is normalized here
+/// (empty → the first-party host) exactly as the adapter normalizes it.
+pub async fn discover_models(
+    request: &DiscoveryRequest,
+    client: &reqwest::Client,
+) -> Result<DiscoveryOutcome, ProviderError> {
+    discover_with(
+        &crate::adapter::normalize_base(&request.base_url),
+        request.api_key.clone().unwrap_or_default(),
+        &request.custom_headers,
+        client,
+        request.timeout_secs,
+    )
+    .await
+}
 
 /// One discovered row: the raw JSON (descriptors read from it later) plus
 /// the id that named it.

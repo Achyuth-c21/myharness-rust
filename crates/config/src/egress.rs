@@ -327,6 +327,15 @@ fn provider_hosts(
                 hosts.extend(host_of(&Value::String(url)));
             }
         }
+        Some(ProviderKind::OpenAiResponses) => {
+            // Override when the user set one; otherwise the first-party host
+            // the Responses wire shares with Chat Completions (`docs/13`
+            // Phase 8; the default is the adapter's).
+            match base_url("inferenceOpenAiResponsesBaseUrl") {
+                Some(url) => hosts.extend(host_of(&Value::String(url))),
+                None => hosts.push("api.openai.com".to_string()),
+            }
+        }
         None => {}
     }
     hosts

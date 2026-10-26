@@ -425,8 +425,9 @@ async fn chat_command(app: tauri::AppHandle, command: ChatCommand) -> ChatRespon
         }
     };
     let session_id = match &command {
-        ChatCommand::SendTurn { session_id, .. }
-        | ChatCommand::SendCodeTurn { session_id, .. } => Some(session_id.clone()),
+        ChatCommand::SendTurn { session_id, .. } | ChatCommand::SendCodeTurn { session_id, .. } => {
+            Some(session_id.clone())
+        }
         _ => None,
     };
     let handle = app.clone();
@@ -579,6 +580,19 @@ async fn setup_discover_openai_models(
     myharness_bridge::helper::discover_openai_models(&request, &client).await
 }
 
+/// Model discovery against the Responses wall (Phase 8 slice 2; `docs/13`
+/// Phase 8; the readings are `docs/14` §9 item 71): a setup-time probe of
+/// the endpoint's own `/models` listing, the same namespace posture as the
+/// other discovery commands — not a translation layer. Additive: the
+/// existing discovery commands are untouched.
+#[tauri::command]
+async fn setup_discover_openai_responses_models(
+    request: myharness_bridge::helper::ResponsesDiscoveryRequest,
+) -> Result<myharness_bridge::helper::DiscoveryOutcome, myharness_bridge::setup::BridgeError> {
+    let client = reqwest::Client::new();
+    myharness_bridge::helper::discover_responses_models(&request, &client).await
+}
+
 /// Open (or focus) the separate setup window (`docs/09` §2.1: "This is a
 /// separate Electron window, not a modal in the main renderer";
 /// `docs/screens/setup-desktop-3p.md`: `app://localhost/setup-desktop-3p`).
@@ -654,6 +668,7 @@ pub fn run() {
             setup_command,
             setup_discover_models,
             setup_discover_openai_models,
+            setup_discover_openai_responses_models,
             open_setup_window
         ])
         .setup(move |app| {
