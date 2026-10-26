@@ -30,7 +30,9 @@ export type SetupTab =
  * `custom` OpenAI-compatible endpoint (base URL required, key optional). Phase 8
  * adds the Responses extension (`docs/13` Phase 8): first-party `openai-responses`
  * over its own native wall — a static key is required, this wire has no keyless
- * variant (docs/14 §9 item 71). */
+ * variant (docs/14 §9 item 71). Phase 8 also adds the local extension: `local`
+ * — a locally running Ollama / llama.cpp server over its documented compat
+ * surface, keyless by default, loopback-only by construction (docs/14 §9). */
 export type ProviderKind =
   | "anthropic"
   | "bedrock"
@@ -39,7 +41,8 @@ export type ProviderKind =
   | "gateway"
   | "openai"
   | "custom"
-  | "openai-responses";
+  | "openai-responses"
+  | "local";
 
 /** A profile as the renderer sees it — never a document. */
 export interface ProfileSummary {
@@ -294,6 +297,39 @@ export async function discoverOpenAiModels(request: {
         code: "PROVIDER_UNREACHABLE",
         message:
           typeof error === "string" ? error : "The provider could not be reached.",
+        retryable: true,
+      },
+    };
+  }
+}
+
+/**
+ * Run model discovery against the local wall's listings — Phase 8's local
+ * extension (`docs/13` Phase 8; docs/14 §9): `/api/tags` first (Ollama),
+ * `/v1/models` on a 404 (the llama.cpp posture). The destination gate is
+ * the wall's own — a non-loopback base refuses here too. The credential is
+ * optional (keyless is the documented default) and is never stored by the
+ * probe.
+ */
+export async function discoverLocalModels(request: {
+  baseUrl: string;
+  apiKey?: string;
+  customHeaders?: Record<string, string>;
+}): Promise<DiscoveryOutcome | { error: BridgeError }> {
+  try {
+    return await invoke<DiscoveryOutcome>("setup_discover_local_models", {
+      request: {
+        baseUrl: request.baseUrl,
+        apiKey: request.apiKey ?? null,
+        customHeaders: Object.entries(request.customHeaders ?? {}),
+      },
+    });
+  } catch (error) {
+    return {
+      error: {
+        code: "PROVIDER_UNREACHABLE",
+        message:
+          typeof error === "string" ? error : "The local server could not be reached.",
         retryable: true,
       },
     };

@@ -53,6 +53,11 @@ pub use myharness_provider_openai_responses::discovery::{
     DiscoveryRequest as ResponsesDiscoveryRequest,
 };
 
+pub use myharness_provider_local::discovery::{
+    discover_models as local_adapter_discover_models,
+    DiscoveryRequest as LocalDiscoveryRequest,
+};
+
 /// Run model discovery against an Anthropic-compatible gateway (the setup
 /// probe path).
 ///
@@ -92,6 +97,30 @@ pub async fn discover_openai_models(
     openai_adapter_discover_models(request, client)
         .await
         .map_err(crate::setup::bridge_provider_error)
+}
+
+/// Run model discovery against the local wall's listings (Phase 8; `docs/14`
+/// §9): `/api/tags` first, `/v1/models` on a 404 — the destination gate is
+/// the adapter's own, so a non-loopback base refuses with the provider's
+/// wording. The wall's outcome shape maps onto the shared setup outcome —
+/// one page, never partial, the first warning surfaced.
+pub async fn discover_local_models(
+    request: &LocalDiscoveryRequest,
+    client: &reqwest::Client,
+) -> Result<DiscoveryOutcome, BridgeError> {
+    let outcome = local_adapter_discover_models(request, client)
+        .await
+        .map_err(crate::setup::bridge_provider_error)?;
+    Ok(DiscoveryOutcome {
+        models: outcome
+            .models
+            .into_iter()
+            .map(|model| DiscoveredModel { id: model.id, raw: model.raw })
+            .collect(),
+        pages: 1,
+        partial: false,
+        warning: outcome.warnings.into_iter().next(),
+    })
 }
 
 /// Run model discovery against the Responses wall's listing (Phase 8 slice

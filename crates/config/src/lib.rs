@@ -104,6 +104,12 @@ pub enum ProviderKind {
     /// endpoint first-party by default and overridable.
     #[serde(rename = "openai-responses")]
     OpenAiResponses,
+    /// A locally running inference server — the Ollama / llama.cpp surface
+    /// (Phase 8's local extension, `docs/13` Phase 8; `docs/14` §9): a
+    /// native wall whose destination gate is loopback-only by construction,
+    /// credential optional (keyless is the documented default).
+    #[serde(rename = "local")]
+    Local,
 }
 
 /// Credential source for a provider. Singular by construction: a profile holds at
@@ -758,6 +764,10 @@ mod tests {
             ProviderKind::OpenAiResponses => json!({
                 "inferenceCredentialKind": "static",
                 "inferenceOpenAiResponsesApiKey": "placeholder-credential",
+            }),
+            ProviderKind::Local => json!({
+                "inferenceCredentialKind": "static",
+                "inferenceLocalBaseUrl": "http://127.0.0.1:11434",
             }),
         }
     }

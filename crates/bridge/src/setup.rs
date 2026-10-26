@@ -29,6 +29,7 @@ use std::collections::BTreeMap;
 use myharness_provider_anthropic::AnthropicAdapter;
 use myharness_provider_gateway::{GatewayAdapter, GatewayClientConfig, ProbeStatus};
 use myharness_provider_openai::{AdapterKind, OpenAiClientConfig, OpenAiCompatAdapter};
+use myharness_provider_local::LocalAdapter;
 use myharness_provider_openai_responses::{ResponsesAdapter, ResponsesClientConfig};
 use myharness_provider_sdk::{AuthContext, ErrorClass, ProviderAdapter, ProviderError};
 use serde::{Deserialize, Serialize};
@@ -396,6 +397,11 @@ impl SetupBackend for ConfigBackend {
             // first-party OpenAI only, a static key required — the wire has
             // no keyless variant.
             ProviderKind::OpenAiResponses => self.test_connection_openai_responses(document, typed),
+            // Phase 8's local extension probes through its own wall
+            // (`docs/13` Phase 8; `docs/14` §9): keyless is the documented
+            // default, and the destination gate is loopback-only by
+            // construction — a non-loopback host refuses before any bytes.
+            ProviderKind::Local => self.test_connection_local(document, typed),
             // The remaining families have no native adapter in this slice;
             // their probe lanes arrive with their own adapters (roadmap
             // order — `docs/13` Phase 3). The Vertex family was removed
@@ -412,6 +418,104 @@ impl SetupBackend for ConfigBackend {
 }
 
 impl ConfigBackend {
+    /// The local lane (Phase 8; `docs/14` §9): a real one-token non-
+    /// streaming turn against the runtimes' documented compat surface.
+    /// Keyless is the documented default — an absent credential is a
+    /// keyless send, never a refusal (`resolve_optional_probe_credential`,
+    /// no helper kind); the destination gate pins the base URL to loopback
+    /// at adapter construction, so a non-loopback host refuses
+    /// `CONFIG_VALIDATION` with zero requests. The draft's first model id
+    /// runs the probe; an empty list falls back to the endpoint's own
+    /// listing (`/api/tags`, then `/v1/models`). Nothing the probe learns
+    /// is persisted.
+    fn test_connection_local(
+        &self,
+        document: &ProfileDocument,
+        typed: &BTreeMap<String, String>,
+    ) -> Result<ProbeStatus, BridgeError> {
+        let connection = &document.connection.0;
+        let base = connection
+            .get("inferenceLocalBaseUrl")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or("")
+            .to_string();
+        let idle = connection
+            .get("inferenceStreamIdleTimeoutSec")
+            .and_then(Value::as_u64)
+            .map(std::time::Duration::from_secs)
+            .unwrap_or(myharness_provider_local::DEFAULT_IDLE_TIMEOUT);
+        let custom_headers = custom_headers_for_probe(connection)?;
+
+        let credential = resolve_optional_probe_credential(
+            connection,
+            typed,
+            self.secrets.as_ref(),
+            "inferenceLocalApiKey",
+            false,
+        )?;
+        let secret = match credential {
+            Some(ProbeCredential::Value(secret)) => secret,
+            Some(ProbeCredential::Helper(config)) => {
+                myharness_secrets::helper::run_helper(&config, cfg!(windows))
+                    .map_err(bridge_secret_error)?
+            }
+            // The family's documented keyless send (`docs/14` §9).
+            None => secrecy::SecretString::from(String::new()),
+        };
+
+        // The destination gate runs here: a non-loopback base refuses
+        // before the probe runtime starts (an empty base falls to the
+        // family's recorded default inside the gate).
+        let adapter = LocalAdapter::new(myharness_provider_local::LocalClientConfig {
+            base_url: base,
+            idle_timeout: idle,
+            custom_headers,
+        })
+        .map_err(|error| {
+            BridgeError::new(
+                "CONFIG_VALIDATION",
+                format!("the local destination was refused: {}", error.message),
+            )
+        })?;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| {
+                BridgeError::new(
+                    "CONFIG_IO",
+                    format!("the probe runtime could not start: {error}"),
+                )
+            })?;
+        runtime.block_on(async {
+            let auth_label = "setup test connection";
+            let model_id = match first_probe_model(connection) {
+                Some(model) => model,
+                None => {
+                    let models = adapter
+                        .list_models(&AuthContext::new(secret.clone(), auth_label))
+                        .await
+                        .map_err(bridge_provider_error)?;
+                    models
+                        .iter()
+                        .map(|model| model.key.model_id.clone())
+                        .next()
+                        .ok_or_else(|| {
+                            BridgeError::new(
+                                "PROVIDER_ERROR",
+                                "the local endpoint advertised no model for a probe",
+                            )
+                        })?
+                }
+            };
+            adapter
+                .probe_inference(&AuthContext::new(secret.clone(), auth_label), &model_id)
+                .await
+                .map_err(bridge_provider_error)
+                .map(local_probe_status_to_renderer)
+        })
+    }
+
     /// The gateway lane: the draft's gateway base URL and scheme decide the
     /// wire; the credential resolves strictly in the family's slot.
     fn test_connection_gateway(
@@ -990,6 +1094,21 @@ fn probe_status_to_renderer(status: myharness_provider_anthropic::ProbeStatus) -
 /// Map the OpenAI-compat adapter's probe verdict onto the setup response's
 /// probe type (`Probe { probe }`): identical fields, one typed seam.
 fn openai_probe_status_to_renderer(status: myharness_provider_openai::ProbeStatus) -> ProbeStatus {
+    ProbeStatus {
+        ok: status.ok,
+        model: status.model,
+        stop_reason: status.stop_reason,
+        input_tokens: status.input_tokens,
+        output_tokens: status.output_tokens,
+        latency_ms: status.latency_ms,
+    }
+}
+
+/// Map the local adapter's probe verdict onto the setup response's probe
+/// type (`Probe { probe }`): identical fields, one typed seam per family.
+fn local_probe_status_to_renderer(
+    status: myharness_provider_local::ProbeStatus,
+) -> ProbeStatus {
     ProbeStatus {
         ok: status.ok,
         model: status.model,
@@ -2962,6 +3081,132 @@ mod tests {
                 .is_none(),
             "the typed secret must not have been persisted"
         );
+    }
+
+    // -------------------------------------------------------------------
+    // Phase 8's local probe lane (`docs/13` Phase 8) — local
+    // -------------------------------------------------------------------
+
+    /// A local completion the stub answers with (the adapter's probe shape).
+    fn local_completion() -> serde_json::Value {
+        json!({
+            "id": "chatcmpl-local-1",
+            "object": "chat.completion",
+            "model": "m-1",
+            "choices": [ { "index": 0,
+                "message": { "role": "assistant", "content": "pong" },
+                "finish_reason": "stop" } ],
+            "usage": { "prompt_tokens": 3, "completion_tokens": 1 }
+        })
+    }
+
+    /// A local-family draft over the live stub (the family's own field
+    /// spellings; the shared model-list key).
+    fn local_document(stub: &str) -> ProfileDocument {
+        let (backend, id) = backend();
+        let mut document = backend.library().read(&id).unwrap();
+        document.provider = Some(ProviderKind::Local);
+        document.connection = myharness_config::Section(json!({
+            "inferenceLocalBaseUrl": stub,
+            "inferenceModels": ["m-1"],
+        }));
+        document
+    }
+
+    /// Phase 8 — the local family's probe is a real one-token turn through
+    /// its own wall, KEYLESS (the documented default: no credential
+    /// material anywhere and the probe still runs — `docs/14` §9); nothing
+    /// the probe learns is persisted.
+    #[test]
+    fn test_connection_probes_the_local_family_keyless() {
+        let stub = StubGateway::serve(vec![canned(
+            200,
+            "application/json",
+            &response_bytes(&local_completion()),
+        )]);
+        let document = local_document(&stub.base);
+        let (backend, id) = backend();
+        let response = dispatch(
+            &backend,
+            SetupCommand::TestConnection {
+                document: serde_json::to_value(document).unwrap(),
+                secrets: BTreeMap::new(),
+            },
+        );
+        let SetupResponse::Probe { probe } = response else {
+            panic!("expected a probe response");
+        };
+        assert!(probe.ok);
+        assert_eq!(probe.model, "m-1");
+        assert_eq!(stub.hits(), 1);
+        let reread = backend.library().read(&id).unwrap();
+        assert!(
+            reread.connection.0.get("inferenceModels").is_none(),
+            "the probe must not have persisted the draft"
+        );
+    }
+
+    /// The renderer's typed secret (keyed `connection/<fieldKey>`) sits in
+    /// the family's slot for the local family too, and is never persisted.
+    #[test]
+    fn test_connection_uses_the_typed_secret_for_the_local_family() {
+        let stub = StubGateway::serve(vec![canned(
+            200,
+            "application/json",
+            &response_bytes(&local_completion()),
+        )]);
+        let (backend, id) = backend();
+        let document = local_document(&stub.base);
+        let mut secrets = BTreeMap::new();
+        secrets.insert(
+            "connection/inferenceLocalApiKey".to_string(),
+            "sk-TYPED-EXAMPLE".to_string(),
+        );
+        let response = dispatch(
+            &backend,
+            SetupCommand::TestConnection {
+                document: serde_json::to_value(document).unwrap(),
+                secrets,
+            },
+        );
+        let SetupResponse::Probe { probe } = response else {
+            panic!("expected a probe response");
+        };
+        assert!(probe.ok);
+        assert_eq!(stub.hits(), 1);
+        let reread = backend.library().read(&id).unwrap();
+        assert!(
+            reread.connection.0.get("inferenceLocalApiKey").is_none(),
+            "the typed secret must not have been persisted"
+        );
+    }
+
+    /// The local wall's destination gate refuses a non-loopback base at the
+    /// lane — `CONFIG_VALIDATION`, zero requests — the local-network
+    /// security posture (`docs/14` §9): keyless never widens where the wall
+    /// may connect.
+    #[test]
+    fn test_connection_refuses_a_non_loopback_local_base() {
+        let stub = StubGateway::serve(Vec::new());
+        let (backend, _id) = backend();
+        let mut document = local_document(&stub.base);
+        document.connection.0.as_object_mut().unwrap().insert(
+            "inferenceLocalBaseUrl".to_string(),
+            json!("http://10.0.0.5:11434"),
+        );
+        let response = dispatch(
+            &backend,
+            SetupCommand::TestConnection {
+                document: serde_json::to_value(document).unwrap(),
+                secrets: BTreeMap::new(),
+            },
+        );
+        let SetupResponse::Error { error } = response else {
+            panic!("expected an error response");
+        };
+        assert_eq!(error.code, "CONFIG_VALIDATION");
+        assert!(error.message.contains("loopback"), "{error:?}");
+        assert_eq!(stub.hits(), 0, "zero requests must have travelled");
     }
 
     /// The Responses family's empty credential refuses at the lane before

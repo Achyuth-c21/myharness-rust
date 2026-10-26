@@ -336,6 +336,15 @@ fn provider_hosts(
                 None => hosts.push("api.openai.com".to_string()),
             }
         }
+        Some(ProviderKind::Local) => {
+            // The local wall's destination is loopback-only by construction
+            // (`docs/14` §9); the derivation records the host the profile
+            // names, or the family's default loopback.
+            match base_url("inferenceLocalBaseUrl") {
+                Some(url) => hosts.extend(host_of(&Value::String(url))),
+                None => hosts.push("127.0.0.1".to_string()),
+            }
+        }
         None => {}
     }
     hosts

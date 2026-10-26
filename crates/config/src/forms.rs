@@ -194,6 +194,10 @@ fn schema_kinds(provider: ProviderKind) -> &'static [(&'static str, CredentialKi
         // item 71): first-party only — a static key is the family's only
         // offered credential kind, like the Chat Completions `openai` one.
         ProviderKind::OpenAiResponses => &[("Static API key", CredentialKind::Static)],
+        // Phase 8's local extension (`docs/14` §9): the runtimes' documented
+        // default is keyless — a static key exists for servers started with
+        // one, and it is the only offered kind.
+        ProviderKind::Local => &[("Static API key (optional)", CredentialKind::Static)],
         ProviderKind::Custom => &[
             ("Static API key", CredentialKind::Static),
             // A company gateway resolves its key through the family's helper
@@ -595,6 +599,26 @@ pub fn validate_connection(provider: ProviderKind, connection: &Value) -> Vec<Fo
             }
             idle_timeout_check(&conn, &mut issues);
         }
+        ProviderKind::Local => {
+            // The local extension (Phase 8; `docs/14` §9): the base URL is
+            // optional (empty = the family's recorded Ollama default), the
+            // key is optional (keyless is the documented default), and the
+            // wall's destination gate is loopback-only by construction — a
+            // non-loopback host is refused at the adapter, not negotiated.
+            match url_value(get("inferenceLocalBaseUrl")) {
+                Err(e) => issues.push(error("inferenceLocalBaseUrl", e)),
+                Ok(Some(u)) => {
+                    if !u.starts_with("http://") {
+                        issues.push(error(
+                            "inferenceLocalBaseUrl",
+                            "the local surface speaks plain http; base URL must start with http://".to_string(),
+                        ));
+                    }
+                }
+                Ok(None) => {}
+            }
+            idle_timeout_check(&conn, &mut issues);
+        }
         ProviderKind::Custom => {
             // An OpenAI-compatible endpoint the user defines. The base URL is
             // required; the key is optional — self-hosted servers often serve
@@ -916,6 +940,39 @@ pub fn connection_schema(provider: ProviderKind) -> FormSchema {
                     FieldGroup::Endpoint,
                 ),
                 "Leave empty for the first-party endpoint (https://api.openai.com/v1).",
+            ));
+            fields.push(with_help(
+                field(
+                    "inferenceStreamIdleTimeoutSec",
+                    "Stream idle timeout",
+                    FieldKind::Number,
+                    FieldGroup::Advanced,
+                ),
+                "Default 300 s.",
+            ));
+        }
+        ProviderKind::Local => {
+            // The local extension's fields (Phase 8; `docs/14` §9): the
+            // family's own key spellings; the base URL defaults to the
+            // recorded Ollama root and both supported runtimes' ports are
+            // documented in the help text.
+            fields.push(with_help(
+                field(
+                    "inferenceLocalApiKey",
+                    "API key",
+                    FieldKind::Secret,
+                    FieldGroup::Credentials,
+                ),
+                "Optional: only for a server started with an API key.",
+            ));
+            fields.push(with_help(
+                field(
+                    "inferenceLocalBaseUrl",
+                    "Local server URL",
+                    FieldKind::Url,
+                    FieldGroup::Endpoint,
+                ),
+                "Leave empty for http://127.0.0.1:11434 (Ollama's default; the llama.cpp server is usually on :8080). Loopback only.",
             ));
             fields.push(with_help(
                 field(
@@ -1310,6 +1367,10 @@ mod tests {
     /// model IDs"): each family refuses its own required fields.
     #[test]
     fn every_provider_requires_its_own_fields() {
+        // The local family is excluded by design: every one of its fields
+        // is optional (keyless localhost is the documented default), so an
+        // empty connection validates clean — `local_family_validation` pins
+        // that posture instead.
         for provider in [
             ProviderKind::Gateway,
             ProviderKind::ClaudeApi,
@@ -1376,6 +1437,7 @@ mod tests {
         let openai = connection_schema(ProviderKind::OpenAi);
         let custom = connection_schema(ProviderKind::Custom);
         let responses = connection_schema(ProviderKind::OpenAiResponses);
+        let local = connection_schema(ProviderKind::Local);
         assert!(openai
             .fields
             .iter()
@@ -1410,6 +1472,17 @@ mod tests {
             .fields
             .iter()
             .any(|f| f.key == "inferenceOpenAiBaseUrl"));
+        // The local family's keys are its own and neither is required (the
+        // shared credential-kind select is every family's one required
+        // field).
+        assert!(local.fields.iter().any(|f| f.key == "inferenceLocalBaseUrl"));
+        assert!(local.fields.iter().any(|f| f.key == "inferenceLocalApiKey"));
+        for key in ["inferenceLocalBaseUrl", "inferenceLocalApiKey"] {
+            assert!(
+                !local.fields.iter().any(|f| f.key == key && f.required),
+                "{key} must not be required"
+            );
+        }
     }
 
     /// TEST-CFG-005 (credential kind is exclusive, no fallback): a kind the family
@@ -1469,6 +1542,21 @@ mod tests {
             }),
         );
         assert!(errors(&issues).contains(&"inferenceOpenAiBaseUrl"));
+    }
+
+    /// The local family (Phase 8): an empty connection validates clean —
+    /// keyless localhost is the documented default — and a non-http scheme
+    /// is refused (the wall speaks plain http on loopback).
+    #[test]
+    fn local_family_validation() {
+        let issues = connection(ProviderKind::Local, json!({}));
+        assert!(errors(&issues).is_empty(), "{issues:?}");
+
+        let issues = connection(
+            ProviderKind::Local,
+            json!({ "inferenceLocalBaseUrl": "https://127.0.0.1:11434" }),
+        );
+        assert!(errors(&issues).contains(&"inferenceLocalBaseUrl"));
     }
 
     /// The Responses extension's family (Phase 8): the key is required for

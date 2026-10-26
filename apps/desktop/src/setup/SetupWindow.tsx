@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Field } from "./fields";
 import {
   discoverModels,
+  discoverLocalModels,
   discoverOpenAiModels,
   discoverOpenAiResponsesModels,
   testConnection,
@@ -72,6 +73,7 @@ const FAMILY_OPTIONS: { value: ProviderKind; label: string }[] = [
   { value: "bedrock", label: "Amazon Bedrock" },
   { value: "openai", label: "OpenAI (Chat Completions)" },
   { value: "openai-responses", label: "OpenAI (Responses)" },
+  { value: "local", label: "Local (Ollama / llama.cpp)" },
   { value: "custom", label: "Custom OpenAI-compatible endpoint" },
   { value: "mantle", label: "Bedrock Mantle (adapter pending)" },
   { value: "foundry", label: "Foundry (adapter pending)" },
@@ -234,7 +236,8 @@ export default function SetupWindow() {
     draft?.provider === "bedrock" ||
     draft?.provider === "openai" ||
     draft?.provider === "custom" ||
-    draft?.provider === "openai-responses";
+    draft?.provider === "openai-responses" ||
+    draft?.provider === "local";
 
   const section = draft ? ((draft[sectionOf(tab)] as Record<string, unknown>) ?? {}) : {};
   const schema = schemas[tab];
@@ -324,6 +327,25 @@ export default function SetupWindow() {
         kind: provider,
         baseUrl: typeof baseUrl === "string" ? baseUrl : "",
         apiKey: pendingSecrets[`connection/${slotKey}`],
+        customHeaders: headers,
+      });
+      setDiscovering(false);
+      if ("error" in response) {
+        setDiscoveryNote(response.error.message);
+        return;
+      }
+      offerDiscoveredModels(response);
+      return;
+    }
+    if (provider === "local") {
+      // The local wall's listings (Phase 8; docs/14 §9): the base URL is
+      // optional (empty = the family's recorded Ollama default) and the
+      // credential is optional (keyless is the documented default).
+      const response = await discoverLocalModels({
+        baseUrl: typeof section["inferenceLocalBaseUrl"] === "string"
+          ? (section["inferenceLocalBaseUrl"] as string)
+          : "",
+        apiKey: pendingSecrets["connection/inferenceLocalApiKey"],
         customHeaders: headers,
       });
       setDiscovering(false);
@@ -424,7 +446,9 @@ export default function SetupWindow() {
                 ? "OpenAI-compatible endpoint"
                 : draft.provider === "openai-responses"
                   ? "OpenAI Responses"
-                  : /* family-agnostic for anything else */ "provider";
+                  : draft.provider === "local"
+                    ? "Local server"
+                    : /* family-agnostic for anything else */ "provider";
     setProbeNote(
       probe.ok
         ? `Connected. The ${familyLabel} adapter ran ${probe.model} (${probe.latencyMs} ms, ` +

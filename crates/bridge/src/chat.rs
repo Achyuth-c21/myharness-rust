@@ -38,6 +38,7 @@ use myharness_provider_anthropic::AnthropicAdapter;
 use myharness_provider_bedrock::BedrockAdapter;
 use myharness_provider_gateway::{GatewayAdapter, GatewayClientConfig};
 use myharness_provider_openai::{AdapterKind, OpenAiClientConfig, OpenAiCompatAdapter};
+use myharness_provider_local::LocalAdapter;
 use myharness_provider_openai_responses::{ResponsesAdapter, ResponsesClientConfig};
 use myharness_provider_sdk::{
     AuthContext, ModelKey, ProviderAdapter, SystemBlock, TurnEvent,
@@ -373,6 +374,32 @@ impl ConfigBackend {
                 );
                 (Box::new(adapter), secret)
             }
+            myharness_config::ProviderKind::Local => {
+                // The local extension (Phase 8; `docs/14` §9): keyless is
+                // the documented default; the destination gate pins the
+                // base URL to loopback at construction — a non-loopback
+                // host refuses the send outright. The provider id is the
+                // wall's own `id()` spelling.
+                let base =
+                    optional_string(connection, "inferenceLocalBaseUrl")?.unwrap_or_default();
+                let secret =
+                    optional_secret(connection, self.secrets(), "inferenceLocalApiKey", false)?;
+                let adapter = LocalAdapter::new(myharness_provider_local::LocalClientConfig {
+                    base_url: base,
+                    idle_timeout: idle_timeout(
+                        connection,
+                        myharness_provider_local::DEFAULT_IDLE_TIMEOUT,
+                    ),
+                    custom_headers: custom_headers_for_probe(connection)?,
+                })
+                .map_err(|error| {
+                    BridgeError::new(
+                        "CONFIG_VALIDATION",
+                        format!("the local destination was refused: {}", error.message),
+                    )
+                })?;
+                (Box::new(adapter), secret)
+            }
             // Locked until their adapters land (`docs/04` §3.1): a chat send
             // must refuse, never route through another family.
             myharness_config::ProviderKind::BedrockMantle => {
@@ -416,6 +443,7 @@ fn provider_id(provider: myharness_config::ProviderKind) -> &'static str {
         ProviderKind::OpenAi => "openai",
         ProviderKind::Custom => "custom",
         ProviderKind::OpenAiResponses => "openai-responses",
+        ProviderKind::Local => "local",
     }
 }
 
