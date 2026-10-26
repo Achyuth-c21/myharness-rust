@@ -61,6 +61,15 @@ pub fn backup_into(live: &rusqlite::Connection, target: &Path) -> Result<(), Sto
     Ok(())
 }
 
+/// The store-facing wrapper: snapshot this store's live connection to a
+/// fresh file (the store method the bridge and tests call).
+impl crate::Store {
+    pub fn backup_into(&self, target: &Path) -> Result<(), StoreError> {
+        let guard = self.conn.lock().expect("the store lock");
+        backup_into(&guard, target)
+    }
+}
+
 /// Verify and restore a backup file into `target` (the store's database
 /// path), offline — before any connection opens. The candidate must pass
 /// SQLite's integrity check and carry a schema version this build supports
