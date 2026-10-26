@@ -23,6 +23,7 @@ import {
   setup,
   type ConfigHealth,
   type DiscoveryOutcome,
+  type FamilyDescriptor,
   type EgressAllowlist,
   type ExportBundle,
   type FieldDef,
@@ -61,23 +62,13 @@ const EGRESS_GROUP_LABELS: Record<string, string> = {
   "ssh-identity-endpoints": "SSH & identity endpoints",
 };
 
-/** The provider families the family picker offers (`docs/12` §1's rebuilt
- * set plus the open model layer's `docs/13` §C families; the shipped Vertex
- * family was removed from rebuild scope, owner decision 2026-10-23,
- * `docs/04` §3.1). The two pending-at-the-back families have no native
- * adapter yet (`docs/13` Phase 3): their forms exist but their probe and
- * send stay locked rather than faked. */
-const FAMILY_OPTIONS: { value: ProviderKind; label: string }[] = [
-  { value: "anthropic", label: "Claude API (first-party)" },
-  { value: "gateway", label: "Anthropic-compatible gateway" },
-  { value: "bedrock", label: "Amazon Bedrock" },
-  { value: "openai", label: "OpenAI (Chat Completions)" },
-  { value: "openai-responses", label: "OpenAI (Responses)" },
-  { value: "local", label: "Local (Ollama / llama.cpp)" },
-  { value: "custom", label: "Custom OpenAI-compatible endpoint" },
-  { value: "mantle", label: "Bedrock Mantle (adapter pending)" },
-  { value: "foundry", label: "Foundry (adapter pending)" },
-];
+/**
+ * The family picker's options come from the BRIDGE's family catalog
+ * (`TEST-EXT-007`'s data half; crates/config forms::family_catalog) — the
+ * UI never hard-codes a family id. Until the catalog arrives the picker is
+ * empty; a failed catalog load is a banner, not a fake list.
+ */
+
 
 /** The nine profile sections (docs/18 §10). */
 const SECTIONS = [
@@ -126,6 +117,7 @@ export default function SetupWindow() {
   const [discoveryNote, setDiscoveryNote] = useState<string | null>(null);
   const [probing, setProbing] = useState(false);
   const [probeNote, setProbeNote] = useState<string | null>(null);
+  const [familyCatalog, setFamilyCatalog] = useState<FamilyDescriptor[]>([]);
 
   const loadProfiles = useCallback(async () => {
     const response = await setup({ type: "listProfiles" });
@@ -172,6 +164,11 @@ export default function SetupWindow() {
     setSchemas(next);
   }, []);
 
+  const loadFamilyCatalog = useCallback(async () => {
+    const response = await setup({ type: "familyCatalog" });
+    if (response.type === "familyCatalog") setFamilyCatalog(response.families);
+  }, []);
+
   const loadMerged = useCallback(async () => {
     const response = await setup({ type: "merged" });
     if (response.type !== "merged") return;
@@ -196,6 +193,7 @@ export default function SetupWindow() {
       }
       setSelectedId(applied.id);
       await loadProfile(applied.id);
+      await loadFamilyCatalog();
       await loadSchemas(applied.provider);
       await loadMerged();
       const healthResponse = await setup({ type: "health" });
@@ -205,7 +203,7 @@ export default function SetupWindow() {
     return () => {
       cancelled = true;
     };
-  }, [loadProfiles, loadProfile, loadSchemas, loadMerged]);
+  }, [loadProfiles, loadProfile, loadSchemas, loadMerged, loadFamilyCatalog]);
 
   // The Egress tab is derived, so it is fetched when the tab is opened.
   useEffect(() => {
@@ -227,17 +225,13 @@ export default function SetupWindow() {
 
   const hasError = issues.some((issue) => issue.severity === "error");
 
-  // The probe runs only where a native adapter exists (`docs/13` Phase 3
-  // gate, plus the open model layer's `docs/13` §C families); others keep
-  // the button disabled until their adapters land rather than faked.
+  // The probe runs only where the catalog says a native adapter exists
+  // (`docs/13` Phase 3; TEST-EXT-007): the catalog is the registration
+  // record — pending families keep the button disabled rather than faked.
   const probeSupported =
-    draft?.provider === "gateway" ||
-    draft?.provider === "anthropic" ||
-    draft?.provider === "bedrock" ||
-    draft?.provider === "openai" ||
-    draft?.provider === "custom" ||
-    draft?.provider === "openai-responses" ||
-    draft?.provider === "local";
+    familyCatalog.find((entry) => entry.id === draft?.provider)?.probeSupported ?? false;
+  const familyDescriptor = (provider: ProviderKind | null | undefined) =>
+    familyCatalog.find((entry) => entry.id === provider) ?? null;
 
   const section = draft ? ((draft[sectionOf(tab)] as Record<string, unknown>) ?? {}) : {};
   const schema = schemas[tab];
@@ -308,25 +302,54 @@ export default function SetupWindow() {
    */
   const runDiscovery = async () => {
     const provider = draft?.provider ?? null;
+    const descriptor = familyDescriptor(provider);
     const headers = (section["inferenceCustomHeaders"] ?? {}) as Record<string, string>;
     setDiscovering(true);
     setDiscoveryNote(null);
-    if (provider === "openai" || provider === "custom") {
-      const baseKey =
-        provider === "openai" ? "inferenceOpenAiBaseUrl" : "inferenceCustomBaseUrl";
-      const slotKey = provider === "openai" ? "inferenceOpenAiApiKey" : "inferenceCustomApiKey";
-      const baseUrl = section[baseKey];
-      // The openai family's base URL is optional (empty = the first-party
-      // host); the custom family's base URL is required.
-      if (provider === "custom" && (typeof baseUrl !== "string" || !baseUrl.trim())) {
+    // The discovery dispatch keys off the CATALOG's style + keys, not on
+    // family ids (`TEST-EXT-007`): the renderer asks the bridge what a
+    // family's base URL and credential slot are called.
+    const style = descriptor?.discovery ?? "none";
+    const fieldString = (key: string | null): string => {
+      if (!key) return "";
+      const value = section[key];
+      return typeof value === "string" ? value : "";
+    };
+    if (style === "gateway") {
+      const baseKey = descriptor?.baseKey ?? "";
+      const baseUrl = fieldString(baseKey);
+      if (!baseUrl.trim()) {
+        setDiscovering(false);
+        setDiscoveryNote("A gateway base URL is required before models can be discovered.");
+        return;
+      }
+      const response = await discoverModels({
+        baseUrl,
+        apiKey: pendingSecrets["connection/inferenceGatewayApiKey"],
+        authScheme: section["inferenceGatewayAuthScheme"] === "x-api-key" ? "x-api-key" : "bearer",
+        customHeaders: headers,
+      });
+      setDiscovering(false);
+      if ("error" in response) {
+        setDiscoveryNote(response.error.message);
+        return;
+      }
+      offerDiscoveredModels(response);
+      return;
+    }
+    if (style === "openai-compat" && (provider === "openai" || provider === "custom")) {
+      const baseUrl = fieldString(descriptor?.baseKey ?? null);
+      // The custom family's base URL is required (the catalog says so);
+      // the openai family's is optional (empty = the first-party host).
+      if (descriptor?.baseRequired && !baseUrl.trim()) {
         setDiscovering(false);
         setDiscoveryNote("A base URL is required before models can be discovered.");
         return;
       }
       const response = await discoverOpenAiModels({
-        kind: provider,
-        baseUrl: typeof baseUrl === "string" ? baseUrl : "",
-        apiKey: pendingSecrets[`connection/${slotKey}`],
+        kind: provider === "custom" ? "custom" : "openai",
+        baseUrl,
+        apiKey: pendingSecrets[`connection/${descriptor?.credentialSlot ?? ""}`],
         customHeaders: headers,
       });
       setDiscovering(false);
@@ -337,34 +360,13 @@ export default function SetupWindow() {
       offerDiscoveredModels(response);
       return;
     }
-    if (provider === "local") {
-      // The local wall's listings (Phase 8; docs/14 §9): the base URL is
-      // optional (empty = the family's recorded Ollama default) and the
-      // credential is optional (keyless is the documented default).
-      const response = await discoverLocalModels({
-        baseUrl: typeof section["inferenceLocalBaseUrl"] === "string"
-          ? (section["inferenceLocalBaseUrl"] as string)
-          : "",
-        apiKey: pendingSecrets["connection/inferenceLocalApiKey"],
-        customHeaders: headers,
-      });
-      setDiscovering(false);
-      if ("error" in response) {
-        setDiscoveryNote(response.error.message);
-        return;
-      }
-      offerDiscoveredModels(response);
-      return;
-    }
-    if (provider === "openai-responses") {
+    if (style === "responses") {
       // The Responses wall's listing (Phase 8; docs/14 §9 item 71): the
       // base URL is optional (empty = the first-party host) and the
       // credential is the family's required static key.
       const response = await discoverOpenAiResponsesModels({
-        baseUrl: typeof section["inferenceOpenAiResponsesBaseUrl"] === "string"
-          ? (section["inferenceOpenAiResponsesBaseUrl"] as string)
-          : "",
-        apiKey: pendingSecrets["connection/inferenceOpenAiResponsesApiKey"],
+        baseUrl: fieldString(descriptor?.baseKey ?? null),
+        apiKey: pendingSecrets[`connection/${descriptor?.credentialSlot ?? ""}`],
         customHeaders: headers,
       });
       setDiscovering(false);
@@ -375,29 +377,27 @@ export default function SetupWindow() {
       offerDiscoveredModels(response);
       return;
     }
-    const baseUrl = section["inferenceGatewayBaseUrl"];
-    if (typeof baseUrl !== "string" || !baseUrl.trim()) {
+    if (style === "local") {
+      // The local wall's listings (Phase 8; docs/14 §9): the base URL is
+      // optional (empty = the family's recorded Ollama default) and the
+      // credential is optional (keyless is the documented default).
+      const response = await discoverLocalModels({
+        baseUrl: fieldString(descriptor?.baseKey ?? null),
+        apiKey: pendingSecrets[`connection/${descriptor?.credentialSlot ?? ""}`],
+        customHeaders: headers,
+      });
       setDiscovering(false);
-      setDiscoveryNote("A gateway base URL is required before models can be discovered.");
+      if ("error" in response) {
+        setDiscoveryNote(response.error.message);
+        return;
+      }
+      offerDiscoveredModels(response);
       return;
     }
-    const response = await discoverModels({
-      baseUrl,
-      apiKey: pendingSecrets["connection/inferenceGatewayApiKey"],
-      authScheme: section["inferenceGatewayAuthScheme"] === "x-api-key" ? "x-api-key" : "bearer",
-      customHeaders: headers,
-    });
     setDiscovering(false);
-    if ("error" in response) {
-      setDiscoveryNote(response.error.message);
-      return;
-    }
-    offerDiscoveredModels(response);
+    setDiscoveryNote("Model discovery is not available for this provider family.");
   };
 
-  /** The shared discovery tail: offer the ids as the draft's model list
-   * (`docs/12` §3.2 — first entry the default; every family shares one
-   * freeform list under the open model layer). */
   const offerDiscoveredModels = (response: DiscoveryOutcome) => {
     const ids = response.models.map((model) => model.id);
     if (!ids.length) {
@@ -665,8 +665,8 @@ export default function SetupWindow() {
                       {/* Blank stays the unset state, exactly like the schema
                           fields' blank option (docs/09 §3.4). */}
                       <option value=""></option>
-                      {FAMILY_OPTIONS.map((family) => (
-                        <option key={family.value} value={family.value}>
+                      {familyCatalog.map((family) => (
+                        <option key={family.id} value={family.id}>
                           {family.label}
                         </option>
                       ))}

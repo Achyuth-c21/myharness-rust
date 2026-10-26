@@ -1346,6 +1346,147 @@ pub fn validate_document(doc: &ProfileDocument) -> Vec<FormIssue> {
     issues
 }
 
+
+// ---------------------------------------------------------------------------
+// The family catalog (`TEST-EXT-007`'s data half)
+// ---------------------------------------------------------------------------
+
+/// How a family's discovery runs — the renderer dispatches on this instead
+/// of on hard-coded family ids.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DiscoveryStyle {
+    /// The gateway's cursor-paginated `/v1/models` (scheme-aware).
+    Gateway,
+    /// The OpenAI-compatible `/models` listing (first-party or keyless).
+    OpenAiCompat,
+    /// The Responses wall's listing (single page).
+    Responses,
+    /// The local wall's listings (`/api/tags`, then `/v1/models`).
+    Local,
+    /// No native adapter yet — discovery stays locked.
+    None,
+}
+
+/// One provider family's registration record: the data the setup surface
+/// needs to offer, unlock, and address a family — without the renderer (or
+/// the agent) hard-coding family ids. The genuinely wire-specific parts
+/// (adapter construction, the probe lanes) stay registered per-family in
+/// the bridge: **the catalog describes; the bridge constructs** (`docs/13`
+/// Phase 8; `crates/extensions`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FamilyDescriptor {
+    /// The family's wire spelling (the profile's `inferenceProvider` value).
+    pub id: String,
+    /// The picker label.
+    pub label: String,
+    /// A native adapter and probe lane exist — Test connection is unlocked.
+    pub probe_supported: bool,
+    /// The discovery style the renderer dispatches on.
+    pub discovery: DiscoveryStyle,
+    /// The connection section's base-URL key, when the family has one.
+    pub base_key: Option<String>,
+    /// Whether the base URL is required before discovery can run.
+    pub base_required: bool,
+    /// The connection section's credential slot, when the family has one.
+    pub credential_slot: Option<String>,
+}
+
+/// The family catalog, in picker order. `TEST-EXT-007`'s boundary: adding a
+/// family extends THIS table (plus its wire-specific registration in the
+/// bridge); the setup UI reads it and never hard-codes an id.
+pub fn family_catalog() -> Vec<FamilyDescriptor> {
+    vec![
+        FamilyDescriptor {
+            id: "anthropic".to_string(),
+            label: "Claude API (first-party)".to_string(),
+            probe_supported: true,
+            discovery: DiscoveryStyle::None,
+            base_key: None,
+            base_required: false,
+            credential_slot: Some("inferenceAnthropicApiKey".to_string()),
+        },
+        FamilyDescriptor {
+            id: "gateway".to_string(),
+            label: "Anthropic-compatible gateway".to_string(),
+            probe_supported: true,
+            discovery: DiscoveryStyle::Gateway,
+            base_key: Some("inferenceGatewayBaseUrl".to_string()),
+            base_required: true,
+            credential_slot: Some("inferenceGatewayApiKey".to_string()),
+        },
+        FamilyDescriptor {
+            id: "bedrock".to_string(),
+            label: "Amazon Bedrock".to_string(),
+            probe_supported: true,
+            discovery: DiscoveryStyle::None,
+            base_key: None,
+            base_required: false,
+            credential_slot: Some("inferenceBedrockBearerToken".to_string()),
+        },
+        FamilyDescriptor {
+            id: "openai".to_string(),
+            label: "OpenAI (Chat Completions)".to_string(),
+            probe_supported: true,
+            discovery: DiscoveryStyle::OpenAiCompat,
+            base_key: Some("inferenceOpenAiBaseUrl".to_string()),
+            base_required: false,
+            credential_slot: Some("inferenceOpenAiApiKey".to_string()),
+        },
+        FamilyDescriptor {
+            id: "openai-responses".to_string(),
+            label: "OpenAI (Responses)".to_string(),
+            probe_supported: true,
+            discovery: DiscoveryStyle::Responses,
+            base_key: Some("inferenceOpenAiResponsesBaseUrl".to_string()),
+            base_required: false,
+            credential_slot: Some("inferenceOpenAiResponsesApiKey".to_string()),
+        },
+        FamilyDescriptor {
+            id: "local".to_string(),
+            label: "Local (Ollama / llama.cpp)".to_string(),
+            probe_supported: true,
+            discovery: DiscoveryStyle::Local,
+            base_key: Some("inferenceLocalBaseUrl".to_string()),
+            base_required: false,
+            credential_slot: Some("inferenceLocalApiKey".to_string()),
+        },
+        FamilyDescriptor {
+            id: "custom".to_string(),
+            label: "Custom OpenAI-compatible endpoint".to_string(),
+            probe_supported: true,
+            discovery: DiscoveryStyle::OpenAiCompat,
+            base_key: Some("inferenceCustomBaseUrl".to_string()),
+            base_required: true,
+            credential_slot: Some("inferenceCustomApiKey".to_string()),
+        },
+        FamilyDescriptor {
+            id: "mantle".to_string(),
+            label: "Bedrock Mantle (adapter pending)".to_string(),
+            probe_supported: false,
+            discovery: DiscoveryStyle::None,
+            base_key: None,
+            base_required: false,
+            credential_slot: None,
+        },
+        FamilyDescriptor {
+            id: "foundry".to_string(),
+            label: "Foundry (adapter pending)".to_string(),
+            probe_supported: false,
+            discovery: DiscoveryStyle::None,
+            base_key: None,
+            base_required: false,
+            credential_slot: None,
+        },
+    ]
+}
+
+/// The catalog entry for one family id.
+pub fn family_descriptor(id: &str) -> Option<FamilyDescriptor> {
+    family_catalog().into_iter().find(|entry| entry.id == id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1542,6 +1683,38 @@ mod tests {
             }),
         );
         assert!(errors(&issues).contains(&"inferenceOpenAiBaseUrl"));
+    }
+
+    /// `TEST-EXT-007`'s data half: the catalog covers every `ProviderKind`
+    /// spelling exactly once, and the locked families say so.
+    #[test]
+    fn the_family_catalog_covers_every_kind() {
+        let kinds = [
+            ProviderKind::ClaudeApi,
+            ProviderKind::Bedrock,
+            ProviderKind::BedrockMantle,
+            ProviderKind::Foundry,
+            ProviderKind::Gateway,
+            ProviderKind::OpenAi,
+            ProviderKind::Custom,
+            ProviderKind::OpenAiResponses,
+            ProviderKind::Local,
+        ];
+        let catalog = family_catalog();
+        assert_eq!(catalog.len(), kinds.len());
+        for kind in kinds {
+            let spelling = serde_json::to_value(kind).unwrap();
+            let spelling = spelling.as_str().unwrap();
+            let descriptor = family_descriptor(spelling)
+                .unwrap_or_else(|| panic!("the catalog must carry {spelling:?}"));
+            assert_eq!(descriptor.id, spelling);
+            assert!(!descriptor.label.is_empty());
+        }
+        assert!(
+            !family_descriptor("mantle").unwrap().probe_supported,
+            "a pending family stays locked"
+        );
+        assert!(family_descriptor("local").unwrap().probe_supported);
     }
 
     /// The local family (Phase 8): an empty connection validates clean —

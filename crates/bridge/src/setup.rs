@@ -81,6 +81,10 @@ pub enum SetupCommand {
     TabSchema { tab: String },
     /// `connectionSchema` — the Connection form schema of one provider family.
     ConnectionSchema { provider: String },
+    /// `familyCatalog` — the family catalog (`TEST-EXT-007`'s data half):
+    /// the registration records the setup surface offers, unlocks, and
+    /// addresses families through, instead of hard-coding ids in the UI.
+    FamilyCatalog,
     /// `validate` — the issues of a draft, without persisting it.
     Validate { document: Value },
     /// `testConnection` — the Connection tab's *Test connection* (`docs/13`
@@ -113,6 +117,9 @@ pub enum SetupResponse {
     Egress { allowlist: Value },
     /// A form schema.
     Schema { schema: Value },
+    /// The family catalog: one descriptor per registered family (`docs/13`
+    /// Phase 8; `crates/extensions` pins the describe/construct boundary).
+    FamilyCatalog { families: Vec<myharness_config::forms::FamilyDescriptor> },
     /// The validation issues of a draft.
     Issues { issues: Vec<FormIssue> },
     /// The *Test connection* verdict: the probe's real usage, latency, and
@@ -1519,6 +1526,9 @@ fn run<B: SetupBackend>(backend: &B, command: SetupCommand) -> Result<SetupRespo
                 schema: serde_json::to_value(schema).unwrap_or(Value::Null),
             })
         }
+        SetupCommand::FamilyCatalog => Ok(SetupResponse::FamilyCatalog {
+            families: myharness_config::forms::family_catalog(),
+        }),
         SetupCommand::Validate { document } => {
             let document = decode_document(document)?;
             Ok(SetupResponse::Issues {

@@ -143,6 +143,24 @@ export interface BridgeError {
   retryable: boolean;
 }
 
+/**
+ * One family's registration record (`TEST-EXT-007`'s data half; crates/config
+ * forms::FamilyDescriptor): the catalog the setup surface offers, unlocks,
+ * and addresses families through — instead of hard-coding ids in the UI.
+ * The genuinely wire-specific parts (adapter construction, the probe lanes)
+ * stay registered per-family in the bridge: the catalog describes; the
+ * bridge constructs.
+ */
+export interface FamilyDescriptor {
+  id: ProviderKind;
+  label: string;
+  probeSupported: boolean;
+  discovery: "gateway" | "openai-compat" | "responses" | "local" | "none";
+  baseKey: string | null;
+  baseRequired: boolean;
+  credentialSlot: string | null;
+}
+
 export type SetupResponse =
   | { type: "profiles"; profiles: ProfileSummary[] }
   | { type: "profile"; document: ProfileDocument }
@@ -151,6 +169,7 @@ export type SetupResponse =
   | { type: "export"; bundle: ExportBundle }
   | { type: "egress"; allowlist: EgressAllowlist }
   | { type: "schema"; schema: Schema }
+  | { type: "familyCatalog"; families: FamilyDescriptor[] }
   | { type: "issues"; issues: FormIssue[] }
   | { type: "error"; error: BridgeError }
   | { type: "probe"; probe: ProbeStatus };
@@ -169,6 +188,7 @@ export type SetupCommand =
   | { type: "egress" }
   | { type: "tabSchema"; tab: SetupTab }
   | { type: "connectionSchema"; provider: ProviderKind }
+  | { type: "familyCatalog" }
   | { type: "validate"; document: ProfileDocument }
   | {
       type: "testConnection";
