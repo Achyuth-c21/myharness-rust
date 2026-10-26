@@ -1104,3 +1104,75 @@ Slice 3 (`03d5102`, hardening `12d508a`, `b8391ae`) completes Phase 5's local/st
   IMP-31..37, `docs/04` Phase 5 row 3. `docs/**` is modified on disk only and is
   **never committed**. `apps/desktop/src/components/Untitled-1` remains untracked and
   untouched. Do not run `cargo fmt --all` (it churns unrelated baseline files).
+
+## 7o. The final sprint — local extension, extension framework, backup (2026-10-26/27)
+
+The `feature-final-sprint` lane (cut from `dev` @ `706f2ec`) carries four
+commits (`8965209`…`57de540`); merged to `dev` and pushed with the owner's
+approval. Gates at merge: workspace **596 cargo tests / 0 failed**, clippy
+`--workspace --all-targets -D warnings` clean, `cargo metadata`, tsc, vite
+build, E2E `shell.spec.mjs` ALL PASS (T01–T49), `setup-window.spec.mjs`
+16/16, and the release desktop binary builds under `--locked` (37.7 MB).
+
+- **The local provider extension (`crates/providers/local`,
+  `myharness-provider-local`)** — Phase 8's second reference extension: a
+  native wall for Ollama/llama.cpp over their documented OpenAI-compatible
+  surfaces (`POST {base}/v1/chat/completions`; discovery reads `/api/tags`
+  first — Ollama's keyed listing — then `/v1/models` on a 404, the
+  llama.cpp posture). Its core is local-network security: the destination
+  gate pins the base URL to loopback at construction (loopback IP literals
+  or `localhost` only; a name resolving off-loopback — DNS/IP rebinding —
+  refuses before any bytes; the resolver is injected for tests), requests
+  pin to the resolved address, the wall builds its own per-instance client
+  with redirects disabled (a redirect errors, never follows — the one
+  deliberate deviation from client injection, recorded), and keyless is the
+  documented default (no `authorization` header; keyless never widens the
+  gate). Tool fragments join by the wire's `tool_calls` index (the id may
+  travel only on the first fragment); usage parses before the
+  finish-reason close flushes the outbox; `data: {}` pings never re-arm
+  the idle window; the `[DONE]` sentinel is required. 20 wire fixtures +
+  4 destination-gate unit tests + 3 bridge lane tests (keyless probe,
+  typed secret, non-loopback refusal). `ProviderKind::Local` (serde
+  `"local"`), keys `inferenceLocalBaseUrl`/`inferenceLocalApiKey`, both
+  OPTIONAL (keyless localhost is the default). Traps: the destination gate
+  must be SYNCHRONOUS (std `ToSocketAddrs`, never a nested tokio runtime —
+  construction happens inside sync and async contexts alike); accepted
+  socket inheritance of O_NONBLOCK is not guaranteed — force it.
+- **The extension-package machinery (`crates/extensions`)** — manifest
+  schema with structural gates (name charset/bounds, version triples,
+  shallow relative payload paths, digest shape, 256 KiB bound), SHA-256
+  payload integrity, the `TrustAnchor` seam whose production anchor
+  (`NoTrustAnchor`) refuses every signature fail-closed (no credential
+  exists — the recorded blocker), a test-only keyed-digest anchor, and a
+  loader that isolates broken packages (per-package errors; payloads
+  verify lazily on first read; a missing root is an empty set). 13 tests.
+  Trap: hand-rolled base64 decode must shift by the CHUNK's bit width
+  (the 24-bit layout only holds for full 4-char groups).
+- **The family catalog (`TEST-EXT-007`'s data half)** — `crates/config::
+  forms::FamilyDescriptor` + `family_catalog()` served through the new
+  `familyCatalog` setup command; the setup UI renders the picker, unlocks
+  probe/discovery, and dispatches discovery on the catalog's STYLE + keys —
+  no family ids are hard-coded in the UI. The boundary: the catalog
+  DESCRIBES; the bridge CONSTRUCTS (adapter factories stay per-family).
+  `FamilyDescriptor` carries owned `String`s (`&'static str` fields cannot
+  Deserialize across the IPC).
+- **Backup/restore (`crates/store::backup`)** — `Store::backup_into`
+  snapshots via `VACUUM INTO` (consistent, self-contained, refuses an
+  existing target); `restore_backup` is the offline pre-open path: FULL
+  integrity check read-only, the schema version read from
+  `schema_migrations` (NOT `user_version` — VACUUM INTO does not carry
+  it), atomic staging+fsync+rename swap, the displaced database renamed
+  aside. An in-app restore flow is deferred (the file cannot move under a
+  live connection). 6 tests.
+- **Performance budgets, measured** (`performance_budgets_over_a_local_
+  workload`): create-500 32.5 ms, ledger-2000 79.8 ms, list-500 2.0 ms,
+  backup 3.2 ms — ceilings pinned by the test.
+- **Honest negatives recorded** (`docs/14` §9 items 73–74 and
+  `docs/final-sprint-status.md`, on disk): NOT bit-for-bit reproducible
+  (two independent release builds hash differently); production signing
+  and the extension trust anchor are authorization-pending (the fail-closed
+  gates hold by construction); gemini/minimax deliberately deferred;
+  mantle/foundry stay locked; Ollama's native `/api/chat` grammar is an
+  unobserved reading. The stale `docs/13` §2 stack table is fixed to the
+  verified Tauri/Rust architecture (the shipped Electron stack is a
+  labeled preservation note).
