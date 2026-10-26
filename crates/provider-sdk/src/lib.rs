@@ -61,6 +61,11 @@ pub enum ProtocolFamily {
     /// internal model maps onto this wire inside the family's own adapter, and
     /// no other family's wire is rewritten anywhere.
     OpenAiChat,
+    /// OpenAI **Responses** (`docs/13` Phase 8, the first reference
+    /// extension): `POST {base}/responses` with its own input-item grammar
+    /// and SSE event stream. Its own native wall, sharing a design with the
+    /// Chat Completions wall and never code (`AI-EXT-02`).
+    OpenAiResponses,
 }
 
 // ---------------------------------------------------------------------------
