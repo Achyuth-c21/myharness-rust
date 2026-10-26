@@ -90,7 +90,7 @@ The live install contains `native-adapter.cjs`: an **in-process Anthropic→Open
   `//! Scaffolded structure only - implementation arrives in a later roadmap phase.` and
   `//! TODO(phase): implement this module per its roadmap phase; wire deps via the root
   Cargo.toml workspace.dependencies.`
-- **Workspace** — 26 members; root `Cargo.toml` carries `[workspace.package]` (version 0.1.0,
+- **Workspace** — 27 members; root `Cargo.toml` carries `[workspace.package]` (version 0.1.0,
   edition 2021, repository `github.com/Achyuth-c21/myharness-rust`) and
   `workspace.dependencies` (tokio, serde, thiserror, anyhow, reqwest+rustls, keyring 3,
   secrecy 0.10, zeroize, rusqlite 0.32 bundled, portable-pty 0.8, tauri 2).
@@ -582,8 +582,59 @@ verification gate refuses every bundle).
 - **Docs on disk:** `docs/04` §3.1 rows Phase 7/1–5; `docs/17` §4.17 (the
   full status table); `docs/18` diagnostics contract + the retention note +
   the memory table + usage `surfaces`; `docs/14` §9 items 66–70.
+- **Docs:** `docs/17` §4.18, `docs/14` §9 items 71–72, `docs/04` Phase 8 row.
   `apps/desktop/src/components/Untitled-1` remains untracked and untouched
-  (owner decision pending).
+  (owner decision pending). Do not run `cargo fmt --all` (it churns unrelated baseline files).
+
+## 7n. Phase 8 slice 1 — the Responses extension (2026-10-26)
+
+The `phase-8` lane (cut from `dev` @ `d1c4498`) implements `docs/13` Phase 8's
+first reference extension: `crates/providers/openai-responses`
+(`myharness-provider-openai-responses`), the native wall for the OpenAI
+**Responses** wire — `ProtocolFamily::OpenAiResponses` in the sdk; the
+workspace is 27 members. **Committed on the lane; not merged to `dev` and not
+pushed — owner approval required.** 17-fixture wire battery green (stable
+across repeated runs, parallel and serial), clippy `-D warnings` clean on the
+crate + sdk, workspace **544 tests / 0 failed** (527 + 17), `cargo metadata`
+green. The renderer was untouched, so no tsc/vite/E2E gates are owed. The
+setup family, bridge probe lane, and renderer unlock are the next slice — no
+UI path can select the family yet.
+
+The wire readings are all rebuild-defined (`docs/14` §9 item 71 — the wire
+was never observed): first-party OpenAI only (static key required, no
+`custom` variant), `store: false` explicit, system blocks join into
+`instructions`, documents native as `input_file`, media inside tool results
+refused, replayed assistant reasoning omitted, prefix model echo, exact
+usage (`reasoning_tokens` dropped — a subset with no app channel),
+`completed`→`end_turn` (or `tool_use` from emitted function-call items),
+**no `[DONE]` sentinel** — `response.completed`/`response.failed`/`error`
+terminate, an undocumented event type errors, a stream ending without a
+terminal event is malformed — annotations surface as citations, count_tokens
+refused.
+
+Traps hit for real in this slice (recorded as `docs/14` §9 item 72, all
+fixed in `tests/wire.rs`):
+
+- The mock listener must accept **non-blocking** with the stop flag
+  re-checked between connections — a blocking `incoming()` hangs `Drop`'s
+  `join()` forever in the zero-request cases (the flag is only checked
+  after the next connection arrives).
+- A chunked SSE response needs the terminating `0\r\n\r\n` chunk — without
+  it hyper reads the close as a truncated body and errors the stream
+  ("error decoding response body") instead of ending cleanly.
+- A mock server must **read the request before answering** — a response
+  head arriving before the request body finished sending is a hyper send
+  error ("error sending request").
+- Never wait for the client to close (keep-alive tail reads): reqwest
+  returns the completed connection to its pool and the close is async work
+  on the test's runtime, which is blocked in `join` — the wait stalls ~90 s
+  until the pool's idle eviction. Force the accepted socket non-blocking
+  explicitly rather than trusting the listener's flag to propagate.
+- The Responses wire's announcement events carry the item id **inside the
+  item object** (`item.id`); the top-level `item_id` belongs to the delta
+  events. The error envelope classifies by `type` then `code` spellings —
+  the stream's bare `error` event carries only a `code` (its `type` is the
+  event name).
 
 ## 8. Status vocabulary (`docs/17`)
 

@@ -28,6 +28,7 @@ members = [
   "crates/providers/foundry",
   "crates/providers/gateway",
   "crates/providers/openai",
+  "crates/providers/openai-responses",
 ]
 
 [workspace.package]
