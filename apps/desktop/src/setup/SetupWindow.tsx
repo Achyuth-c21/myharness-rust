@@ -17,6 +17,7 @@ import { Field } from "./fields";
 import {
   discoverModels,
   discoverOpenAiModels,
+  discoverOpenAiResponsesModels,
   testConnection,
   setup,
   type ConfigHealth,
@@ -70,6 +71,7 @@ const FAMILY_OPTIONS: { value: ProviderKind; label: string }[] = [
   { value: "gateway", label: "Anthropic-compatible gateway" },
   { value: "bedrock", label: "Amazon Bedrock" },
   { value: "openai", label: "OpenAI (Chat Completions)" },
+  { value: "openai-responses", label: "OpenAI (Responses)" },
   { value: "custom", label: "Custom OpenAI-compatible endpoint" },
   { value: "mantle", label: "Bedrock Mantle (adapter pending)" },
   { value: "foundry", label: "Foundry (adapter pending)" },
@@ -231,7 +233,8 @@ export default function SetupWindow() {
     draft?.provider === "anthropic" ||
     draft?.provider === "bedrock" ||
     draft?.provider === "openai" ||
-    draft?.provider === "custom";
+    draft?.provider === "custom" ||
+    draft?.provider === "openai-responses";
 
   const section = draft ? ((draft[sectionOf(tab)] as Record<string, unknown>) ?? {}) : {};
   const schema = schemas[tab];
@@ -331,6 +334,25 @@ export default function SetupWindow() {
       offerDiscoveredModels(response);
       return;
     }
+    if (provider === "openai-responses") {
+      // The Responses wall's listing (Phase 8; docs/14 §9 item 71): the
+      // base URL is optional (empty = the first-party host) and the
+      // credential is the family's required static key.
+      const response = await discoverOpenAiResponsesModels({
+        baseUrl: typeof section["inferenceOpenAiResponsesBaseUrl"] === "string"
+          ? (section["inferenceOpenAiResponsesBaseUrl"] as string)
+          : "",
+        apiKey: pendingSecrets["connection/inferenceOpenAiResponsesApiKey"],
+        customHeaders: headers,
+      });
+      setDiscovering(false);
+      if ("error" in response) {
+        setDiscoveryNote(response.error.message);
+        return;
+      }
+      offerDiscoveredModels(response);
+      return;
+    }
     const baseUrl = section["inferenceGatewayBaseUrl"];
     if (typeof baseUrl !== "string" || !baseUrl.trim()) {
       setDiscovering(false);
@@ -400,7 +422,9 @@ export default function SetupWindow() {
               ? "OpenAI"
               : draft.provider === "custom"
                 ? "OpenAI-compatible endpoint"
-                : /* family-agnostic for anything else */ "provider";
+                : draft.provider === "openai-responses"
+                  ? "OpenAI Responses"
+                  : /* family-agnostic for anything else */ "provider";
     setProbeNote(
       probe.ok
         ? `Connected. The ${familyLabel} adapter ran ${probe.model} (${probe.latencyMs} ms, ` +

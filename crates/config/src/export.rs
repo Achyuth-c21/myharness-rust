@@ -392,6 +392,8 @@ pub fn provider_label(profile: &ProfileDocument) -> &'static str {
         // The open model layer's families (`docs/13` §C).
         Some(ProviderKind::OpenAi) => "openai",
         Some(ProviderKind::Custom) => "custom",
+        // Phase 8's Responses extension (`docs/13` Phase 8).
+        Some(ProviderKind::OpenAiResponses) => "openai-responses",
         None => "unknown",
     }
 }

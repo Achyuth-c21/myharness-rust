@@ -44,9 +44,13 @@ pub use myharness_provider_gateway::discovery::{
 };
 
 pub use myharness_provider_openai::discovery::{
-    discover_models as openai_adapter_discover_models,
-    DiscoveryOutcome as OpenAiDiscoveryOutcome,
+    discover_models as openai_adapter_discover_models, DiscoveryOutcome as OpenAiDiscoveryOutcome,
     DiscoveryRequest as OpenAiDiscoveryRequest,
+};
+
+pub use myharness_provider_openai_responses::discovery::{
+    discover_models as responses_adapter_discover_models,
+    DiscoveryRequest as ResponsesDiscoveryRequest,
 };
 
 /// Run model discovery against an Anthropic-compatible gateway (the setup
@@ -88,6 +92,35 @@ pub async fn discover_openai_models(
     openai_adapter_discover_models(request, client)
         .await
         .map_err(crate::setup::bridge_provider_error)
+}
+
+/// Run model discovery against the Responses wall's listing (Phase 8 slice
+/// 2; `docs/13` Phase 8; the readings are `docs/14` §9 item 71). The same
+/// wrapper posture as the other two probes: the adapter's classes map onto
+/// the setup bridge's codes with the provider's message verbatim
+/// (`docs/18` §11), and the wall's own outcome shape (single page, tolerant
+/// parse warnings) maps onto the shared setup outcome — one page, never
+/// partial, the first warning surfaced.
+pub async fn discover_responses_models(
+    request: &ResponsesDiscoveryRequest,
+    client: &reqwest::Client,
+) -> Result<DiscoveryOutcome, BridgeError> {
+    let outcome = responses_adapter_discover_models(request, client)
+        .await
+        .map_err(crate::setup::bridge_provider_error)?;
+    Ok(DiscoveryOutcome {
+        models: outcome
+            .models
+            .into_iter()
+            .map(|model| DiscoveredModel {
+                id: model.id,
+                raw: model.raw,
+            })
+            .collect(),
+        pages: 1,
+        partial: false,
+        warning: outcome.warnings.into_iter().next(),
+    })
 }
 
 // ---------------------------------------------------------------------------

@@ -29,6 +29,7 @@ use std::collections::BTreeMap;
 use myharness_provider_anthropic::AnthropicAdapter;
 use myharness_provider_gateway::{GatewayAdapter, GatewayClientConfig, ProbeStatus};
 use myharness_provider_openai::{AdapterKind, OpenAiClientConfig, OpenAiCompatAdapter};
+use myharness_provider_openai_responses::{ResponsesAdapter, ResponsesClientConfig};
 use myharness_provider_sdk::{AuthContext, ErrorClass, ProviderAdapter, ProviderError};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -257,9 +258,7 @@ impl ConfigBackend {
     /// The effective telemetry policy (Phase 7; `REQ-PRIV-02`). Nothing in
     /// this build emits; the policy drives the Privacy pane and the
     /// diagnostic bundle.
-    pub fn telemetry_policy(
-        &self,
-    ) -> Result<myharness_telemetry::TelemetryPolicy, BridgeError> {
+    pub fn telemetry_policy(&self) -> Result<myharness_telemetry::TelemetryPolicy, BridgeError> {
         Ok(myharness_telemetry::TelemetryPolicy::from_merged(
             &self.library.get_merged()?,
         ))
@@ -392,6 +391,11 @@ impl SetupBackend for ConfigBackend {
                 .test_connection_openai_compat(document, typed, OpenAiCompatFamily::first_party()),
             ProviderKind::Custom => self
                 .test_connection_openai_compat(document, typed, OpenAiCompatFamily::custom()),
+            // Phase 8's Responses extension probes through its own wall
+            // (`docs/13` Phase 8; the readings are `docs/14` §9 item 71):
+            // first-party OpenAI only, a static key required — the wire has
+            // no keyless variant.
+            ProviderKind::OpenAiResponses => self.test_connection_openai_responses(document, typed),
             // The remaining families have no native adapter in this slice;
             // their probe lanes arrive with their own adapters (roadmap
             // order — `docs/13` Phase 3). The Vertex family was removed
@@ -818,7 +822,8 @@ impl ConfigBackend {
             idle_timeout: idle,
             custom_headers,
         };
-        let adapter = OpenAiCompatAdapter::new(config, reqwest::Client::new());let runtime = tokio::runtime::Builder::new_current_thread()
+        let adapter = OpenAiCompatAdapter::new(config, reqwest::Client::new());
+        let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .map_err(|error| {
@@ -861,6 +866,99 @@ impl ConfigBackend {
     }
 }
 
+impl ConfigBackend {
+    /// The Responses lane (Phase 8 slice 2; `docs/13` Phase 8; the family's
+    /// readings are `docs/14` §9 item 71): a real one-token non-streaming
+    /// Responses turn through its own wall — first-party OpenAI only, a
+    /// static key REQUIRED (this wire has no keyless variant, so the strict
+    /// resolver runs with no helper and an absent credential refuses before
+    /// any bytes — `AI-PROVIDER-03`, `AI-ADAPTER-12`), the base URL optional
+    /// (empty = the first-party host). The draft's first model id runs the
+    /// probe; an empty list falls back to the endpoint's own listing.
+    /// Nothing the probe learns is persisted.
+    fn test_connection_openai_responses(
+        &self,
+        document: &ProfileDocument,
+        typed: &BTreeMap<String, String>,
+    ) -> Result<ProbeStatus, BridgeError> {
+        let connection = &document.connection.0;
+        let base = connection
+            .get("inferenceOpenAiResponsesBaseUrl")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or("")
+            .to_string();
+        let idle = connection
+            .get("inferenceStreamIdleTimeoutSec")
+            .and_then(Value::as_u64)
+            .map(std::time::Duration::from_secs)
+            .unwrap_or(myharness_provider_openai_responses::DEFAULT_IDLE_TIMEOUT);
+        let custom_headers = custom_headers_for_probe(connection)?;
+
+        let credential = resolve_probe_credential(
+            connection,
+            typed,
+            self.secrets.as_ref(),
+            "inferenceOpenAiResponsesApiKey",
+            false,
+        )?;
+        let secret = match credential {
+            ProbeCredential::Value(secret) => secret,
+            ProbeCredential::Helper(config) => {
+                myharness_secrets::helper::run_helper(&config, cfg!(windows))
+                    .map_err(bridge_secret_error)?
+            }
+        };
+
+        let config = ResponsesClientConfig {
+            base_url: base,
+            idle_timeout: idle,
+            custom_headers,
+        };
+        let adapter = ResponsesAdapter::new(config, reqwest::Client::new());
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| {
+                BridgeError::new(
+                    "CONFIG_IO",
+                    format!("the probe runtime could not start: {error}"),
+                )
+            })?;
+        runtime.block_on(async {
+            let auth_label = "setup test connection";
+            // Two calls, one probe session, one credential: discovery picks
+            // the target when the draft lists none, then the probe infers
+            // against it — a one-token request whose answer must echo the
+            // requested model (prefix-legal).
+            let model_id = match first_probe_model(connection) {
+                Some(model) => model,
+                None => {
+                    let models = adapter
+                        .list_models(&AuthContext::new(secret.clone(), auth_label))
+                        .await
+                        .map_err(bridge_provider_error)?;
+                    models
+                        .iter()
+                        .map(|model| model.key.model_id.clone())
+                        .next()
+                        .ok_or_else(|| {
+                            BridgeError::new(
+                                "PROVIDER_ERROR",
+                                "the endpoint advertised no model for a probe",
+                            )
+                        })?
+                }
+            };
+            adapter
+                .probe_inference(&AuthContext::new(secret.clone(), auth_label), &model_id)
+                .await
+                .map_err(bridge_provider_error)
+                .map(responses_probe_status_to_renderer)
+        })
+    }
+}
+
 /// Map the Bedrock adapter's probe verdict onto the setup response's probe
 /// type (`Probe { probe }`): identical fields, one typed seam per family.
 fn bedrock_probe_status_to_renderer(
@@ -892,6 +990,21 @@ fn probe_status_to_renderer(status: myharness_provider_anthropic::ProbeStatus) -
 /// Map the OpenAI-compat adapter's probe verdict onto the setup response's
 /// probe type (`Probe { probe }`): identical fields, one typed seam.
 fn openai_probe_status_to_renderer(status: myharness_provider_openai::ProbeStatus) -> ProbeStatus {
+    ProbeStatus {
+        ok: status.ok,
+        model: status.model,
+        stop_reason: status.stop_reason,
+        input_tokens: status.input_tokens,
+        output_tokens: status.output_tokens,
+        latency_ms: status.latency_ms,
+    }
+}
+
+/// Map the Responses adapter's probe verdict onto the setup response's probe
+/// type (`Probe { probe }`): identical fields, one typed seam per family.
+fn responses_probe_status_to_renderer(
+    status: myharness_provider_openai_responses::ProbeStatus,
+) -> ProbeStatus {
     ProbeStatus {
         ok: status.ok,
         model: status.model,
@@ -974,7 +1087,11 @@ pub(crate) fn resolve_optional_probe_credential(
     }
     // Life is then the strict resolver's; its refusals are real ones.
     Ok(Some(resolve_probe_credential(
-        connection, typed, store, slot_key, allow_helper,
+        connection,
+        typed,
+        store,
+        slot_key,
+        allow_helper,
     )?))
 }
 
@@ -1827,9 +1944,9 @@ mod tests {
             panic!("expected an error response");
         };
         assert_eq!(error.code, "CONFIG_VALIDATION");
-        assert!(error
-            .message
-            .contains("with native adapters; the other families' probe lanes land with their adapters"));
+        assert!(error.message.contains(
+            "with native adapters; the other families' probe lanes land with their adapters"
+        ));
 
         // The draft never changed: the probe must not persist anything.
         let reread = backend.library().read(&id).unwrap();
@@ -2736,4 +2853,145 @@ mod tests {
         assert_eq!(stub.hits(), 0, "zero requests must have travelled");
     }
 
+    // -------------------------------------------------------------------
+    // Phase 8's Responses probe lane (`docs/13` Phase 8) — openai-responses
+    // -------------------------------------------------------------------
+
+    /// A Responses response object the stub answers with (the adapter's
+    /// probe shape: one text part, exact usage, `completed`).
+    fn responses_completion() -> serde_json::Value {
+        json!({
+            "id": "resp_probe_1",
+            "object": "response",
+            "model": "gpt-4o",
+            "status": "completed",
+            "output": [ { "type": "message", "role": "assistant", "content": [
+                { "type": "output_text", "text": "pong", "annotations": [] } ] } ],
+            "usage": { "input_tokens": 3, "output_tokens": 1 },
+            "incomplete_details": null,
+        })
+    }
+
+    /// A Responses-family draft over the live stub (the family's own field
+    /// spellings; the shared model-list key).
+    fn responses_document(stub: &str) -> ProfileDocument {
+        let (backend, id) = backend();
+        let mut document = backend.library().read(&id).unwrap();
+        document.provider = Some(ProviderKind::OpenAiResponses);
+        document.connection = myharness_config::Section(json!({
+            "inferenceOpenAiResponsesBaseUrl": stub,
+            "inferenceOpenAiResponsesApiKey": "sk-EXAMPLE-FAMILY",
+            "inferenceModels": ["gpt-4o"],
+        }));
+        document
+    }
+
+    /// Phase 8 — the Responses family's probe is a real one-token turn
+    /// through its own wall; the draft's first id runs it, and nothing the
+    /// probe learns is persisted.
+    #[test]
+    fn test_connection_probes_the_responses_family() {
+        let stub = StubGateway::serve(vec![canned(
+            200,
+            "application/json",
+            &response_bytes(&responses_completion()),
+        )]);
+        let document = responses_document(&stub.base);
+        let (backend, id) = backend();
+        let response = dispatch(
+            &backend,
+            SetupCommand::TestConnection {
+                document: serde_json::to_value(document).unwrap(),
+                secrets: BTreeMap::new(),
+            },
+        );
+        let SetupResponse::Probe { probe } = response else {
+            panic!("expected a probe response");
+        };
+        assert!(probe.ok);
+        assert_eq!(probe.model, "gpt-4o");
+        assert_eq!(stub.hits(), 1);
+        let reread = backend.library().read(&id).unwrap();
+        assert!(
+            reread.connection.0.get("inferenceModels").is_none(),
+            "the probe must not have persisted the draft"
+        );
+    }
+
+    /// The renderer's typed secret (keyed `connection/<fieldKey>`) sits in
+    /// the family's slot for the Responses family too, and is never
+    /// persisted.
+    #[test]
+    fn test_connection_uses_the_typed_secret_for_the_responses_family() {
+        let stub = StubGateway::serve(vec![canned(
+            200,
+            "application/json",
+            &response_bytes(&responses_completion()),
+        )]);
+        let (backend, id) = backend();
+        let mut document = responses_document(&stub.base);
+        document
+            .connection
+            .0
+            .as_object_mut()
+            .unwrap()
+            .remove("inferenceOpenAiResponsesApiKey");
+        let mut secrets = BTreeMap::new();
+        secrets.insert(
+            "connection/inferenceOpenAiResponsesApiKey".to_string(),
+            "sk-TYPED-EXAMPLE".to_string(),
+        );
+        let response = dispatch(
+            &backend,
+            SetupCommand::TestConnection {
+                document: serde_json::to_value(document).unwrap(),
+                secrets,
+            },
+        );
+        let SetupResponse::Probe { probe } = response else {
+            panic!("expected a probe response");
+        };
+        assert!(probe.ok);
+        assert_eq!(stub.hits(), 1);
+        let reread = backend.library().read(&id).unwrap();
+        assert!(
+            reread
+                .connection
+                .0
+                .get("inferenceOpenAiResponsesApiKey")
+                .is_none(),
+            "the typed secret must not have been persisted"
+        );
+    }
+
+    /// The Responses family's empty credential refuses at the lane before
+    /// anything sends. This wire has no keyless variant (`docs/14` §9
+    /// item 71), so unlike the `custom` family the refusal is the strict
+    /// resolver's — `CONFIG_VALIDATION` at the bridge, zero requests — and
+    /// the keyless pass-through never runs.
+    #[test]
+    fn test_connection_blocks_a_responses_send_without_a_credential() {
+        let stub = StubGateway::serve(Vec::new());
+        let (backend, _id) = backend();
+        let mut document = responses_document(&stub.base);
+        document
+            .connection
+            .0
+            .as_object_mut()
+            .unwrap()
+            .remove("inferenceOpenAiResponsesApiKey");
+        let response = dispatch(
+            &backend,
+            SetupCommand::TestConnection {
+                document: serde_json::to_value(document).unwrap(),
+                secrets: BTreeMap::new(),
+            },
+        );
+        let SetupResponse::Error { error } = response else {
+            panic!("expected an error response");
+        };
+        assert_eq!(error.code, "CONFIG_VALIDATION");
+        assert!(error.message.contains("a credential is required"));
+        assert_eq!(stub.hits(), 0, "zero requests must have travelled");
+    }
 }
