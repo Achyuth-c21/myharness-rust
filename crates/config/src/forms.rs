@@ -194,6 +194,10 @@ fn schema_kinds(provider: ProviderKind) -> &'static [(&'static str, CredentialKi
         // item 71): first-party only — a static key is the family's only
         // offered credential kind, like the Chat Completions `openai` one.
         ProviderKind::OpenAiResponses => &[("Static API key", CredentialKind::Static)],
+        // Phase 8's local extension (`docs/14` §9): the runtimes' documented
+        // default is keyless — a static key exists for servers started with
+        // one, and it is the only offered kind.
+        ProviderKind::Local => &[("Static API key (optional)", CredentialKind::Static)],
         ProviderKind::Custom => &[
             ("Static API key", CredentialKind::Static),
             // A company gateway resolves its key through the family's helper
@@ -595,6 +599,26 @@ pub fn validate_connection(provider: ProviderKind, connection: &Value) -> Vec<Fo
             }
             idle_timeout_check(&conn, &mut issues);
         }
+        ProviderKind::Local => {
+            // The local extension (Phase 8; `docs/14` §9): the base URL is
+            // optional (empty = the family's recorded Ollama default), the
+            // key is optional (keyless is the documented default), and the
+            // wall's destination gate is loopback-only by construction — a
+            // non-loopback host is refused at the adapter, not negotiated.
+            match url_value(get("inferenceLocalBaseUrl")) {
+                Err(e) => issues.push(error("inferenceLocalBaseUrl", e)),
+                Ok(Some(u)) => {
+                    if !u.starts_with("http://") {
+                        issues.push(error(
+                            "inferenceLocalBaseUrl",
+                            "the local surface speaks plain http; base URL must start with http://".to_string(),
+                        ));
+                    }
+                }
+                Ok(None) => {}
+            }
+            idle_timeout_check(&conn, &mut issues);
+        }
         ProviderKind::Custom => {
             // An OpenAI-compatible endpoint the user defines. The base URL is
             // required; the key is optional — self-hosted servers often serve
@@ -916,6 +940,39 @@ pub fn connection_schema(provider: ProviderKind) -> FormSchema {
                     FieldGroup::Endpoint,
                 ),
                 "Leave empty for the first-party endpoint (https://api.openai.com/v1).",
+            ));
+            fields.push(with_help(
+                field(
+                    "inferenceStreamIdleTimeoutSec",
+                    "Stream idle timeout",
+                    FieldKind::Number,
+                    FieldGroup::Advanced,
+                ),
+                "Default 300 s.",
+            ));
+        }
+        ProviderKind::Local => {
+            // The local extension's fields (Phase 8; `docs/14` §9): the
+            // family's own key spellings; the base URL defaults to the
+            // recorded Ollama root and both supported runtimes' ports are
+            // documented in the help text.
+            fields.push(with_help(
+                field(
+                    "inferenceLocalApiKey",
+                    "API key",
+                    FieldKind::Secret,
+                    FieldGroup::Credentials,
+                ),
+                "Optional: only for a server started with an API key.",
+            ));
+            fields.push(with_help(
+                field(
+                    "inferenceLocalBaseUrl",
+                    "Local server URL",
+                    FieldKind::Url,
+                    FieldGroup::Endpoint,
+                ),
+                "Leave empty for http://127.0.0.1:11434 (Ollama's default; the llama.cpp server is usually on :8080). Loopback only.",
             ));
             fields.push(with_help(
                 field(
@@ -1289,6 +1346,147 @@ pub fn validate_document(doc: &ProfileDocument) -> Vec<FormIssue> {
     issues
 }
 
+
+// ---------------------------------------------------------------------------
+// The family catalog (`TEST-EXT-007`'s data half)
+// ---------------------------------------------------------------------------
+
+/// How a family's discovery runs — the renderer dispatches on this instead
+/// of on hard-coded family ids.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DiscoveryStyle {
+    /// The gateway's cursor-paginated `/v1/models` (scheme-aware).
+    Gateway,
+    /// The OpenAI-compatible `/models` listing (first-party or keyless).
+    OpenAiCompat,
+    /// The Responses wall's listing (single page).
+    Responses,
+    /// The local wall's listings (`/api/tags`, then `/v1/models`).
+    Local,
+    /// No native adapter yet — discovery stays locked.
+    None,
+}
+
+/// One provider family's registration record: the data the setup surface
+/// needs to offer, unlock, and address a family — without the renderer (or
+/// the agent) hard-coding family ids. The genuinely wire-specific parts
+/// (adapter construction, the probe lanes) stay registered per-family in
+/// the bridge: **the catalog describes; the bridge constructs** (`docs/13`
+/// Phase 8; `crates/extensions`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FamilyDescriptor {
+    /// The family's wire spelling (the profile's `inferenceProvider` value).
+    pub id: String,
+    /// The picker label.
+    pub label: String,
+    /// A native adapter and probe lane exist — Test connection is unlocked.
+    pub probe_supported: bool,
+    /// The discovery style the renderer dispatches on.
+    pub discovery: DiscoveryStyle,
+    /// The connection section's base-URL key, when the family has one.
+    pub base_key: Option<String>,
+    /// Whether the base URL is required before discovery can run.
+    pub base_required: bool,
+    /// The connection section's credential slot, when the family has one.
+    pub credential_slot: Option<String>,
+}
+
+/// The family catalog, in picker order. `TEST-EXT-007`'s boundary: adding a
+/// family extends THIS table (plus its wire-specific registration in the
+/// bridge); the setup UI reads it and never hard-codes an id.
+pub fn family_catalog() -> Vec<FamilyDescriptor> {
+    vec![
+        FamilyDescriptor {
+            id: "anthropic".to_string(),
+            label: "Claude API (first-party)".to_string(),
+            probe_supported: true,
+            discovery: DiscoveryStyle::None,
+            base_key: None,
+            base_required: false,
+            credential_slot: Some("inferenceAnthropicApiKey".to_string()),
+        },
+        FamilyDescriptor {
+            id: "gateway".to_string(),
+            label: "Anthropic-compatible gateway".to_string(),
+            probe_supported: true,
+            discovery: DiscoveryStyle::Gateway,
+            base_key: Some("inferenceGatewayBaseUrl".to_string()),
+            base_required: true,
+            credential_slot: Some("inferenceGatewayApiKey".to_string()),
+        },
+        FamilyDescriptor {
+            id: "bedrock".to_string(),
+            label: "Amazon Bedrock".to_string(),
+            probe_supported: true,
+            discovery: DiscoveryStyle::None,
+            base_key: None,
+            base_required: false,
+            credential_slot: Some("inferenceBedrockBearerToken".to_string()),
+        },
+        FamilyDescriptor {
+            id: "openai".to_string(),
+            label: "OpenAI (Chat Completions)".to_string(),
+            probe_supported: true,
+            discovery: DiscoveryStyle::OpenAiCompat,
+            base_key: Some("inferenceOpenAiBaseUrl".to_string()),
+            base_required: false,
+            credential_slot: Some("inferenceOpenAiApiKey".to_string()),
+        },
+        FamilyDescriptor {
+            id: "openai-responses".to_string(),
+            label: "OpenAI (Responses)".to_string(),
+            probe_supported: true,
+            discovery: DiscoveryStyle::Responses,
+            base_key: Some("inferenceOpenAiResponsesBaseUrl".to_string()),
+            base_required: false,
+            credential_slot: Some("inferenceOpenAiResponsesApiKey".to_string()),
+        },
+        FamilyDescriptor {
+            id: "local".to_string(),
+            label: "Local (Ollama / llama.cpp)".to_string(),
+            probe_supported: true,
+            discovery: DiscoveryStyle::Local,
+            base_key: Some("inferenceLocalBaseUrl".to_string()),
+            base_required: false,
+            credential_slot: Some("inferenceLocalApiKey".to_string()),
+        },
+        FamilyDescriptor {
+            id: "custom".to_string(),
+            label: "Custom OpenAI-compatible endpoint".to_string(),
+            probe_supported: true,
+            discovery: DiscoveryStyle::OpenAiCompat,
+            base_key: Some("inferenceCustomBaseUrl".to_string()),
+            base_required: true,
+            credential_slot: Some("inferenceCustomApiKey".to_string()),
+        },
+        FamilyDescriptor {
+            id: "mantle".to_string(),
+            label: "Bedrock Mantle (adapter pending)".to_string(),
+            probe_supported: false,
+            discovery: DiscoveryStyle::None,
+            base_key: None,
+            base_required: false,
+            credential_slot: None,
+        },
+        FamilyDescriptor {
+            id: "foundry".to_string(),
+            label: "Foundry (adapter pending)".to_string(),
+            probe_supported: false,
+            discovery: DiscoveryStyle::None,
+            base_key: None,
+            base_required: false,
+            credential_slot: None,
+        },
+    ]
+}
+
+/// The catalog entry for one family id.
+pub fn family_descriptor(id: &str) -> Option<FamilyDescriptor> {
+    family_catalog().into_iter().find(|entry| entry.id == id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1310,6 +1508,10 @@ mod tests {
     /// model IDs"): each family refuses its own required fields.
     #[test]
     fn every_provider_requires_its_own_fields() {
+        // The local family is excluded by design: every one of its fields
+        // is optional (keyless localhost is the documented default), so an
+        // empty connection validates clean — `local_family_validation` pins
+        // that posture instead.
         for provider in [
             ProviderKind::Gateway,
             ProviderKind::ClaudeApi,
@@ -1376,6 +1578,7 @@ mod tests {
         let openai = connection_schema(ProviderKind::OpenAi);
         let custom = connection_schema(ProviderKind::Custom);
         let responses = connection_schema(ProviderKind::OpenAiResponses);
+        let local = connection_schema(ProviderKind::Local);
         assert!(openai
             .fields
             .iter()
@@ -1410,6 +1613,17 @@ mod tests {
             .fields
             .iter()
             .any(|f| f.key == "inferenceOpenAiBaseUrl"));
+        // The local family's keys are its own and neither is required (the
+        // shared credential-kind select is every family's one required
+        // field).
+        assert!(local.fields.iter().any(|f| f.key == "inferenceLocalBaseUrl"));
+        assert!(local.fields.iter().any(|f| f.key == "inferenceLocalApiKey"));
+        for key in ["inferenceLocalBaseUrl", "inferenceLocalApiKey"] {
+            assert!(
+                !local.fields.iter().any(|f| f.key == key && f.required),
+                "{key} must not be required"
+            );
+        }
     }
 
     /// TEST-CFG-005 (credential kind is exclusive, no fallback): a kind the family
@@ -1469,6 +1683,53 @@ mod tests {
             }),
         );
         assert!(errors(&issues).contains(&"inferenceOpenAiBaseUrl"));
+    }
+
+    /// `TEST-EXT-007`'s data half: the catalog covers every `ProviderKind`
+    /// spelling exactly once, and the locked families say so.
+    #[test]
+    fn the_family_catalog_covers_every_kind() {
+        let kinds = [
+            ProviderKind::ClaudeApi,
+            ProviderKind::Bedrock,
+            ProviderKind::BedrockMantle,
+            ProviderKind::Foundry,
+            ProviderKind::Gateway,
+            ProviderKind::OpenAi,
+            ProviderKind::Custom,
+            ProviderKind::OpenAiResponses,
+            ProviderKind::Local,
+        ];
+        let catalog = family_catalog();
+        assert_eq!(catalog.len(), kinds.len());
+        for kind in kinds {
+            let spelling = serde_json::to_value(kind).unwrap();
+            let spelling = spelling.as_str().unwrap();
+            let descriptor = family_descriptor(spelling)
+                .unwrap_or_else(|| panic!("the catalog must carry {spelling:?}"));
+            assert_eq!(descriptor.id, spelling);
+            assert!(!descriptor.label.is_empty());
+        }
+        assert!(
+            !family_descriptor("mantle").unwrap().probe_supported,
+            "a pending family stays locked"
+        );
+        assert!(family_descriptor("local").unwrap().probe_supported);
+    }
+
+    /// The local family (Phase 8): an empty connection validates clean —
+    /// keyless localhost is the documented default — and a non-http scheme
+    /// is refused (the wall speaks plain http on loopback).
+    #[test]
+    fn local_family_validation() {
+        let issues = connection(ProviderKind::Local, json!({}));
+        assert!(errors(&issues).is_empty(), "{issues:?}");
+
+        let issues = connection(
+            ProviderKind::Local,
+            json!({ "inferenceLocalBaseUrl": "https://127.0.0.1:11434" }),
+        );
+        assert!(errors(&issues).contains(&"inferenceLocalBaseUrl"));
     }
 
     /// The Responses extension's family (Phase 8): the key is required for

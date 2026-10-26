@@ -394,6 +394,8 @@ pub fn provider_label(profile: &ProfileDocument) -> &'static str {
         Some(ProviderKind::Custom) => "custom",
         // Phase 8's Responses extension (`docs/13` Phase 8).
         Some(ProviderKind::OpenAiResponses) => "openai-responses",
+        // Phase 8's local extension (`docs/13` Phase 8).
+        Some(ProviderKind::Local) => "local",
         None => "unknown",
     }
 }

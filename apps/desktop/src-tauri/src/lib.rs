@@ -585,6 +585,19 @@ async fn setup_discover_openai_models(
 /// the endpoint's own `/models` listing, the same namespace posture as the
 /// other discovery commands — not a translation layer. Additive: the
 /// existing discovery commands are untouched.
+/// Model discovery against the local wall (Phase 8; `docs/13` Phase 8;
+/// `docs/14` §9): a setup-time probe of the runtimes' listing endpoints,
+/// the same namespace posture as the other discovery commands. The
+/// destination gate is the wall's own — a non-loopback base refuses here
+/// too. Additive: the existing discovery commands are untouched.
+#[tauri::command]
+async fn setup_discover_local_models(
+    request: myharness_bridge::helper::LocalDiscoveryRequest,
+) -> Result<myharness_bridge::helper::DiscoveryOutcome, myharness_bridge::setup::BridgeError> {
+    let client = reqwest::Client::new();
+    myharness_bridge::helper::discover_local_models(&request, &client).await
+}
+
 #[tauri::command]
 async fn setup_discover_openai_responses_models(
     request: myharness_bridge::helper::ResponsesDiscoveryRequest,
@@ -669,6 +682,7 @@ pub fn run() {
             setup_discover_models,
             setup_discover_openai_models,
             setup_discover_openai_responses_models,
+            setup_discover_local_models,
             open_setup_window
         ])
         .setup(move |app| {

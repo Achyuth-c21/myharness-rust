@@ -28,6 +28,7 @@ use std::sync::Mutex;
 
 use rusqlite::Connection;
 
+pub mod backup;
 pub mod blobs;
 pub mod migrate;
 pub mod quarantine;
@@ -39,8 +40,8 @@ pub use blobs::BlobStore;
 pub use migrate::LATEST_SCHEMA_VERSION;
 pub use quarantine::quarantined_records;
 pub use repos::{
-    AuditEventRow, CodeTurnActivity, NewSession, NewUsageEvent, SessionRow, TurnRole, TurnStatus,
-    TurnRow, UsageEventRow,
+    AuditEventRow, CodeTurnActivity, NewSession, NewUsageEvent, SessionRow, TurnRole, TurnRow,
+    TurnStatus, UsageEventRow,
 };
 pub use repos_projects::{NewProject, ProjectRow};
 pub use repos_scheduler::{NewScheduledTask, ScheduledRunRow, ScheduledTaskRow};
@@ -128,7 +129,9 @@ pub(crate) type Conn = Mutex<Connection>;
 
 /// True when `s` is a lowercase SHA-256 hex digest — the blob-ref shape.
 pub(crate) fn is_blob_ref(s: &str) -> bool {
-    s.len() == 64 && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    s.len() == 64
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 /// True when `s` parses as a UUID — the id shape every table keys on.
@@ -228,7 +231,7 @@ fn prepare_connection(path: &Path) -> Result<Connection, StoreError> {
 /// True when the error says the *file* is not a healthy SQLite database (as
 /// opposed to an I/O or permission failure, which must stay distinguishable in
 /// the error surface).
-fn is_db_corruption(err: &StoreError) -> bool {
+pub(crate) fn is_db_corruption(err: &StoreError) -> bool {
     match err {
         StoreError::CorruptDatabase => true,
         StoreError::Sql(rusqlite::Error::SqliteFailure(e, _)) => {

@@ -940,3 +940,67 @@ fn blobs_are_content_addressed_and_confining() {
         Err(StoreError::Validation(_))
     ));
 }
+
+// ---------------------------------------------------------------------
+// Phase 9: performance budgets (measured, not invented). The numbers
+// print with --nocapture; the assertions are generous CEILINGS so a
+// catastrophic regression fails the suite, not a benchmark race.
+// ---------------------------------------------------------------------
+
+#[test]
+fn performance_budgets_over_a_local_workload() {
+    let probe = TestStore::new();
+
+    let started = std::time::Instant::now();
+    let mut ids = Vec::new();
+    for index in 0..500 {
+        let created = probe
+            .store
+            .create_session(NewSession {
+                surface: if index % 4 == 0 { "code" } else { "chat" },
+                title: "perf workload",
+                ..Default::default()
+            })
+            .unwrap();
+        ids.push(created.id);
+    }
+    let create_elapsed = started.elapsed();
+
+    let started = std::time::Instant::now();
+    for (round, id) in ids.iter().enumerate() {
+        for turn in 0..4u32 {
+            probe
+                .store
+                .record_usage(
+                    id,
+                    NewUsageEvent {
+                        model: "perf-model",
+                        input_tokens: turn as i64,
+                        output_tokens: round as i64,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+        }
+    }
+    let ledger_elapsed = started.elapsed();
+
+    let started = std::time::Instant::now();
+    let listed = probe.store.list_sessions(None).unwrap();
+    let list_elapsed = started.elapsed();
+    assert_eq!(listed.len(), 500);
+
+    let started = std::time::Instant::now();
+    let backup_path = probe.dir.path().join("perf-backup.db");
+    probe.store.backup_into(&backup_path).unwrap();
+    let backup_elapsed = started.elapsed();
+
+    println!(
+        "PERF create-500-sessions: {:?} (budget 5 s) | ledger-2000-rows: {:?} (budget 5 s) | list-500: {:?} (budget 300 ms) | backup: {:?} (budget 2 s)",
+        create_elapsed, ledger_elapsed, list_elapsed, backup_elapsed
+    );
+    assert!(create_elapsed < std::time::Duration::from_secs(5), "session creation regressed: {create_elapsed:?}");
+    assert!(ledger_elapsed < std::time::Duration::from_secs(5), "ledger writes regressed: {ledger_elapsed:?}");
+    assert!(list_elapsed < std::time::Duration::from_millis(300), "listing regressed: {list_elapsed:?}");
+    assert!(backup_elapsed < std::time::Duration::from_secs(2), "backup regressed: {backup_elapsed:?}");
+}

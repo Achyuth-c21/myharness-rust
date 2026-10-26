@@ -114,6 +114,14 @@ function installStub(page, state) {
           return { type: "schema", schema: seed.tabSchema(command.tab) };
         case "connectionSchema":
           return { type: "schema", schema: seed.connectionSchema };
+        case "familyCatalog":
+          return {
+            type: "familyCatalog",
+            families: [
+              { id: "anthropic", label: "Claude API (first-party)", probeSupported: true, discovery: "none", baseKey: null, baseRequired: false, credentialSlot: "inferenceAnthropicApiKey" },
+              { id: "gateway", label: "Anthropic-compatible gateway", probeSupported: true, discovery: "gateway", baseKey: "inferenceGatewayBaseUrl", baseRequired: true, credentialSlot: "inferenceGatewayApiKey" },
+            ],
+          };
         case "validate":
           return { type: "issues", issues: seed.issues };
         case "export":
