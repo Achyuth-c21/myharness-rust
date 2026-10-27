@@ -1208,3 +1208,65 @@ validate request carries the typed credential, and the bridge test
 while neither the profile nor the secret store changes. Gates after the fix: **597/0** Rust tests,
 workspace clippy `-D warnings` clean, setup E2E **16/16**, shell E2E **52/52**, a11y **18/18**,
 `tsc --noEmit` clean, `vite build` 74 modules. Traces `TEST-CFG-169`, `TEST-UX-009`.
+
+#### Phase 2 — the native sweep, findings, and the first-run fix (2026-10-27)
+
+The sweep continued hands-on in the **release binary** under an isolated sweep
+session (Xvfb/X11, `GDK_BACKEND=x11`, throwaway `XDG_CONFIG_HOME`/`XDG_DATA_HOME`,
+a private dbus session with a dedicated gnome-keyring Secret Service, a loopback
+OpenAI Chat Completions mock on 127.0.0.1:18111; XTEST/PRIMARY input injection
+via python-xlib, screenshots via ImageMagick `import`; nothing touched the user's
+real profile). Environment limits recorded with the results: no window manager
+(unreliable X focus, no decorations), lossy text injection into the webview, no
+portal file chooser (the picker request fails and the form recovers gracefully —
+verified), and the screen-reader pass stays blocked (`docs/14` §9 item 76).
+
+Surfaces verified on the release shell, all against a fresh install (no profile,
+no sessions): boot and the embedded-bundle New screen; Cowork/Code tab switch;
+the Code dashboard's honest empty state; Projects' empty state, the create dialog,
+and the folder-picker graceful failure; Artifacts' empty state and **"New artifact"
+→ the honest `CONFIG_MISSING` banner with no session created and no crash**;
+Scheduled's empty state, templates, and the off-by-default keep-awake; the search
+palette (Ctrl+K) with its honest no-results state; the Account menu and its
+"Inference configuration" → dedicated setup window; the setup window's nine tabs,
+Export, and the window's WM-protocol close; menus stay mounted (trap #5 confirmed
+live); Customize stays disabled by design ("route was not captured in the
+evidence", E2E-asserted).
+
+| ID | Severity | State | Summary |
+|---|---|---|---|
+| `WA-06` | P1 | **fixed in this phase** | The setup window was dead on a fresh install: the boot's no-profile early return skipped the family catalog and tab schemas, the Provider family picker had zero options, and no bridge command could create the first profile at all |
+| `WA-07` | P2 | **unreproduced — monitored (`docs/14` §9 item 76)** | Two silent release-shell exits under the sweep's Xvfb session, no diagnostics, not reproducible on retry; treated as an environment signal, not an app defect |
+
+**`WA-06` — the first-run setup was a dead end.** Three independent
+confirmations: the popup rendered exactly one (blank) option and a Down keypress
+could not move it; the boot code read (`loadFamilyCatalog`/`loadSchemas` were
+unreachable without an existing profile); and the per-tab screenshots showed every
+non-Connection pane empty. Digging further widened it: the setup namespace had **no
+first-profile creation path at all** — `library.write` refuses unknown ids and
+`duplicate` needs a source. Fix (three parts): the boot loads the catalog and the
+schemas before the no-profile branch; the first-run draft is a blank local document
+(always dirty, no Discard baseline); and `writeProfile` upserts an id-less draft —
+the bridge creates the entry (refusing fail-closed when no family is picked),
+stamps the generated id, and the window applies that id. The upsert is a
+**rebuild-defined decision** (`docs/14` §9 item 75), not an observed behavior.
+After the fix the release binary showed the picker fully populated (nine families)
+and Apply enabled in the first-run state.
+
+The sweep also exposed a **latent E2E harness bug**: Playwright's `addInitScript`
+drops functions from its argument, so the setup suite's `seed.tabSchema` never
+existed in the page and every tab-schema response errored into
+`BRIDGE_UNAVAILABLE` — every tab rendered schema-less in *all* cases, and S03
+kept passing only because the with-profile flow overrides the connection schema
+from the object-typed seed key. The stub's schema logic now lives inside the init
+script. Traces `TEST-CFG-161/163`, `TEST-UX-009` (setup-window coverage now
+18 cases: S01–S18, S17 the no-profile populated state, S18 the first Apply
+creates and applies the created id).
+
+**Gates after the fix:** workspace **599/0** Rust tests (597 + 2 bridge upsert
+tests), clippy `-D warnings` clean, `tsc --noEmit` clean, `vite build` ok, shell
+E2E 52/52, setup E2E **18/18**, a11y **18/18** clean, native fixture **20/20**
+(debug binary rebuilt with the fix). Standing limits: no live provider account
+(the loopback mock never got exercised end-to-end through the shell — the input
+injection could not complete the click-through creation, `docs/14` §9 item 75);
+no installer/bundle; window captures inspected in-session, not committed.

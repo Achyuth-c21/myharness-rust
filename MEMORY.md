@@ -1176,3 +1176,49 @@ build, E2E `shell.spec.mjs` ALL PASS (T01–T49), `setup-window.spec.mjs`
   unobserved reading. The stale `docs/13` §2 stack table is fixed to the
   verified Tauri/Rust architecture (the shipped Electron stack is a
   labeled preservation note).
+
+## 7p. Whole-app campaign phase 2 — the feature-surface sweep (2026-10-27)
+
+Phase 2 (`docs/17` §4.21) is complete: WA-04/05 (setup credential flow) were
+already fixed; this session swept every surface **hands-on in the release
+binary** against a fresh install and found `WA-06` (P1, fixed) and `WA-07`
+(P2, unreproduced ×2, monitored). Merged lanes: `feature-whole-app-test-phase-2`
+(campaign), `fix-wa-06-setup-first-run` (the fix). Durable facts:
+
+- **WA-06 was two bugs stacked.** (1) The setup boot's no-profile early return
+  skipped `loadFamilyCatalog()`/`loadSchemas()` — empty picker, blank panes.
+  (2) The setup namespace had **no first-profile creation path at all**
+  (`library.write` refuses unknown ids; `duplicate` needs a source). The
+  rebuild defines the **id-less-draft upsert**: `writeProfile` with no id
+  creates the entry (refuses fail-closed without a provider family), stamps
+  the generated id, answers with the stored document; the renderer's first-run
+  draft is a blank local document (always dirty, no Discard), and Apply uses
+  the returned id. Rebuild decision, `docs/14` §9 item 75 — the shipped
+  first-run was never observed.
+- **Playwright `addInitScript` drops functions from its argument.** The setup
+  suite's `seed.tabSchema` never existed in the page; every tabSchema response
+  errored to BRIDGE_UNAVAILABLE and every tab rendered schema-less in all
+  cases, hidden because the with-profile flow overrides the connection schema
+  from the object-typed `seed.connectionSchema`. Stub logic that is a function
+  must live INSIDE the init script; the seed carries plain data only.
+- **XTEST/PRIMARY text entry into the release WebKitGTK webview is lossy in a
+  WM-less Xvfb session** (typed chars dropped non-deterministically at any
+  pacing; PRIMARY paste did not land). Clicks and key-combos work. The
+  click-through first-run creation + live send through the real shell therefore
+  remain browser-E2E-verified + unit-verified only (`docs/14` §9 item 75); a
+  future native pass needs a WM (or `gtk_entry_set_text` via AT-SPI — at-spi
+  activated on the private bus this time, unlike phase 1's note).
+- **The sweep harness** (reusable for phase 3, all in /tmp/wa-sweep, never
+  committed): `dbus-run-session -- inside.sh` with `XDG_CONFIG_HOME`/`XDG_DATA_HOME`
+  redirected (throwaway state), `gnome-keyring-daemon --start
+  --components=secrets` for the Secret Service (plain `--unlock` does NOT
+  enable the component), a durable FIFO command channel (reopen per iteration —
+  a one-shot FIFO read tears the session down), Xvfb :99 + `import` for
+  captures, python-xlib XTEST for input, `WM_DELETE_WINDOW` ClientMessage to
+  close Tauri windows (no decorations without a WM).
+- **WA-07:** two silent release-shell exits under Xvfb (no panic/core/stderr),
+  not reproducible on retry — environment-suspected (GPU-less EGL), monitored;
+  a recurrence on a real desktop reopens it as P1 (`docs/14` §9 item 76).
+- Gates at phase end: **599/0** workspace (79→81 suites), clippy clean, tsc
+  clean, vite ok, shell E2E 52/52, setup E2E **18/18** (S17/S18 new), a11y
+  18/18, native 20/20. `Untitled-1` untouched; no screenshots committed.
