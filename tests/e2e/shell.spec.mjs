@@ -310,15 +310,15 @@ try {
     await page.emulateMedia({ colorScheme: "light" });
     await page.keyboard.press("Control+,");
     await page.waitForSelector("[role=dialog][aria-label=Settings]");
-    await page.getByRole("radio", { name: "Dark" }).click();
+    await page.getByRole("radiogroup", { name: "Theme" }).getByRole("radio", { name: "Dark" }).click();
     await expectTrue((await page.getAttribute("html", "data-mode")) === "dark", "Dark applies live");
     await expectTrue((await page.evaluate(() => localStorage.getItem("theme"))) === "dark", "persisted to `theme`");
-    await page.getByRole("radio", { name: "System" }).click();
+    await page.getByRole("radiogroup", { name: "Theme" }).getByRole("radio", { name: "System" }).click();
     await expectTrue((await page.getAttribute("html", "data-mode")) === "light", "System follows OS light");
     await page.emulateMedia({ colorScheme: "dark" });
     await page.waitForTimeout(120); // matchMedia listeners fire asynchronously
     await expectTrue((await page.getAttribute("html", "data-mode")) === "dark", "System follows OS dark LIVE");
-    await page.getByRole("radio", { name: "Light" }).click();
+    await page.getByRole("radiogroup", { name: "Theme" }).getByRole("radio", { name: "Light" }).click();
     await expectTrue((await page.getAttribute("html", "data-mode")) === "light", "Light forces light over dark OS");
     await page.keyboard.press("Escape");
   });
@@ -535,7 +535,7 @@ try {
       (await mockPage.locator(".code-repo-row").count()) === 1,
       "the folder row must come from the bridge",
     );
-    await mockPage.getByRole("button", { name: "7 days" }).click();
+    await mockPage.getByRole("button", { name: "7d" }).click();
     await mockPage.waitForFunction(() => window.__lastCodeRange === "7d");
     await expectTrue(
       (await mockPage.evaluate(() => window.__lastCodeRange)) === "7d",

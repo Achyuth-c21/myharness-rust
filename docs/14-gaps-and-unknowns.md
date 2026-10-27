@@ -1029,3 +1029,14 @@ recorded unknowns:
     credential-shaped-value, and query-string redaction. `redact_document_for`
     applies `redact_private_hosts_in` only for the Export target;
     `renderer_read_keeps_the_users_own_hosts` pins both sides.
+
+78. **The General pane's account-level fields stay unavailable (2026-10-28,
+    interface-parity phase).** The documented General pane opens with a Profile
+    block (avatar, work descriptor, "Instructions for Claude") that is
+    account-level state the rebuild does not carry — the rebuild's profile
+    concept is the third-party inference profile, not an Anthropic account. The
+    pane states this and keeps the fields unavailable rather than inventing
+    them; the three fields that need no account backend are built for real
+    (chat font select — Anthropic Sans/Serif applied to the transcript;
+    Motion System/Reduced, a reduced-motion switch; the response-completions
+    notification switch wired to the Notifications API on turn completion).

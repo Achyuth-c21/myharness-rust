@@ -29,8 +29,8 @@ type CodeDashboard = Extract<ChatResponse, { type: "codeDashboard" }>;
 
 const RANGES: { value: CodeRange; label: string }[] = [
   { value: "all", label: "All" },
-  { value: "30d", label: "30 days" },
-  { value: "7d", label: "7 days" },
+  { value: "30d", label: "30d" },
+  { value: "7d", label: "7d" },
 ];
 
 const PERMISSIONS: { value: CodePermissionMode; label: string }[] = [

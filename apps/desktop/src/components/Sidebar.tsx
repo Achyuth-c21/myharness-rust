@@ -399,6 +399,15 @@ export function Sidebar({ onOpenSettings, onOpenSearch }: Props) {
         </button>
         {accountOpen ? (
           <div className="account-menu" role="menu">
+            {/* The captured menu opens with the local identity header
+                (docs/screens/account-menu-and-language.md: display name over the
+                provider label), then the items; a separator sits above the
+                changelog group and the changelog row carries the submenu
+                chevron. */}
+            <div className="account-menu-head" aria-hidden="true">
+              <span className="account-menu-name">Account</span>
+              <span className="account-menu-provider">Gateway</span>
+            </div>
             <button type="button" role="menuitem" onClick={onOpenSettings} className="account-item">
               Settings
             </button>
@@ -422,8 +431,12 @@ export function Sidebar({ onOpenSettings, onOpenSearch }: Props) {
             >
               Inference configuration
             </button>
+            <div className="account-menu-separator" role="separator" aria-hidden="true" />
             <button type="button" role="menuitem" disabled className="account-item">
-              Changelog
+              <span>Changelog</span>
+              <span className="account-item-more" aria-hidden="true">
+                ›
+              </span>
             </button>
             <button type="button" role="menuitem" disabled className="account-item">
               Learn more

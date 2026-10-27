@@ -30,6 +30,23 @@ import {
 import { formatRelative } from "../chat/format";
 import { useFocusTrap } from "../components/focusTrap";
 
+function SearchGlyph() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <circle cx="7" cy="7" r="4.25" stroke="currentColor" strokeWidth="1.2" />
+      <path d="m10.2 10.2 3 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function SortGlyph() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M3 4.5h10M4.75 8h6.5M6.5 11.5h3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function FolderGlyph({ size = 40 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 40 40" fill="none" aria-hidden="true">
@@ -315,6 +332,7 @@ export function CreateProjectDialog({
 export function ProjectsScreen() {
   const projects = useProjects();
   const [creating, setCreating] = useState(false);
+  const headerRef = useRef<HTMLElement>(null);
   const [filter, setFilter] = useState("");
   const navigate = useNavigate();
 
@@ -327,8 +345,35 @@ export function ProjectsScreen() {
 
   return (
     <>
-      <header className="screen-head">
+      <header className="screen-head" ref={headerRef}>
         <h1>Projects</h1>
+        {/* The captured header carries search and sort icons beside New project
+            (docs/screens/projects.md section 1). Sort's order was never
+            exercised, so its control stays disabled-honest. */}
+        <div className="screen-head-tools">
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Search projects"
+            title="Search projects"
+            onClick={() => {
+              headerRef.current?.parentElement
+                ?.querySelector<HTMLInputElement>(".projects-search")
+                ?.focus();
+            }}
+          >
+            <SearchGlyph />
+          </button>
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Sort projects"
+            disabled
+            title="The sort order was not observed in the reference capture"
+          >
+            <SortGlyph />
+          </button>
+        </div>
         {projects.kind === "ready" && projects.projects.length > 0 ? (
           <input
             type="search"

@@ -1378,3 +1378,38 @@ native 20/20; workspace 600/0 (no Rust change this phase); `tsc --noEmit` clean;
 `vite build` ok. `tests/README.md` documents the suite. The campaign's four named
 phases are complete; the standing follow-ups are the WA-07 environment question and
 the installer/bundle work (both owner-gated).
+
+### 4.25 Whole-application test campaign — phase 6: interface-parity pass (2026-10-28)
+
+Phase 6 compared the rebuild's interface against the original's, screen by screen.
+The original's authenticated screens cannot be rendered here: the installed app under
+Xvfb (throwaway HOME, private dbus) never maps a window, and the shipped renderer
+(`ion-dist`, served statically with API stubs) boots to its real "Can't reach Claude"
+offline screen and its 404 page — both captured as **real original pixels** and used
+as anchors (serif display headings, the starburst wordmark, pill buttons, the
+near-black dark surface). The per-screen comparison therefore ran against the
+**documented baseline**: the Verified screen specs (`docs/screens/*`), the design
+system (`docs/07`), and the extracted style inventory (`evidence/ui-tokens.json` —
+82 observed variables; the sidebar 321 px / 13 px / 19.5 px metrics already matched).
+Screenshots were inspected in-session and are not committed (`evidence/README.md`
+rules 3–8).
+
+Findings and fixes (all verified by re-capture):
+
+| ID | Delta (documented vs built) | Fix |
+|---|---|---|
+| `IP-01` | List-page titles rendered 15 px sans; the specs say serif display ("Serif page title", "serif display", "Serif Artifacts title") | `.screen-head h1` uses the display serif 16 px/400 — one rule fixes Projects, Artifacts, Scheduled, Claude Code headers |
+| `IP-02` | Code dashboard range labels "30 days"/"7 days"; the captured copy is "30d"/"7d" | Labels corrected; T28c updated to the documented spellings |
+| `IP-03` | Projects header missing the captured search/sort icons | Icon row added beside New project; search focuses the live filter; sort stays disabled-honest (order never observed) |
+| `IP-04` | Artifacts header missing the search + view-toggle icons | Icon row added; search wired; the toggle disabled-honest (states never observed) |
+| `IP-05` | Account menu missing the identity header, the separator, and the changelog `›` | Identity header (Account/Gateway), separator, and the submenu chevron added — the captured structure |
+| `IP-06` | General pane was a stub ("fields land later") | Profile fields stay unavailable with the reason (`docs/14` §9 item 78); Chat font (Anthropic Sans/Serif → transcript), Motion (System/Reduced), and the response-completions notification switch are built and wired for real |
+| `IP-07` | Task detail missing the captured right pane (340 px: Progress / Working dir / Context) and the header pane/globe toggles | Pane built from real bridge data only — turn count and streaming state, the bound folder, live MCP server states — toggleable, open by default like the capture; the globe renders disabled-honest (the Cowork browser is deferred, `docs/14` §9 item 179) |
+
+Regression handling: the shell suite caught three collisions the new controls
+introduced — the Motion radiogroup made `getByRole("radio", { name: "System" })`
+ambiguous (T24 now scopes to the Theme group), and T28c's range label needed the
+documented spelling. **Gates:** workspace 600/0 (no Rust change), `cargo metadata`,
+clippy clean, `tsc --noEmit` clean, `vite build` ok, shell E2E **52/52**, setup E2E
+19/19, user journeys 12/12, a11y **18/18 clean** (the new pane and controls included),
+native 20/20.

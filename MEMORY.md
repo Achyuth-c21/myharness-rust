@@ -1289,3 +1289,40 @@ steps' effects). Facts worth keeping:
   suite's assumptions). 12/12 stable ×3; other gates unchanged (600/0, shell
   52/52, setup 19/19, a11y 18/18, native 20/20). The four campaign phases are
   complete; follow-ups are owner-gated (WA-07 under a real WM, installer).
+
+## 7s. Whole-app campaign phase 6 — interface parity (2026-10-28)
+
+Screen-by-screen comparison against the original (`docs/17` §4.25). Durable facts:
+
+- **The original's authenticated UI cannot be rendered here.** The installed
+  app (`/usr/lib/claude-desktop-unofficial`) under Xvfb with a throwaway HOME
+  + private dbus never maps a window; the shipped renderer
+  (`resources/ion-dist`) served statically with `/edge-api/*` stubbed to `{}`
+  boots to its REAL offline screen ("Can't reach Claude") and 404 page —
+  usable anchors (serif display headings, starburst wordmark, pill buttons).
+  Real-pixel diffing of authenticated screens needs the private archive
+  captures (owner-gated).
+- **ion-dist boot facts**: entry is `index.html` (`client-shell-v1.html` is a
+  handshake shell waiting for a `boot` postMessage); it fetches
+  `edge-api/bootstrap?statsig_hashing_algorithm=djb2...` before anything; a
+  SPA-fallback server + API stub renders the shell. The 82 extracted CSS
+  variables live in `evidence/ui-tokens.json` (`pick` holds the sidebar/main/
+  composer metrics: 321 px / 13 px / 19.5 px — all already matched).
+- **The parity fixes (IP-01..07)**: serif `.screen-head h1` (16 px/400
+  display serif — the specs say every list title is serif), 30d/7d range
+  labels, Projects/Artifacts header tool icons (sort and view-toggle stay
+  disabled-honest: never observed), the account menu's identity header +
+  separator + changelog `›`, the General pane's real controls (chat font
+  Sans/Serif → `html[data-chat-font]` on the transcript; Motion System/
+  Reduced → `html[data-motion]` kills animations; the notifications switch
+  fires a real Notification on turn completion — prefs in
+  `settings/prefs.ts`, keys `ui.chatFont`/`ui.motion`/`ui.notifyOnDone`,
+  rebuild-defined), and the task-detail right pane (340 px, Progress/
+  Working dir/Context, real bridge data only, open by default, globe
+  disabled-honest).
+- **Test collisions the new controls caused**: T24's `radio System` needed
+  scoping to the Theme radiogroup (Motion now has a second System radio);
+  T28c needed the documented 30d/7d labels. Anything new that adds
+  same-named controls must expect role-name ambiguity in the shell suite.
+- Gates: 600/0, shell 52/52, setup 19/19, journeys 12/12, a11y 18/18 (new
+  pane/controls included), native 20/20, tsc/vite clean.

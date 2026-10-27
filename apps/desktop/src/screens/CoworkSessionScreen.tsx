@@ -32,12 +32,14 @@ import {
   toolUses,
   type ApprovalScope,
   type BridgeError,
+  type McpServerView,
   type SessionView,
   type SkillView,
   type ToolApprovalEvent,
   type ToolDescriptor,
   type TurnSummary,
 } from "../chat/client";
+import { notifyTurnDone } from "../settings/prefs";
 import {
   clearDraft,
   loadDraft,
@@ -475,6 +477,24 @@ export function CodeSessionScreen() {
   return <SessionScreen key={sessionId} sessionId={sessionId} surface="code" />;
 }
 
+function GlobeGlyph() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <circle cx="8" cy="8" r="5.75" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M2.25 8h11.5M8 2.25c1.8 1.6 2.7 3.5 2.7 5.75S9.8 12.15 8 13.75C6.2 12.15 5.3 10.25 5.3 8S6.2 3.85 8 2.25Z" stroke="currentColor" strokeWidth="1.2" />
+    </svg>
+  );
+}
+
+function PaneGlyph() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <rect x="2.25" y="3.25" width="11.5" height="9.5" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M10 3.5v9" stroke="currentColor" strokeWidth="1.2" />
+    </svg>
+  );
+}
+
 export function SessionScreen({
   sessionId,
   surface,
@@ -507,6 +527,13 @@ export function SessionScreen({
   const [approvalScope, setApprovalScope] = useState<ApprovalScope>("once");
   const [approvalError, setApprovalError] = useState<BridgeError | null>(null);
   const [liveTool, setLiveTool] = useState<string | null>(null);
+  // The captured task detail keeps a right pane open (docs/screens/
+  // task-detail.md layout: 340 px Progress / Working dir / Context). The
+  // pane's sections show only data the bridge actually has; the globe's
+  // Cowork-browser context is deferred (docs/14 §9 item 179), so its control
+  // renders disabled-honest.
+  const [paneOpen, setPaneOpen] = useState(true);
+  const [paneServers, setPaneServers] = useState<McpServerView[] | null>(null);
   const [skills, setSkills] = useState<SkillView[]>([]);
   const [skillsAvailable, setSkillsAvailable] = useState(false);
   const [skillMenuOpen, setSkillMenuOpen] = useState(false);
@@ -702,6 +729,7 @@ export function SessionScreen({
             : await chat({ type: "sendTurn", sessionId, text });
         if (response.type === "turn" || response.type === "toolTurn") {
           // The turn completed: the draft's job is done.
+          notifyTurnDone(view?.session.title ?? "Task");
           saveDraft(draftKey, "");
           setDraft("");
           if (pending?.originKey) clearDraft(pending.originKey);
@@ -774,6 +802,19 @@ export function SessionScreen({
     if (response.type === "error") setActionError(response.error);
     setApproval(null);
   };
+
+  // The pane's Context section lists the live MCP servers; fetched on open.
+  useEffect(() => {
+    if (!paneOpen) return;
+    let cancelled = false;
+    (async () => {
+      const response = await chat({ type: "mcpStatus" });
+      if (!cancelled && response.type === "mcpStatus") setPaneServers(response.servers);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [paneOpen]);
 
   const openTools = async () => {
     const extra = view?.session.extra as { mcpTools?: unknown } | null;
@@ -913,8 +954,11 @@ export function SessionScreen({
       ? `${folderName(session.cwd)} · ${permissionModeLabel(session.permission_mode)}`
       : null;
 
+  const turnCount = view?.turns.length ?? 0;
+  const folderLabel = view?.session.cwd ?? null;
   return (
     <div className="session-screen">
+      <div className="session-main">
       <header className="session-head">
         <div className="session-title-wrap" ref={menuRef}>
           {renaming ? (
@@ -1030,6 +1074,28 @@ export function SessionScreen({
             {codeContext}
           </span>
         ) : null}
+        <span className="session-head-actions">
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Web context"
+            disabled
+            title="The Cowork browser context arrives with the browser phase (docs/14 §9 item 179)"
+          >
+            <GlobeGlyph />
+          </button>
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label={paneOpen ? "Hide context pane" : "Show context pane"}
+            aria-expanded={paneOpen}
+            aria-pressed={paneOpen}
+            title={paneOpen ? "Hide the context pane" : "Show the context pane"}
+            onClick={() => setPaneOpen((open) => !open)}
+          >
+            <PaneGlyph />
+          </button>
+        </span>
         <span className="session-model-label" title="The model is fixed for this task">
           {label}
         </span>
@@ -1203,6 +1269,43 @@ export function SessionScreen({
           Claude is AI and can make mistakes. Please double-check responses.
         </p>
       </div>
+      </div>
+      {paneOpen ? (
+        <aside className="session-pane" aria-label="Task context pane">
+          <section className="pane-section">
+            <h3 className="pane-heading">
+              Progress
+              <span className="pane-count">
+                {streaming ? "working…" : `${turnCount} ${turnCount === 1 ? "turn" : "turns"}`}
+              </span>
+            </h3>
+            <p className="pane-note">
+              {streaming ? "The current turn is streaming." : "The transcript is up to date."}
+            </p>
+          </section>
+          <section className="pane-section">
+            <h3 className="pane-heading">Working dir</h3>
+            <p className="pane-note">{folderLabel ?? "No folder is bound to this task."}</p>
+          </section>
+          <section className="pane-section">
+            <h3 className="pane-heading">Context</h3>
+            {paneServers === null ? (
+              <p className="pane-note">Loading…</p>
+            ) : paneServers.length === 0 ? (
+              <p className="pane-note">No MCP servers are connected.</p>
+            ) : (
+              <ul className="pane-server-list">
+                {paneServers.map((server) => (
+                  <li key={server.name} className="pane-server-row">
+                    <span className="pane-server-name">{server.name}</span>
+                    <span className="pane-server-state">{server.status.state}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </aside>
+      ) : null}
       {toolsOpen ? (
         <ToolPickerDialog
           tools={toolCatalog}
