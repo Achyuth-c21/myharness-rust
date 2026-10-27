@@ -20,8 +20,14 @@ export interface FieldProps {
   source?: string;
   /** Called for every edit of a non-secret field. */
   onChange: (value: unknown) => void;
-  /** Called when a secret is typed. The value never travels back to the renderer. */
+  /** Called when a secret is typed. The value stays out of the profile document. */
   onSecret?: (value: string) => void;
+  /**
+   * The in-memory value of a secret being typed. Stored credentials reach the
+   * renderer as a handle (`value`), so the typed text has to be fed back
+   * separately or the controlled input would stay visually empty.
+   */
+  secretValue?: string;
 }
 
 /** The issues that apply to one field. */
@@ -29,7 +35,16 @@ function issuesFor(issues: FormIssue[], field: FieldDef): FormIssue[] {
   return issues.filter((issue) => issue.field === field.key);
 }
 
-export function Field({ field, value, issues, locked, source, onChange, onSecret }: FieldProps) {
+export function Field({
+  field,
+  value,
+  issues,
+  locked,
+  source,
+  onChange,
+  onSecret,
+  secretValue,
+}: FieldProps) {
   const [revealed, setRevealed] = useState(false);
   const fieldIssues = issuesFor(issues, field);
   const hasError = fieldIssues.some((issue) => issue.severity === "error");
@@ -107,16 +122,18 @@ export function Field({ field, value, issues, locked, source, onChange, onSecret
         );
       case "secret":
         // A stored credential reaches the renderer as a HANDLE, never a value
-        // (docs/18 §10), so the field is empty and the placeholder says a
-        // credential is already there. Typing replaces it.
-        const hasStored = value !== undefined && value !== null && value !== "";
+        // (docs/18 §10), so the field starts empty and the placeholder says a
+        // credential is already there. Typing replaces it; the pending text is
+        // fed back through `secretValue` so the masked input updates per key.
+        const typed = secretValue ?? "";
+        const hasStored = typed === "" && value !== undefined && value !== null && value !== "";
         return (
           <div className="setup-secret">
             <input
               id={`field-${field.key}`}
               className="setup-input"
               type={revealed ? "text" : "password"}
-              value={typeof value === "string" ? value : ""}
+              value={typed}
               disabled={locked}
               placeholder={hasStored ? "Stored — type to replace" : ""}
               aria-describedby={describedBy}

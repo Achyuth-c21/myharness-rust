@@ -685,15 +685,17 @@ export default function SetupWindow() {
                 </p>
               ) : null}
               {visibleFields.map((field) => {
-                const locked = merged[`${sectionOf(tab)}/${field.key}`]?.lock === "readOnly";
+                const path = `${sectionOf(tab)}/${field.key}`;
+                const locked = merged[path]?.lock === "readOnly";
                 return (
                   <Field
-                    key={`${sectionOf(tab)}/${field.key}`}
+                    key={path}
                     field={field}
                     value={section[field.key]}
+                    secretValue={pendingSecrets[path]}
                     issues={issues}
                     locked={locked}
-                    source={merged[`${sectionOf(tab)}/${field.key}`]?.source}
+                    source={merged[path]?.source}
                     onChange={(value) => setValue(field.key, value)}
                     onSecret={(value) => setSecret(field.key, value)}
                   />
