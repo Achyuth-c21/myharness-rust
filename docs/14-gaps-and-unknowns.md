@@ -1040,3 +1040,18 @@ recorded unknowns:
     (chat font select — Anthropic Sans/Serif applied to the transcript;
     Motion System/Reduced, a reduced-motion switch; the response-completions
     notification switch wired to the Notifications API on turn completion).
+
+79. **OpenRouter joins as a prebuilt family (2026-10-28, owner direction).**
+    The owner asked for OpenRouter "like a prebuilt/inbuilt provider" after
+    seeing the family list. OpenRouter speaks the OpenAI Chat Completions
+    wire, so it rides the `crates/providers/openai` wall as a third preset
+    kind (`AdapterKind::OpenRouter`, id `openrouter`): the endpoint is the
+    wall's own preset (`https://openrouter.ai/api/v1`), the form carries a
+    required static key and **no base URL field** (production profiles
+    normalize to the preset; an explicit caller base still wins so the wire
+    tests and the probe lane can point at a stub), and the catalog marks it
+    probe/discovery-capable. The static-key families (openai, openrouter)
+    now refuse an absent credential at the bridge with zero requests
+    (`CONFIG_VALIDATION`, the responses posture) instead of at the adapter —
+    `test_connection_blocks_an_openai_send_without_a_credential` was updated
+    to the earlier, clearer refusal. Egress: `openrouter.ai`.

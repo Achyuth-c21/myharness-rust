@@ -382,17 +382,27 @@ export default function SetupWindow() {
       offerDiscoveredModels(response);
       return;
     }
-    if (style === "openai-compat" && (provider === "openai" || provider === "custom")) {
+    if (
+      style === "openai-compat" &&
+      (provider === "openai" || provider === "custom" || provider === "openrouter")
+    ) {
       const baseUrl = fieldString(descriptor?.baseKey ?? null);
       // The custom family's base URL is required (the catalog says so);
-      // the openai family's is optional (empty = the first-party host).
+      // the openai family's is optional (empty = the first-party host);
+      // OpenRouter's is the wall's own preset — the form carries no base
+      // field and the adapter normalizes it (`docs/14` §9 item 79).
       if (descriptor?.baseRequired && !baseUrl.trim()) {
         setDiscovering(false);
         setDiscoveryNote("A base URL is required before models can be discovered.");
         return;
       }
       const response = await discoverOpenAiModels({
-        kind: provider === "custom" ? "custom" : "openai",
+        kind:
+          provider === "custom"
+            ? "custom"
+            : provider === "openrouter"
+              ? "openrouter"
+              : "openai",
         baseUrl,
         apiKey: pendingSecrets[`connection/${descriptor?.credentialSlot ?? ""}`],
         customHeaders: headers,

@@ -58,6 +58,11 @@ pub enum AdapterKind {
     /// Any OpenAI-compatible endpoint the user names: base URL required,
     /// key optional.
     Custom,
+    /// OpenRouter (`https://openrouter.ai/api/v1`, static key): the same
+    /// Chat Completions wire at a known endpoint — a preset of this wall,
+    /// not a new wire (whole-app campaign phase 6 follow-up; owner
+    /// direction, `docs/14` §9 item 79).
+    OpenRouter,
 }
 
 impl AdapterKind {
@@ -66,6 +71,7 @@ impl AdapterKind {
         match self {
             AdapterKind::OpenAi => "openai",
             AdapterKind::Custom => "custom",
+            AdapterKind::OpenRouter => "openrouter",
         }
     }
 
@@ -73,6 +79,7 @@ impl AdapterKind {
     pub fn display_name(self) -> &'static str {
         match self {
             AdapterKind::OpenAi => "OpenAI",
+            AdapterKind::OpenRouter => "OpenRouter",
             AdapterKind::Custom => "Custom (OpenAI-compatible)",
         }
     }
@@ -102,6 +109,19 @@ pub(crate) fn status_class(status: u16) -> ErrorClass {
 /// `custom` family's emptiness stays empty (validated at send — the base
 /// URL is that family's core field).
 pub(crate) fn normalize_base(kind: AdapterKind, base_url: &str) -> String {
+    // OpenRouter's endpoint is the family's own preset: the form carries no
+    // base field, so a real profile normalizes to the fixed URL. An explicit
+    // caller base still wins — the probe lane and the wire tests point the
+    // same wall at a stub; production never carries one (the chat factory
+    // passes an empty base).
+    if matches!(kind, AdapterKind::OpenRouter) {
+        let base = base_url.trim().trim_end_matches('/').to_string();
+        return if base.is_empty() {
+            "https://openrouter.ai/api/v1".to_string()
+        } else {
+            base
+        };
+    }
     let base = base_url.trim().trim_end_matches('/').to_string();
     if base.is_empty() && matches!(kind, AdapterKind::OpenAi) {
         return DEFAULT_OPENAI_BASE.to_string();

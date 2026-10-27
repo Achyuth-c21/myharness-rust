@@ -413,6 +413,8 @@ impl SetupBackend for ConfigBackend {
                 .test_connection_openai_compat(document, typed, OpenAiCompatFamily::first_party()),
             ProviderKind::Custom => self
                 .test_connection_openai_compat(document, typed, OpenAiCompatFamily::custom()),
+            ProviderKind::OpenRouter => self
+                .test_connection_openai_compat(document, typed, OpenAiCompatFamily::openrouter()),
             // Phase 8's Responses extension probes through its own wall
             // (`docs/13` Phase 8; the readings are `docs/14` §9 item 71):
             // first-party OpenAI only, a static key required — the wire has
@@ -925,13 +927,25 @@ impl ConfigBackend {
         // family's helper script. The `custom` family's credential is
         // OPTIONAL (`docs/14` §9 owner decision): an absent slot is a
         // keyless send, not a refusal.
-        let credential = resolve_optional_probe_credential(
-            connection,
-            typed,
-            self.secrets.as_ref(),
-            family.slot_key,
-            family.allow_helper,
-        )?;
+        let credential = if family.credential_optional {
+            resolve_optional_probe_credential(
+                connection,
+                typed,
+                self.secrets.as_ref(),
+                family.slot_key,
+                family.allow_helper,
+            )?
+        } else {
+            // Static-key families refuse an absent credential at the bridge
+            // with zero requests (the responses posture, `docs/18` §10).
+            Some(resolve_probe_credential(
+                connection,
+                typed,
+                self.secrets.as_ref(),
+                family.slot_key,
+                family.allow_helper,
+            )?)
+        };
         let secret = match credential {
             Some(ProbeCredential::Value(secret)) => secret,
             Some(ProbeCredential::Helper(config)) => {
@@ -1165,9 +1179,13 @@ struct OpenAiCompatFamily {
     base_key: &'static str,
     /// The connection section's credential slot for this family.
     slot_key: &'static str,
-    /// `custom` offers the helper-script credential kind; `openai` is
-    /// static-key only (the forms' offered sets).
+    /// `custom` offers the helper-script credential kind; `openai` and
+    /// `openrouter` are static-key only (the forms' offered sets).
     allow_helper: bool,
+    /// Whether an absent slot is a keyless send (`custom`) or a refusal
+    /// (`openai`, `openrouter` — static-key families refuse at the bridge
+    /// with zero requests, the responses posture).
+    credential_optional: bool,
 }
 
 impl OpenAiCompatFamily {
@@ -1179,6 +1197,7 @@ impl OpenAiCompatFamily {
             base_key: "inferenceOpenAiBaseUrl",
             slot_key: "inferenceOpenAiApiKey",
             allow_helper: false,
+            credential_optional: false,
         }
     }
 
@@ -1191,6 +1210,22 @@ impl OpenAiCompatFamily {
             base_key: "inferenceCustomBaseUrl",
             slot_key: "inferenceCustomApiKey",
             allow_helper: true,
+            credential_optional: true,
+        }
+    }
+
+    /// OpenRouter (owner direction, `docs/14` §9 item 79): the same Chat
+    /// Completions wall at the family's own preset endpoint — the base key
+    /// is absent (the form carries no base field; the adapter's
+    /// `normalize_base` pins `https://openrouter.ai/api/v1`), the key is
+    /// required and static-only.
+    fn openrouter() -> Self {
+        Self {
+            kind: AdapterKind::OpenRouter,
+            base_key: "inferenceOpenRouterBaseUrl",
+            slot_key: "inferenceOpenRouterApiKey",
+            allow_helper: false,
+            credential_optional: false,
         }
     }
 }
@@ -3058,6 +3093,72 @@ mod tests {
         );
     }
 
+    /// The OpenRouter family probes through the same lane at its own preset:
+    /// the draft carries no base (the form has no base field), the wall
+    /// normalizes to `https://openrouter.ai/api/v1`, and the probe redirect
+    /// to a stub works only because the lane passes the family's (absent in
+    /// production) base key through. The key is required — an absent slot is
+    /// a refusal before any bytes.
+    #[test]
+    fn test_connection_probes_the_openrouter_family() {
+        let stub = StubGateway::serve(vec![canned(
+            200,
+            "application/json",
+            &response_bytes(&openai_completion()),
+        )]);
+        let (backend, id) = backend();
+        let mut document = backend.library().read(&id).unwrap();
+        document.provider = Some(ProviderKind::OpenRouter);
+        document.connection = myharness_config::Section(json!({
+            "inferenceOpenRouterBaseUrl": stub.base,
+            "inferenceOpenRouterApiKey": "sk-or-EXAMPLE",
+            "inferenceModels": ["gpt-4o"],
+        }));
+        let response = dispatch(
+            &backend,
+            SetupCommand::TestConnection {
+                document: serde_json::to_value(&document).unwrap(),
+                secrets: BTreeMap::new(),
+            },
+        );
+        let SetupResponse::Probe { probe } = response else {
+            panic!("expected a probe response");
+        };
+        assert!(probe.ok);
+        assert_eq!(probe.model, "gpt-4o");
+        let reread = backend.library().read(&id).unwrap();
+        assert!(
+            reread.connection.0.get("inferenceModels").is_none(),
+            "the probe must not have persisted the draft"
+        );
+    }
+
+    /// An OpenRouter draft without the required key refuses at the bridge
+    /// with zero requests (the family is static-key only).
+    #[test]
+    fn test_connection_openrouter_refuses_a_missing_key() {
+        let stub = StubGateway::serve(vec![]);
+        let (backend, _id) = backend();
+        let mut document = backend.library().read(&_id).unwrap();
+        document.provider = Some(ProviderKind::OpenRouter);
+        document.connection = myharness_config::Section(json!({
+            "inferenceOpenRouterBaseUrl": stub.base,
+            "inferenceModels": ["gpt-4o"],
+        }));
+        let response = dispatch(
+            &backend,
+            SetupCommand::TestConnection {
+                document: serde_json::to_value(&document).unwrap(),
+                secrets: BTreeMap::new(),
+            },
+        );
+        let SetupResponse::Error { error } = response else {
+            panic!("expected an error response");
+        };
+        assert_eq!(error.code, "CONFIG_VALIDATION");
+        assert_eq!(stub.hits(), 0, "the refusal must happen before the wire");
+    }
+
     /// The renderer's typed secret (keyed `connection/<fieldKey>`) sits in
     /// the family's slot for the openai family too, and is never persisted.
     #[test]
@@ -3136,9 +3237,11 @@ mod tests {
         );
     }
 
-    /// The first-party family's empty credential refuses at the lane before
-    /// anything sends (`AI-PROVIDER-03`: the adapter's `authenticate`,
-    /// no invented credential). The `custom` family never takes this path.
+    /// The first-party family's empty credential refuses at the bridge
+    /// before anything sends (`docs/09` §2.2 strict resolution; `AI-PROVIDER-03`:
+    /// no invented credential) — the static-key families share the
+    /// requiredness posture, so the refusal is `CONFIG_VALIDATION` with zero
+    /// requests. The `custom` family never takes this path.
     #[test]
     fn test_connection_blocks_an_openai_send_without_a_credential() {
         let stub = StubGateway::serve(Vec::new());
@@ -3160,8 +3263,8 @@ mod tests {
         let SetupResponse::Error { error } = response else {
             panic!("expected an error response");
         };
-        assert_eq!(error.code, "PROVIDER_ERROR");
-        assert!(error.message.contains("credential is empty"));
+        assert_eq!(error.code, "CONFIG_VALIDATION");
+        assert!(error.message.contains("required"), "{error:?}");
         assert_eq!(stub.hits(), 0, "zero requests must have travelled");
     }
 

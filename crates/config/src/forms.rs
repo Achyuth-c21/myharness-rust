@@ -194,6 +194,7 @@ fn schema_kinds(provider: ProviderKind) -> &'static [(&'static str, CredentialKi
         // item 71): first-party only — a static key is the family's only
         // offered credential kind, like the Chat Completions `openai` one.
         ProviderKind::OpenAiResponses => &[("Static API key", CredentialKind::Static)],
+        ProviderKind::OpenRouter => &[("Static API key", CredentialKind::Static)],
         // Phase 8's local extension (`docs/14` §9): the runtimes' documented
         // default is keyless — a static key exists for servers started with
         // one, and it is the only offered kind.
@@ -599,6 +600,23 @@ pub fn validate_connection(provider: ProviderKind, connection: &Value) -> Vec<Fo
             }
             idle_timeout_check(&conn, &mut issues);
         }
+        ProviderKind::OpenRouter => {
+            // OpenRouter (owner direction, `docs/14` §9 item 79): a static
+            // key is required; the endpoint is the family's own preset
+            // (https://openrouter.ai/api/v1) and the form carries no base
+            // URL field — nothing for the user to mis-type.
+            if static_like
+                && !secret_slot_present(
+                    get("inferenceOpenRouterApiKey").unwrap_or(&Value::Null),
+                )
+            {
+                issues.push(error(
+                    "inferenceOpenRouterApiKey",
+                    "OpenRouter API key is required for static credential kind".to_string(),
+                ));
+            }
+            idle_timeout_check(&conn, &mut issues);
+        }
         ProviderKind::Local => {
             // The local extension (Phase 8; `docs/14` §9): the base URL is
             // optional (empty = the family's recorded Ollama default), the
@@ -940,6 +958,29 @@ pub fn connection_schema(provider: ProviderKind) -> FormSchema {
                     FieldGroup::Endpoint,
                 ),
                 "Leave empty for the first-party endpoint (https://api.openai.com/v1).",
+            ));
+            fields.push(with_help(
+                field(
+                    "inferenceStreamIdleTimeoutSec",
+                    "Stream idle timeout",
+                    FieldKind::Number,
+                    FieldGroup::Advanced,
+                ),
+                "Default 300 s.",
+            ));
+        }
+        ProviderKind::OpenRouter => {
+            // OpenRouter's fields (owner direction, `docs/14` §9 item 79):
+            // the family's own key spelling; no base URL field — the
+            // endpoint is the wall's preset, so there is nothing to mis-type.
+            fields.push(required_for(
+                field(
+                    "inferenceOpenRouterApiKey",
+                    "OpenRouter API key",
+                    FieldKind::Secret,
+                    FieldGroup::Credentials,
+                ),
+                &[CredentialKind::Static],
             ));
             fields.push(with_help(
                 field(
@@ -1444,6 +1485,15 @@ pub fn family_catalog() -> Vec<FamilyDescriptor> {
             credential_slot: Some("inferenceOpenAiResponsesApiKey".to_string()),
         },
         FamilyDescriptor {
+            id: "openrouter".to_string(),
+            label: "OpenRouter".to_string(),
+            probe_supported: true,
+            discovery: DiscoveryStyle::OpenAiCompat,
+            base_key: None, // the endpoint is the wall's preset — no base field
+            base_required: false,
+            credential_slot: Some("inferenceOpenRouterApiKey".to_string()),
+        },
+        FamilyDescriptor {
             id: "local".to_string(),
             label: "Local (Ollama / llama.cpp)".to_string(),
             probe_supported: true,
@@ -1521,6 +1571,7 @@ mod tests {
             ProviderKind::OpenAi,
             ProviderKind::Custom,
             ProviderKind::OpenAiResponses,
+            ProviderKind::OpenRouter,
         ] {
             let issues = connection(provider, json!({}));
             let fields = errors(&issues);
@@ -1685,8 +1736,40 @@ mod tests {
         assert!(errors(&issues).contains(&"inferenceOpenAiBaseUrl"));
     }
 
-    /// `TEST-EXT-007`'s data half: the catalog covers every `ProviderKind`
-    /// spelling exactly once, and the locked families say so.
+    /// OpenRouter (owner direction, `docs/14` §9 item 79): a static key is
+    /// the family's only requirement — the form carries no base URL field
+    /// because the endpoint is the wall's own preset, and the catalog entry
+    /// reflects both.
+    #[test]
+    fn openrouter_requires_only_the_key_and_has_no_base_field() {
+        let issues = connection(ProviderKind::OpenRouter, json!({}));
+        let fields = errors(&issues);
+        assert_eq!(fields, vec!["inferenceOpenRouterApiKey"], "{issues:?}");
+
+        let clean = connection(
+            ProviderKind::OpenRouter,
+            json!({ "inferenceOpenRouterApiKey": "sk-or-EXAMPLE" }),
+        );
+        assert!(errors(&clean).is_empty(), "{clean:?}");
+
+        let schema = connection_schema(ProviderKind::OpenRouter);
+        assert!(
+            !schema.fields.iter().any(|f| f.key.contains("BaseUrl")),
+            "the OpenRouter form must not carry a base URL field: {:?}",
+            schema.fields.iter().map(|f| f.key).collect::<Vec<_>>()
+        );
+        let catalog = family_catalog();
+        let entry = catalog
+            .iter()
+            .find(|f| f.id == "openrouter")
+            .expect("the openrouter family is in the catalog");
+        assert_eq!(entry.base_key, None, "the catalog must not name a base key");
+        assert_eq!(
+            entry.credential_slot.as_deref(),
+            Some("inferenceOpenRouterApiKey")
+        );
+    }
+
     #[test]
     fn the_family_catalog_covers_every_kind() {
         let kinds = [
@@ -1696,6 +1779,7 @@ mod tests {
             ProviderKind::Foundry,
             ProviderKind::Gateway,
             ProviderKind::OpenAi,
+            ProviderKind::OpenRouter,
             ProviderKind::Custom,
             ProviderKind::OpenAiResponses,
             ProviderKind::Local,
