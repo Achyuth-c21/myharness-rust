@@ -167,8 +167,12 @@ pub enum RedactTarget {
 }
 
 /// Redact a profile document for the renderer: secret keys keep their handle,
-/// credential-shaped values and URL query strings are stripped, and private
-/// hosts are replaced.
+/// credential-shaped values and URL query strings are stripped. **Private
+/// hosts are kept**: the window shows the user their own configuration, and
+/// self-hosted endpoints (the `custom` and `local` families) are private
+/// hosts by nature — redacting them made the profile unverifiable and
+/// uneditable in its own setup window (whole-app campaign WA-08). Host
+/// redaction is the export bundle's gate (`TEST-CFG-007/008`).
 pub fn redact_document(profile: &ProfileDocument) -> Value {
     redact_document_for(profile, RedactTarget::Renderer)
 }
@@ -193,7 +197,11 @@ pub fn redact_document_for(profile: &ProfileDocument, target: RedactTarget) -> V
             *value = redact_value_for(value, target);
         }
     }
-    redact_private_hosts_in(&mut document);
+    // Host redaction is the export bundle's gate (TEST-CFG-007/008): a bundle
+    // leaves the machine, the setup window does not (whole-app campaign WA-08).
+    if matches!(target, RedactTarget::Export) {
+        redact_private_hosts_in(&mut document);
+    }
     document
 }
 
@@ -473,10 +481,28 @@ mod tests {
             "inferenceGatewayBaseUrl": "https://gateway/v1",
             "inferenceBedrockBaseUrl": "https://10.0.0.5/bedrock",
         }));
-        let redacted = redact_document(&config);
+        let redacted = redact_document_for_export(&config);
         assert!(!redacted.to_string().contains("10.0.0.5"));
         assert!(!redacted.to_string().contains("https://gateway/v1"));
         assert!(redacted.to_string().contains(REDACTED_HOST));
+    }
+
+    /// Whole-app campaign WA-08: the setup window shows the user their own
+    /// configuration — a self-hosted base URL survives the renderer read.
+    #[test]
+    fn renderer_read_keeps_the_users_own_hosts() {
+        let mut config = profile();
+        config.connection = crate::Section(json!({
+            "inferenceCustomBaseUrl": "http://127.0.0.1:18111/v1",
+            "inferenceBedrockBaseUrl": "https://10.0.0.5/bedrock",
+        }));
+        let shown = redact_document(&config);
+        assert!(shown.to_string().contains("http://127.0.0.1:18111/v1"));
+        assert!(shown.to_string().contains("https://10.0.0.5/bedrock"));
+        assert!(!shown.to_string().contains(REDACTED_HOST));
+        // The export bundle still refuses to carry them.
+        let exported = redact_document_for_export(&config);
+        assert!(exported.to_string().contains(REDACTED_HOST));
     }
 
     /// The bundle enumerates its contents and requires consent.

@@ -140,13 +140,15 @@ export default function SetupWindow() {
   const [probing, setProbing] = useState(false);
   const [probeNote, setProbeNote] = useState<string | null>(null);
   const [familyCatalog, setFamilyCatalog] = useState<FamilyDescriptor[]>([]);
-  const loadProfiles = useCallback(async () => {
+  const loadProfiles = useCallback(async (): Promise<ProfileSummary[] | null> => {
     const response = await setup({ type: "listProfiles" });
     if (response.type === "error") {
       setBanner(response.error.message);
-      return [];
+      // Null, not []: the library itself is unreadable, and the boot must not
+      // fall into the first-run path and clobber this banner (whole-app WA-09).
+      return null;
     }
-    if (response.type !== "profiles") return [];
+    if (response.type !== "profiles") return null;
     setProfiles(response.profiles);
     return response.profiles;
   }, []);
@@ -210,6 +212,14 @@ export default function SetupWindow() {
     (async () => {
       const list = await loadProfiles();
       if (cancelled) return;
+      // The library is unreadable (corrupt `_meta.json`, whole-app WA-09):
+      // the banner already carries the bridge's error. Falling through to the
+      // first-run state would overwrite it with "No configuration profile
+      // exists yet" and invite creating a profile in a broken library.
+      if (list === null) {
+        if (!cancelled) setPhase("ready");
+        return;
+      }
       const applied = list.find((profile) => profile.applied) ?? list[0];
       await Promise.all([loadFamilyCatalog(), loadSchemas(applied?.provider ?? null)]);
       if (cancelled) return;

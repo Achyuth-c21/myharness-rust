@@ -1222,3 +1222,41 @@ binary** against a fresh install and found `WA-06` (P1, fixed) and `WA-07`
 - Gates at phase end: **599/0** workspace (79→81 suites), clippy clean, tsc
   clean, vite ok, shell E2E 52/52, setup E2E **18/18** (S17/S18 new), a11y
   18/18, native 20/20. `Untitled-1` untouched; no screenshots committed.
+
+## 7q. Whole-app campaign phases 3–4 — adversarial pass and the live wire (2026-10-28)
+
+Phases 3 (`docs/17` §4.22) and 4 (§4.23) are complete on
+`feature-whole-app-test-phase-3` with fix lanes `fix-wa-08-*` and
+`fix-wa-09-*`. Durable facts and traps:
+
+- **The hostile-response matrix is the send path's real regression harness.**
+  The mode-driven loopback mock (mock-mode file read per request: normal /
+  garbage / wrongmodel / http500 / abrupt / slow) proved through the release
+  shell: verbatim parse errors, model-substitution refusal, verbatim provider
+  errors, the `[DONE]` sentinel rule, and the idle window surviving a 6 s
+  stall. Any future wire change should re-run this matrix.
+- **The click-only send loop**: the New screen's idea chips prefill the
+  composer; once a session exists the chips are replaced by "Active" — but
+  deleting the session (title menu → Delete… → confirm popover) restores the
+  chips. This drove five hostile turns with zero typing (XTEST text entry into
+  the release webview remains unusable; clicks and combos are reliable).
+- **Seeding a profile directly into the isolated library works**: camelCase
+  `$XDG_CONFIG_HOME/Claude-3p/configLibrary/{<uuid>.json,_meta.json}` with
+  `appliedId` + `entries`; the setup window and the send path accept it. The
+  library validates on WRITE only — a future `schemaVersion` reads fine and is
+  refused at write/apply (`CONFIG_SCHEMA`, tested in the crate).
+- **WA-08 decision (`docs/14` §9 item 77)**: host redaction is Export-only;
+  the renderer read keeps the user's own hosts (secret handles, credential
+  shapes, and query strings still redacted).
+- **WA-09**: a list error must NOT fall into the first-run path —
+  `loadProfiles` returns null and the boot keeps the error banner (S19).
+- **WA-07 count is three** silent Xvfb exits (Projects click; setup
+  interaction; setup open), never on retry, zero diagnostics — still
+  environment-suspected (GPU-less WebKitGTK/EGL under Xvfb, no WM), item 76.
+- **One FIFO, ONE reader**: a leftover `inside.sh` loop from a previous
+  session interleaves reads on the same FIFO and mangles commands ("oCATED:
+  command not found"). Kill all `dbus-run-session` instances before starting
+  a new one.
+- Gates at phase end: **600/0** workspace, clippy clean, tsc clean, vite ok,
+  shell E2E 52/52, setup E2E **19/19** (S19 new), a11y 18/18, native 20/20.
+  The `docs/14` §9 item 40 gap (no native-runtime UI stream test) is retired.
