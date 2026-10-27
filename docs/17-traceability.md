@@ -1107,14 +1107,14 @@ runs below force `GDK_BACKEND=x11` under Xvfb so the window is capturable.
 | Setup E2E | `node tests/e2e/setup-window.spec.mjs` | **16/16** |
 | Native runtime | `bash tests/native/shell-runtime.sh` | **19/19** (real binary, Xvfb/X11) |
 | Release launch | release binary, dev server stopped | before fix: error page; after fix: embedded `app://` bundle renders |
-| Accessibility | `node tests/e2e/a11y.spec.mjs` | 18 route/mode scans; **10 serious** findings, all `color-contrast` |
+| Accessibility | `node tests/e2e/a11y.spec.mjs` | 18 route/mode scans; **0 serious/critical** (clean after `IMP-39` option c) |
 
 #### Findings
 
 | ID | Severity | State | Summary |
 |---|---|---|---|
 | `WA-01` | P0 | **fixed in this phase** | The release artifact loaded `devUrl` and could not start without the Vite server |
-| `WA-02` | P1 | open — owner decision (`IMP-39`) | Light-mode tertiary text fails WCAG AA; token is a preserved observed value |
+| `WA-02` | P1 | **fixed in this phase** (`IMP-39` option c) | Light-mode tertiary text failed WCAG AA; token split keeps the observed value for icons and adds an AA text derivative |
 | `WA-03` | P3 | open — test-infrastructure gap | The native cold-boot check proves a live process/webview, not a rendered app |
 
 **`WA-01` — the release build was a dev build.** With the Vite server stopped, the
@@ -1129,16 +1129,20 @@ suite, clippy, and the native fixture stay green (596/0, clean, 19/19). This cor
 Phase 9 record's implicit reading: *the release binary builds* is not *the artifact runs*.
 Traces `TEST-ARCH-001/003/004`, `ARCH-PROC`, `docs/02` §2, `docs/13` Phase 9.
 
-**`WA-02` — preserved tertiary text fails AA in light mode.** axe-core (WCAG 2.0/2.1/2.2 A+AA)
-over `/new`, `/projects`, `/cowork-artifact`, `/scheduled-task`, `/epitaxy`, and four settings
-sections × light/dark found 10 serious violation types across 33 nodes. Every light-mode finding
-is the same token: `--mh-text-3: #898781` (documented as the observed tertiary value in
-`docs/07` §"Text tertiary/icon") on `#fcfcfb`/`#f3f3f3` surfaces — `.tasks-title`,
-`.profile-provider`, `.settings-group-label`, `.error-code` at 3.23–3.59:1 (need 4.5:1 for
-12 px text); `.code-placement` is 4.1:1 in dark mode. This is a **preservation vs accessibility
-conflict**, not a rebuild defect: changing the token would deviate from observed evidence.
-Options are registered as `IMP-39`; the campaign fixture `tests/e2e/a11y.spec.mjs`
-(`npm run a11y`) stays red until the owner decides. Traces `TEST-UX-012/014`.
+**`WA-02` — preserved tertiary text failed AA in light mode; fixed by token split.** axe-core
+(WCAG 2.0/2.1/2.2 A+AA) over `/new`, `/projects`, `/cowork-artifact`, `/scheduled-task`,
+`/epitaxy`, and four settings sections × light/dark found 10 serious violation types across
+33 nodes. Every light-mode finding was the same token: `--mh-text-3: #898781` (the observed
+tertiary value, `docs/07` §1.2) on `#fcfcfb`/`#f3f3f3` surfaces — `.tasks-title`,
+`.profile-provider`, `.settings-group-label`, `.error-code` at 3.23–3.59:1; `.code-placement`
+was 4.1:1 on the dark `#282827` card. This was a **preservation vs accessibility conflict**,
+not a rebuild defect. Decision (`IMP-39` option c): the observed sample remains the icon token
+(`--mh-icon-3: #898781`, non-text 3:1), and text uses computed AA derivatives
+(`--mh-text-3: #6f6e68` light, `#94928c` dark). Worst cases are 4.61:1 on `#f3f3f3` and
+4.74:1 on `#282827`; icon-only selectors were switched to `--mh-icon-3` so the observed value
+is still rendered where 3:1 governs. Re-run: **18/18 route/mode scans clean**, 0
+serious/critical. Traces `TEST-UX-012/014`, `IMP-39`; the token extension is recorded in
+`docs/07` §1.2.
 
 **`WA-03` — the native fixture cannot see an error page.** Before `WA-01` was fixed, the
 19-check native fixture was green while the window displayed the connection-refused error:

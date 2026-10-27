@@ -504,3 +504,12 @@ let the owner choose explicitly:
 Option (c) preserves the most observed evidence. Whichever is chosen, the token decision is
 recorded in `docs/07` and `tests/e2e/a11y.spec.mjs` is the gate. **Compatibility:** visual only;
 no behavior or data change. **Tests:** `TEST-UX-012/014`, `tests/e2e/a11y.spec.mjs`.
+
+**Decision and status (2026-10-27): implemented — option (c).** `--mh-text-3` now carries the
+computed AA derivatives (`#6f6e68` light, worst case 4.61:1 on `#f3f3f3`; `#94928c` dark,
+worst case 4.74:1 on `#282827`). The observed sample `#898781` is retained as `--mh-icon-3` and
+applied to icon-only selectors (`.profile-chevron`, `.palette-glyph`, `.project-chip
+svg:last-child`, `.task-icon`, `.active-chevron`, `.session-title svg`, `.code-session-chevron`,
+`.filter-row-chevron`), where the WCAG 3:1 non-text threshold applies (3.24:1 light, 4.11:1
+dark). `docs/07` §1.2 records the extension as a rebuild decision, not an observed value. The
+gate re-ran clean: **18/18 route/mode scans, 0 serious/critical**. `WA-02` is closed.

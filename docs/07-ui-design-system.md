@@ -61,6 +61,18 @@ These accent values are **verified samples**, not a complete semantic palette. T
 `--cds-*` scale exists in CSS but was not exhaustively enumerated. Do not invent additional tokens;
 extend this table only from computed values.
 
+**Rebuild accessibility extension (`IMP-39`, `WA-02`, 2026-10-27).** The observed tertiary
+sample `#898781` measures only 3.24–3.59:1 on the light surfaces (`#fcfcfb`, `#f9f9f7`,
+`#ffffff`, `#f3f3f3`) and 4.11:1 on the dark `#282827` card — below WCAG AA's 4.5:1 for
+12 px text. The rebuild therefore splits the token instead of overwriting the sample: the
+observed value stays authoritative for non-text icons (3:1 threshold), and a computed
+derivative carries text.
+
+| Derived token | Light | Dark | Worst case |
+|---|---|---|---|
+| Tertiary text (`--mh-text-3`) | `#6f6e68` | `#94928c` | 4.61:1 on `#f3f3f3`; 4.74:1 on `#282827` |
+| Tertiary icon (`--mh-icon-3`, observed) | `#898781` | `#898781` | 3.24:1 on light; 4.11:1 on `#282827` |
+
 ### 1.3 Spacing, radius, borders
 
 - 4 px base unit; common gaps are 4, 8, 12, 16, 24, and 32 px.

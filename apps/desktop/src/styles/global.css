@@ -15,7 +15,11 @@
   --mh-surface-3: #ffffff;
   --mh-text-1: #0b0b0b;
   --mh-text-2: #52514e;
-  --mh-text-3: #898781;
+  /* IMP-39/WA-02: #898781 is the observed tertiary sample, but 3.24–3.59:1 fails AA for
+     12px text. --mh-text-3 is its computed AA derivative (worst case 4.61:1 on #f3f3f3);
+     --mh-icon-3 keeps the observed value for non-text icons (3:1 threshold). */
+  --mh-text-3: #6f6e68;
+  --mh-icon-3: #898781;
   --mh-border-strong: rgba(11, 11, 11, 0.2);
   --mh-border-hair: rgba(11, 11, 11, 0.08);
   --mh-hover-fill: rgba(11, 11, 11, 0.05);
@@ -60,7 +64,9 @@
   --mh-surface-3: #20201f;
   --mh-text-1: #f0efec;
   --mh-text-2: #c3c2b7;
-  --mh-text-3: #898781;
+  /* Same split in dark: text lifts to 4.74:1 on #282827; icons keep the observed sample. */
+  --mh-text-3: #94928c;
+  --mh-icon-3: #898781;
   --mh-border-strong: rgba(255, 255, 255, 0.2);
   --mh-border-hair: rgba(255, 255, 255, 0.08);
   --mh-hover-fill: rgba(255, 255, 255, 0.06);
@@ -369,7 +375,7 @@ body {
 
 .profile-chevron {
   display: inline-flex;
-  color: var(--mh-text-3);
+  color: var(--mh-icon-3);
   transition: transform 0.15s ease;
 }
 
@@ -453,7 +459,7 @@ body {
 
 .palette-glyph {
   display: inline-flex;
-  color: var(--mh-text-3);
+  color: var(--mh-icon-3);
   flex: none;
 }
 
@@ -929,7 +935,7 @@ body {
 }
 
 .project-chip svg:last-child {
-  color: var(--mh-text-3);
+  color: var(--mh-icon-3);
 }
 
 .project-chip:disabled {
@@ -1192,7 +1198,7 @@ body {
 .task-icon {
   display: flex;
   flex: none;
-  color: var(--mh-text-3);
+  color: var(--mh-icon-3);
 }
 
 .task-title {
@@ -1268,7 +1274,7 @@ body {
 .active-chevron {
   display: flex;
   flex: none;
-  color: var(--mh-text-3);
+  color: var(--mh-icon-3);
   opacity: 0;
 }
 
@@ -1332,7 +1338,7 @@ body {
 
 .session-title svg {
   flex: none;
-  color: var(--mh-text-3);
+  color: var(--mh-icon-3);
 }
 
 .session-menu {
@@ -2285,7 +2291,7 @@ body {
 }
 
 .code-session-chevron {
-  color: var(--mh-text-3);
+  color: var(--mh-icon-3);
 }
 
 .code-repo-row {
@@ -2989,7 +2995,7 @@ body {
 }
 
 .filter-row-chevron {
-  color: var(--mh-text-3);
+  color: var(--mh-icon-3);
 }
 
 .filter-options {
