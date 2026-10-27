@@ -72,28 +72,72 @@ const CONNECTION_SCHEMA = {
   ],
 };
 
-/** A tab schema (mirrors crates/config::tabs::tab_schema). */
-function tabSchema(tab) {
-  if (tab === "connection") return CONNECTION_SCHEMA;
-  return { tab, title: tab, fields: [], readOnly: tab === "egress" };
-}
-
 /**
  * The stubbed bridge. It records every command so the suite can assert on what
  * the window sent, and answers with the shapes the real bridge returns.
  */
-function installStub(page, state) {
+function installStub(page, state = {}) {
+  // addInitScript serializes the seed: functions never cross into the page.
+  // The tab-schema logic therefore lives INSIDE the init script and the seed
+  // carries only plain data (the with-profile connection schema object).
   return page.addInitScript((seed) => {
     const recorded = [];
     window.__mhCommands = recorded;
+
+    const tabSchemaFor = (tab) => {
+      if (tab === "connection") return seed.connectionSchema;
+      if (tab === "limits")
+        return {
+          tab,
+          title: "Limits",
+          fields: [
+            { key: "coworkSessionRetentionDays", label: "Cowork session retention (days)", kind: "number", group: "retention", required: false },
+          ],
+        };
+      return { tab, title: tab, fields: [], readOnly: tab === "egress" };
+    };
 
     const respond = (command) => {
       switch (command.type) {
         case "listProfiles":
         case "applyProfile":
-          return { type: "profiles", profiles: [{ id: seed.id, name: seed.name, provider: seed.provider, applied: true }] };
+          // A fresh install carries no profiles (whole-app campaign WA-06):
+          // the boot state the real shell serves before the first profile.
+          return seed.noProfiles && !seed.createdId
+            ? { type: "profiles", profiles: [] }
+            : {
+                type: "profiles",
+                profiles: [
+                  {
+                    id: seed.createdId ?? seed.id,
+                    name: seed.createdId ? seed.createdName : seed.name,
+                    provider: seed.createdId ? seed.createdProvider : seed.provider,
+                    applied: true,
+                  },
+                ],
+              };
         case "readProfile":
-          return { type: "profile", document: seed.document };
+          return {
+            type: "profile",
+            document: seed.createdId
+              ? { ...seed.document, id: seed.createdId, name: seed.createdName, provider: seed.createdProvider }
+              : seed.document,
+          };
+        case "writeProfile": {
+          // The bridge upserts an id-less draft: it creates the entry and
+          // answers with the stored document carrying the generated id
+          // (whole-app campaign WA-06). The stub flips into the created state
+          // so the following apply/profile reads see the new profile.
+          if (!command.document.id) {
+            seed.createdId = "22222222-2222-4222-8222-222222222222";
+            seed.createdName = command.document.name ?? "New profile";
+            seed.createdProvider = command.document.provider ?? null;
+          }
+          const document = seed.createdId && !command.document.id
+            ? { ...command.document, id: seed.createdId }
+            : command.document;
+          return { type: "profile", document };
+        }
         case "writeProfile":
           return { type: "profile", document: command.document };
         case "merged":
@@ -111,7 +155,7 @@ function installStub(page, state) {
             },
           };
         case "tabSchema":
-          return { type: "schema", schema: seed.tabSchema(command.tab) };
+          return { type: "schema", schema: tabSchemaFor(command.tab) };
         case "connectionSchema":
           return { type: "schema", schema: seed.connectionSchema };
         case "familyCatalog":
@@ -167,8 +211,8 @@ function installStub(page, state) {
     provider: PROFILE.provider,
     document: PROFILE,
     connectionSchema: CONNECTION_SCHEMA,
-    tabSchema,
     issues: [],
+    ...state,
   });
 }
 
@@ -382,6 +426,72 @@ try {
     await expectTrue(setupVisible === null, "the setup surface must not render in the main window");
     await mainContext.close();
   });
+
+  await step("S17 a fresh install populates the family picker and the tab panes (WA-06)", async () => {
+    // The real-shell no-profile state: the boot early-return used to skip the
+    // family catalog and the tab schemas, leaving the first-run picker empty
+    // and every non-Connection pane blank (whole-app campaign WA-06).
+    const freshContext = await browser.newContext({ viewport: { width: 900, height: 720 } });
+    const freshPage = await freshContext.newPage();
+    await installStub(freshPage, { noProfiles: true });
+    await freshPage.goto(`${BASE}/setup-desktop-3p`);
+    await freshPage.waitForSelector(".setup-window");
+    const banner = await freshPage.textContent(".setup-banner");
+    await expectTrue(
+      banner.includes("No configuration profile exists yet"),
+      `banner was ${banner}`,
+    );
+    const options = await freshPage.$$eval("#family-picker option", (nodes) =>
+      nodes.map((n) => n.value),
+    );
+    await expectTrue(
+      options.length >= 3 && options.includes("gateway") && options.includes("anthropic"),
+      `the family picker offered [${options.join(",")}]`,
+    );
+    await freshPage.click(".setup-nav-item:has-text('Limits')");
+    await freshPage.waitForSelector("#field-coworkSessionRetentionDays");
+    await freshContext.close();
+  });
+
+  await step("S18 the first Apply creates the profile and applies the created id (WA-06)", async () => {
+    const freshContext = await browser.newContext({ viewport: { width: 900, height: 720 } });
+    const freshPage = await freshContext.newPage();
+    await installStub(freshPage, { noProfiles: true });
+    await freshPage.goto(`${BASE}/setup-desktop-3p`);
+    await freshPage.waitForSelector(".setup-window");
+    // The blank first-run draft is dirty immediately: Apply is the only save
+    // action and there is no baseline to discard back to.
+    const applyDisabled = await freshPage.getAttribute(".setup-primary-button", "disabled");
+    await expectTrue(applyDisabled === null, "Apply must be enabled on the first-run draft");
+    await freshPage.selectOption("#family-picker", "gateway");
+    await freshPage.click(".setup-primary-button");
+    await freshPage.waitForFunction(() => {
+      const commands = window.__mhCommands;
+      return commands.some((c) => c.type === "applyProfile");
+    });
+    const commands = await freshPage.evaluate(() => window.__mhCommands);
+    const write = commands.find((c) => c.type === "writeProfile");
+    await expectTrue(write, "no writeProfile was sent");
+    await expectTrue(
+      write.document.provider === "gateway" && !write.document.id,
+      `the write carried provider=${write.document.provider} id=${write.document.id}`,
+    );
+    const applied = commands.find((c) => c.type === "applyProfile");
+    await expectTrue(applied, "no applyProfile was sent");
+    await expectTrue(
+      applied.id === "22222222-2222-4222-8222-222222222222",
+      `apply used id ${applied.id}`,
+    );
+    const picker = await freshPage.$$eval(".setup-profile-picker option", (nodes) =>
+      nodes.map((n) => n.textContent.trim()),
+    );
+    await expectTrue(
+      picker.some((text) => text.includes("New profile")),
+      `the profile picker offered [${picker.join(",")}]`,
+    );
+    await freshContext.close();
+  });
+
 } finally {
   await browser.close();
 }

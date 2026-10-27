@@ -96,6 +96,28 @@ function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+/**
+ * A fresh first-run draft: no id, no name, no provider, every section present
+ * and empty (`docs/18` §10). Apply sends it as-is; the bridge creates the
+ * entry because the draft carries no id (whole-app campaign WA-06 — the
+ * library refuses writes for unknown ids, so an id-less draft is the only
+ * first-run creation path).
+ */
+function blankDraft(): ProfileDocument {
+  return {
+    schemaVersion: 1,
+    connection: {},
+    capabilities: {},
+    connectors: {},
+    telemetry: {},
+    limits: {},
+    appearance: {},
+    plugins: {},
+    egress: {},
+    source: {},
+  };
+}
+
 export default function SetupWindow() {
   const [phase, setPhase] = useState<"loading" | "ready" | "applying" | "error">("loading");
   const [banner, setBanner] = useState<string | null>(null);
@@ -118,7 +140,6 @@ export default function SetupWindow() {
   const [probing, setProbing] = useState(false);
   const [probeNote, setProbeNote] = useState<string | null>(null);
   const [familyCatalog, setFamilyCatalog] = useState<FamilyDescriptor[]>([]);
-
   const loadProfiles = useCallback(async () => {
     const response = await setup({ type: "listProfiles" });
     if (response.type === "error") {
@@ -180,21 +201,31 @@ export default function SetupWindow() {
   }, []);
 
   // Boot: profiles, then the applied one, then the schemas and the health.
+  // The family catalog and the tab schemas load BEFORE the no-profile early
+  // return: on a fresh install (no profile exists) the Provider family picker
+  // and every tab pane must still be populated, or the first profile can
+  // never be created (whole-app campaign WA-06).
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const list = await loadProfiles();
       if (cancelled) return;
       const applied = list.find((profile) => profile.applied) ?? list[0];
+      await Promise.all([loadFamilyCatalog(), loadSchemas(applied?.provider ?? null)]);
+      if (cancelled) return;
       if (!applied) {
+        // First-run state: no profile exists yet, so the working draft is a
+        // blank local document and Apply creates the entry through the
+        // bridge's id-less write (whole-app campaign WA-06). The catalog and
+        // the tab schemas are loaded above, so the family picker and the tab
+        // panes are populated even before the first profile exists.
+        setDraft(blankDraft());
         setPhase("ready");
         setBanner("No configuration profile exists yet. Create one to configure inference.");
         return;
       }
       setSelectedId(applied.id);
       await loadProfile(applied.id);
-      await loadFamilyCatalog();
-      await loadSchemas(applied.provider);
       await loadMerged();
       const healthResponse = await setup({ type: "health" });
       if (healthResponse.type === "health") setHealth(healthResponse.health);
@@ -215,6 +246,10 @@ export default function SetupWindow() {
   }, [tab]);
 
   const dirty = useMemo(() => {
+    // First-run draft (no baseline to compare against, WA-06): it is always
+    // unsaved work — Apply creates the profile. Discard has nothing to
+    // restore, so discard() early-returns on the null baseline.
+    if (draft && !baseline) return true;
     if (!baseline || !draft) return false;
     // A typed credential is a change too: it never lands in the document, so
     // without this the draft would read as clean and Apply would stay disabled
@@ -466,7 +501,7 @@ export default function SetupWindow() {
   };
 
   const apply = async () => {
-    if (!draft || !selectedId) return;
+    if (!draft) return;
     setPhase("applying");
     setBanner(null);
     // Validate before writing: the shipped form blocks Apply while invalid
@@ -493,7 +528,16 @@ export default function SetupWindow() {
       setPhase("ready");
       return;
     }
-    const applied = await setup({ type: "applyProfile", id: selectedId });
+    if (write.type !== "profile") return;
+    // An id-less draft (first run, WA-06) created the entry on write; the
+    // bridge answers with the stored document carrying the generated id.
+    const writeId = selectedId ?? write.document.id ?? null;
+    if (!writeId) {
+      setBanner("The profile was written but the bridge returned no id.");
+      setPhase("ready");
+      return;
+    }
+    const applied = await setup({ type: "applyProfile", id: writeId });
     if (applied.type === "error") {
       // A failed apply leaves the previous profile active (docs/18 §10); the draft
       // is kept so the user does not lose their work.
@@ -501,7 +545,9 @@ export default function SetupWindow() {
       setPhase("ready");
       return;
     }
-    await loadProfile(selectedId);
+    setSelectedId(writeId);
+    await loadProfiles();
+    await loadProfile(writeId);
     await loadMerged();
     setPhase("ready");
   };
@@ -711,7 +757,7 @@ export default function SetupWindow() {
       </div>
 
       <footer className="setup-footer">
-        {dirty ? (
+        {dirty && baseline ? (
           <button type="button" className="setup-secondary-button" onClick={discard}>
             Discard Changes
           </button>
