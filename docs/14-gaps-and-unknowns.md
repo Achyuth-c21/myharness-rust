@@ -984,3 +984,37 @@ recorded unknowns:
     rebinding refusal, redirect refusal — regression-tested in the crate's
     battery) and the extension manifest's structural gates (traversal,
     integrity, size — regression-tested in `crates/extensions`).
+
+75. **The first-profile creation is a rebuild-defined upsert (2026-10-27,
+    whole-app campaign WA-06).** The shipped app's first-run setup flow was
+    never observed (the inspected install always had profiles), and the
+    rebuild's setup namespace had no creation path at all: `write` requires an
+    existing entry, `duplicate` requires a source profile. The campaign's
+    native sweep made the gap visible — the boot effect's no-profile early
+    return also skipped the family catalog and tab schemas, so the picker was
+    empty and every pane blank. Owner-direction was to continue the campaign
+    and land it; the rebuild defines: the first-run draft is a blank local
+    document with no id, `writeProfile` upserts an id-less draft by creating
+    the entry (fail-closed: no provider family → refusal, nothing created),
+    stamps the generated id, and answers with the stored document. Recorded
+    as a rebuild decision, not an observation. Regression:
+    `an_id_less_draft_creates_the_first_profile`,
+    `an_id_less_draft_without_a_provider_is_refused` (bridge), setup E2E
+    S17/S18. The click-through creation in the real release shell could not
+    be completed: XTEST/PRIMARY text entry into the release WebKitGTK webview
+    is lossy in the sweep's WM-less Xvfb session (environment limit, same
+    class as the screen-reader gap in `docs/17` §4.20); the populated picker
+    and the enabled Apply were verified on the release binary, the flow
+    itself in the browser suite.
+
+76. **Unreproduced silent shell exits under the sweep's Xvfb session
+    (2026-10-27, whole-app campaign WA-07).** Twice, a release-shell instance
+    under the campaign's isolated Xvfb/dbus session exited silently — once
+    around a Projects navigation click, once during a setup-window
+    interaction — each with no Rust panic, no core, and no stderr beyond the
+    boot's MESA-EGL DRI3 warnings. Neither instance is reproducible on retry
+    (instance 2 survived the full sweep including the same navigation);
+    no assertion can be attached. Treated as an environment signal
+    (WebKitGTK GPU-less EGL compositing under Xvfb without a window manager)
+    rather than an app defect; `Unknown`, monitored — a recurrence under a
+    real desktop session would reopen it as a P1.

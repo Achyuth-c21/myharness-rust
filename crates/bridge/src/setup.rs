@@ -194,6 +194,10 @@ pub trait SetupBackend {
     fn list_profiles(&self) -> Result<Vec<ProfileSummary>, BridgeError>;
     /// One profile document.
     fn read_profile(&self, id: &str) -> Result<ProfileDocument, BridgeError>;
+    /// Create the first profile entry (`whole-app campaign WA-06`): the
+    /// library refuses writes for unknown ids, so an id-less first draft has
+    /// no other path into the library.
+    fn create_profile(&self, name: &str, provider: ProviderKind) -> Result<ProfileDocument, BridgeError>;
     /// Persist a draft.
     fn write_profile(&self, document: &ProfileDocument) -> Result<(), BridgeError>;
     /// Validate and activate a profile.
@@ -324,6 +328,10 @@ impl SetupBackend for ConfigBackend {
 
     fn write_profile(&self, document: &ProfileDocument) -> Result<(), BridgeError> {
         Ok(self.library.write(document)?)
+    }
+
+    fn create_profile(&self, name: &str, provider: ProviderKind) -> Result<ProfileDocument, BridgeError> {
+        Ok(self.library.create(name, provider)?)
     }
 
     fn apply_profile(&self, id: &str) -> Result<(), BridgeError> {
@@ -1470,6 +1478,29 @@ fn run<B: SetupBackend>(backend: &B, command: SetupCommand) -> Result<SetupRespo
             // A renderer must never send a secret value inside the document
             // (`docs/18` §10): that is refused before anything is written.
             reject_inline_secrets(&document)?;
+            // An id-less draft is the FIRST profile creation (whole-app
+            // campaign WA-06): the library refuses writes for unknown ids, so
+            // the entry is created first and the draft is stamped with the
+            // generated id before the write. The shipped first-run flow was
+            // never observed; this upsert is the rebuild's definition
+            // (`docs/14` §9 item 74). A draft that carries no provider family
+            // has nothing to create against and is refused fail-closed.
+            if document.id.is_none() {
+                let Some(provider) = document.provider else {
+                    return Err(BridgeError::new(
+                        "CONFIG_VALIDATION",
+                        "the profile has no provider family; pick one before applying",
+                    ));
+                };
+                let name = document
+                    .name
+                    .clone()
+                    .filter(|name| !name.trim().is_empty())
+                    .unwrap_or_else(|| "New profile".to_string());
+                let created = backend.create_profile(&name, provider)?;
+                document.id = created.id;
+                document.name = created.name;
+            }
             apply_secrets(backend, &mut document, &secrets)?;
             backend.write_profile(&document)?;
             Ok(SetupResponse::Profile {
@@ -1857,6 +1888,80 @@ mod tests {
         };
         assert_eq!(error.code, "CONFIG_VALIDATION");
         assert!(!error.message.contains("sk-ant-EXAMPLE-INLINE"));
+    }
+
+    /// An id-less draft is the first-profile creation path (whole-app campaign
+    /// WA-06): the entry is created, the answer carries the generated id, and
+    /// a second write with that id updates instead of duplicating.
+    #[test]
+    fn an_id_less_draft_creates_the_first_profile() {
+        let root = std::env::temp_dir().join(format!("mh-bridge-test-{}", uuid::Uuid::new_v4()));
+        let backend = ConfigBackend::new(root, Box::new(myharness_secrets::MemoryStore::default()));
+        assert!(backend.list_profiles().unwrap().is_empty());
+
+        let draft = ProfileDocument {
+            schema_version: 1,
+            name: Some("Sweep".to_string()),
+            provider: Some(ProviderKind::Custom),
+            connection: myharness_config::Section(json!({
+                "inferenceCustomBaseUrl": "http://127.0.0.1:18111/v1",
+            })),
+            ..ProfileDocument::default()
+        };
+        let response = dispatch(
+            &backend,
+            SetupCommand::WriteProfile {
+                document: serde_json::to_value(&draft).unwrap(),
+                secrets: BTreeMap::new(),
+            },
+        );
+        let SetupResponse::Profile { document } = response else {
+            panic!("expected a profile response, got {response:?}");
+        };
+        assert!(
+            document.get("id").and_then(|id| id.as_str()).is_some(),
+            "the created profile carries an id: {document}"
+        );
+        assert_eq!(
+            document.get("name").and_then(|name| name.as_str()),
+            Some("Sweep")
+        );
+        assert_eq!(backend.list_profiles().unwrap().len(), 1);
+
+        // The stamped id updates; it never creates a second entry.
+        let mut update = serde_json::from_value::<ProfileDocument>(document).unwrap();
+        update.connection = myharness_config::Section(json!({
+            "inferenceCustomBaseUrl": "http://127.0.0.1:18111/v2",
+        }));
+        let response = dispatch(
+            &backend,
+            SetupCommand::WriteProfile {
+                document: serde_json::to_value(&update).unwrap(),
+                secrets: BTreeMap::new(),
+            },
+        );
+        assert!(matches!(response, SetupResponse::Profile { .. }));
+        assert_eq!(backend.list_profiles().unwrap().len(), 1);
+    }
+
+    /// An id-less draft with no provider family is refused before the library
+    /// is touched — fail-closed, with nothing created.
+    #[test]
+    fn an_id_less_draft_without_a_provider_is_refused() {
+        let root = std::env::temp_dir().join(format!("mh-bridge-test-{}", uuid::Uuid::new_v4()));
+        let backend = ConfigBackend::new(root, Box::new(myharness_secrets::MemoryStore::default()));
+        let response = dispatch(
+            &backend,
+            SetupCommand::WriteProfile {
+                document: serde_json::to_value(ProfileDocument::default()).unwrap(),
+                secrets: BTreeMap::new(),
+            },
+        );
+        let SetupResponse::Error { error } = response else {
+            panic!("expected an error response");
+        };
+        assert_eq!(error.code, "CONFIG_VALIDATION");
+        assert!(backend.list_profiles().unwrap().is_empty());
     }
 
     /// A credential the user typed is stored in the keychain, and the document
