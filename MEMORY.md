@@ -1260,3 +1260,32 @@ Phases 3 (`docs/17` §4.22) and 4 (§4.23) are complete on
 - Gates at phase end: **600/0** workspace, clippy clean, tsc clean, vite ok,
   shell E2E 52/52, setup E2E **19/19** (S19 new), a11y 18/18, native 20/20.
   The `docs/14` §9 item 40 gap (no native-runtime UI stream test) is retired.
+
+## 7r. Whole-app campaign phase 5 — the user-journey suite (2026-10-28)
+
+`tests/e2e/user-journey.spec.mjs` (U01–U12) is the standing journey regression:
+each case drives a multi-step flow against a **stateful fake bridge** (its
+sessions/turns/projects/tasks mutate per command — later steps see earlier
+steps' effects). Facts worth keeping:
+
+- **The projects CREATE flow lands in the project DETAIL**, not back on the
+  list (createProject → `{type:"project"}` → the screen opens the detail).
+  Journeys and future tests must expect the detail.
+- **The folder chip on the Code dashboard shows the basename** ("journey-code"),
+  never the absolute path — assert on the basename.
+- **The session-title menu race**: clicking `button.session-title` right after
+  a send can be eaten by the post-send `load()` re-render — the journey suite
+  retries once if `.session-menu` does not appear. Any new menu-driven test
+  needs the same tolerance (the helper is `openSessionMenu` in the spec).
+- Selector map the hard way: session menu items are `role=menuitem`
+  (Tools…/Rename/Archive/Delete…), rename input is `[aria-label="Task title"]`
+  + Save, delete confirm lives INSIDE the menu (`.session-confirm`), scheduled
+  route is `/scheduled-task` (templates `.sched-template`, rows `.sched-row`,
+  switch `.sched-row .switch`, delete confirm `.confirm-inline`), code
+  dashboard rows `.code-repo-row`/`.code-session-row`, back is the toolbar
+  "Back" icon-btn, session drafts restore from localStorage via the sidebar
+  task row.
+- Phase 5 found **no product defect** (all first-pass failures were the
+  suite's assumptions). 12/12 stable ×3; other gates unchanged (600/0, shell
+  52/52, setup 19/19, a11y 18/18, native 20/20). The four campaign phases are
+  complete; follow-ups are owner-gated (WA-07 under a real WM, installer).

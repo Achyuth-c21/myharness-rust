@@ -1346,3 +1346,35 @@ E2E **19/19** (S19 new), a11y 18/18, native 20/20. Standing limits unchanged: no
 installer/bundle, no screen-reader pass in Xvfb, captures inspected in-session and
 not committed. WA-07 remains open-as-unknown (three silent Xvfb exits, `docs/14`
 §9 item 76).
+
+### 4.24 Whole-application test campaign — phase 5: user-journey suite (2026-10-28)
+
+Phase 5 turned the campaign's findings posture into a standing regression suite:
+`tests/e2e/user-journey.spec.mjs`, twelve multi-step journeys driven the way a user
+drives the app — against a **stateful fake bridge** whose sessions, turns, projects,
+and tasks mutate per command, so a journey's later steps see its earlier steps'
+effects (the shell suite checks one behavior per case; the journey suite checks the
+day). Journeys: the first message end-to-end (chip prefill → send → transcript →
+sidebar → titled session), a follow-up in the same transcript, rename via the session
+menu, archive, delete-with-confirm (Ideas return when nothing is left), the session
+draft surviving a round trip, the full project lifecycle (create lands in the
+project detail — now pinned — bind a session through the project chip, see it in the
+project, delete from the detail), a scheduled task's whole life (template prefill →
+save → disable → re-enable → inline-confirm delete), the artifact task, the Code
+journey (folder pick → send → the dashboard's repository row), the usage panel
+reflecting the tokens the sessions produced, and the palette finding a session
+created earlier in the same run.
+
+The first run failed 8 of 12 — every failure was the suite's assumption, not the
+app: the create flow's destination is the detail view, the folder chip shows the
+basename, the session menu must be opened via `button.session-title` (a click racing
+the post-send re-render is eaten — the suite retries once), and the code screen
+returns via the toolbar Back. Verified against the real renderer with probes and
+encoded. **No product defect surfaced in phase 5**: the journeys pass 12/12,
+stable across three consecutive runs, with no application change.
+
+**Gates:** journey suite 12/12 ×3; shell E2E 52/52; setup E2E 19/19; a11y 18/18;
+native 20/20; workspace 600/0 (no Rust change this phase); `tsc --noEmit` clean;
+`vite build` ok. `tests/README.md` documents the suite. The campaign's four named
+phases are complete; the standing follow-ups are the WA-07 environment question and
+the installer/bundle work (both owner-gated).
