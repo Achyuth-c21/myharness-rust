@@ -383,11 +383,42 @@ body {
   transform: rotate(180deg);
 }
 
+.account-menu-head {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: calc(var(--mh-unit) * 1.5) calc(var(--mh-unit) * 2);
+  border-bottom: 1px solid var(--mh-border-hair);
+  margin-bottom: calc(var(--mh-unit) * 1);
+}
+
+.account-menu-name {
+  font-size: 13px;
+  font-weight: var(--mh-w6);
+  color: var(--mh-text-1);
+}
+
+.account-menu-provider {
+  font-size: 12px;
+  color: var(--mh-text-3);
+}
+
+.account-menu-separator {
+  height: 1px;
+  background: var(--mh-border-hair);
+  margin: calc(var(--mh-unit) * 1) calc(var(--mh-unit) * 1);
+}
+
+.account-item-more {
+  margin-left: auto;
+  color: var(--mh-text-3);
+}
+
 .account-menu {
   position: absolute;
   bottom: 100%;
   left: 0;
-  min-width: 220px;
+  min-width: 260px; /* the captured menu is ~300 px wide incl. padding (docs/screens/account-menu-and-language.md) */
   background: var(--mh-surface-2);
   border: 1px solid var(--mh-border-hair);
   border-radius: var(--mh-radius-card);
@@ -397,7 +428,11 @@ body {
 }
 
 .account-item {
-  display: block;
+  /* flex so a trailing affordance (the changelog submenu chevron) can sit at
+     the row's end; text-only items are unaffected. */
+  display: flex;
+  align-items: center;
+  gap: 6px;
   width: 100%;
   border: 0;
   border-radius: var(--mh-radius-input);
@@ -596,6 +631,36 @@ body {
 
 /* content column ~800px (docs/07 §1.4); close X at top-right of the content
    (docs/screens/settings.md §Modal geometry) */
+/* General-pane preferences (docs/screens/settings.md §General): the chat
+   typeface applies to the transcript; reduced motion turns the interface's
+   animations off. */
+html[data-chat-font="serif"] .transcript {
+  font-family: var(--mh-font-display);
+}
+
+html[data-motion="reduced"] *,
+html[data-motion="reduced"] *::before,
+html[data-motion="reduced"] *::after {
+  animation: none !important;
+  transition: none !important;
+}
+
+.settings-pref-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--mh-unit) * 4);
+  padding: calc(var(--mh-unit) * 1.5) 0;
+}
+
+.settings-pref-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+  color: var(--mh-text-1);
+}
+
 .settings-content-wrap {
   position: relative;
   flex: 1;
@@ -1006,15 +1071,29 @@ body {
 .screen-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  /* The captured headers group the tools (search/sort/view) with the primary
+     button on the right (docs/screens/projects.md section 1); the title takes
+     the remaining width. */
+  justify-content: flex-start;
+  gap: calc(var(--mh-unit) * 2);
   padding: calc(var(--mh-unit) * 5) calc(var(--mh-unit) * 8);
   border-bottom: 1px solid var(--mh-border-hair);
 }
 
 .screen-head h1 {
-  font-size: 15px;
-  font-weight: var(--mh-w6);
-  margin: 0;
+  /* The original's list-page titles are serif display (docs/screens/projects.md
+     "Serif page title"; scheduled-tasks "serif display"; artifacts "Serif
+     Artifacts title") — interface-parity phase, docs/17 section 4.25. */
+  font-family: var(--mh-font-display);
+  font-size: 16px;
+  font-weight: var(--mh-w4);
+  margin: 0 auto 0 0;
+}
+
+.screen-head-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .screen-empty {
@@ -1293,8 +1372,94 @@ body {
 .session-screen {
   flex: 1;
   min-height: 0;
+  /* The captured task detail runs the transcript column beside a 340 px
+     context pane (docs/screens/task-detail.md layout); the pane hides with
+     its header toggle. */
+  display: flex;
+  flex-direction: row;
+}
+
+.session-main {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
+}
+
+.session-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.session-pane {
+  flex: none;
+  width: 340px; /* the captured pane width (docs/screens/task-detail.md) */
+  min-width: 0;
+  border-left: 1px solid var(--mh-border-hair);
+  padding: calc(var(--mh-unit) * 4);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--mh-unit) * 4);
+  overflow-y: auto;
+}
+
+.pane-section {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--mh-unit) * 1.5);
+}
+
+.pane-heading {
+  margin: 0;
+  font-size: 12px;
+  font-weight: var(--mh-w6);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mh-text-3);
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: calc(var(--mh-unit) * 2);
+}
+
+.pane-count {
+  font-weight: var(--mh-w4);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.pane-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--mh-text-2);
+  overflow-wrap: anywhere;
+}
+
+.pane-server-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--mh-unit) * 1);
+}
+
+.pane-server-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: calc(var(--mh-unit) * 2);
+  font-size: 13px;
+}
+
+.pane-server-name {
+  color: var(--mh-text-1);
+}
+
+.pane-server-state {
+  color: var(--mh-text-3);
+  font-size: 12px;
 }
 
 .session-head {

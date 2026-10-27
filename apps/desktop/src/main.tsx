@@ -6,9 +6,11 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App";
 import { initTheme } from "./theme";
+import { restoreInterfacePrefs } from "./settings/prefs";
 import "./styles/global.css";
 
 initTheme();
+restoreInterfacePrefs();
 
 createRoot(document.getElementById("root")!).render(
   <BrowserRouter>

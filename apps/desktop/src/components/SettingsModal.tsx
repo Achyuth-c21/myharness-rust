@@ -20,6 +20,16 @@ import { DeveloperPanel } from "../settings/DeveloperPanel";
 import { PluginsPanel } from "../settings/PluginsPanel";
 import { SkillsPanel } from "../settings/SkillsPanel";
 import { useFocusTrap } from "./focusTrap";
+import {
+  applyChatFont,
+  applyMotion,
+  loadChatFont,
+  loadMotion,
+  loadNotifyOnDone,
+  saveNotifyOnDone,
+  type ChatFont,
+  type MotionPref,
+} from "../settings/prefs";
 
 interface Props {
   section: string;
@@ -97,6 +107,9 @@ function ThemeControl() {
 }
 
 export function SettingsModal({ section, onSection, onClose }: Props) {
+  const [chatFont, setChatFont] = useState<ChatFont>(() => loadChatFont());
+  const [motion, setMotion] = useState<MotionPref>(() => loadMotion());
+  const [notifyOnDone, setNotifyOnDone] = useState(() => loadNotifyOnDone());
   const searchRef = useRef<HTMLInputElement>(null);
   const trapRef = useRef<HTMLDivElement>(null);
   const [filter, setFilter] = useState("");
@@ -178,12 +191,79 @@ export function SettingsModal({ section, onSection, onClose }: Props) {
             <h2>{SETTINGS_GROUPS.flatMap((g) => g.sections).find((s) => s.key === section)?.label ?? section}</h2>
             {section === "general" ? (
               <>
+                <h3>Profile</h3>
+                <p className="settings-note">
+                  The profile fields (avatar, work descriptor, instructions for Claude) are account-level
+                  state the rebuild does not carry; they stay unavailable rather than invented
+                  (docs/screens/settings.md §General; docs/14 §9 item 78).
+                </p>
                 <h3>Appearance</h3>
                 <ThemeControl />
-                <p className="settings-note">
-                  Remaining General fields (profile, instructions, chat font, motion, notifications) and the
-                  other sections are specified in docs/09-settings-and-configuration.md and land later.
-                </p>
+                <div className="settings-pref-row">
+                  <label className="settings-pref-label" htmlFor="chat-font">Chat font</label>
+                  <select
+                    id="chat-font"
+                    value={chatFont}
+                    onChange={(event) => {
+                      const next = event.target.value as ChatFont;
+                      setChatFont(next);
+                      applyChatFont(next);
+                    }}
+                  >
+                    <option value="sans">Anthropic Sans</option>
+                    <option value="serif">Anthropic Serif</option>
+                  </select>
+                </div>
+                <div className="settings-pref-row">
+                  <span className="settings-pref-label">Motion</span>
+                  <div className="segmented theme-seg" role="radiogroup" aria-label="Motion">
+                    {(["system", "reduced"] as MotionPref[]).map((value) => (
+                      <button
+                        key={value}
+                        type="button"
+                        role="radio"
+                        aria-checked={motion === value}
+                        className={`seg theme-seg-option${motion === value ? " seg-active" : ""}`}
+                        onClick={() => {
+                          setMotion(value);
+                          applyMotion(value);
+                        }}
+                      >
+                        {value === "system" ? "System" : "Reduced"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <p className="settings-note">Reduce animation in streaming responses and other interface elements.</p>
+                <h3>Notifications</h3>
+                <div className="settings-pref-row">
+                  <label htmlFor="notify-on-done" className="settings-pref-label">
+                    Response completions
+                    <span className="settings-note">
+                      Get notified when Claude has finished a response. Useful for long-running tasks.
+                    </span>
+                  </label>
+                  <label className="switch">
+                    <input
+                      id="notify-on-done"
+                      type="checkbox"
+                      checked={notifyOnDone}
+                      onChange={async (event) => {
+                        const enabled = event.target.checked;
+                        if (enabled && typeof Notification !== "undefined" && Notification.permission === "default") {
+                          try {
+                            await Notification.requestPermission();
+                          } catch {
+                            // Permission prompts can fail; the switch keeps the preference.
+                          }
+                        }
+                        setNotifyOnDone(enabled);
+                        saveNotifyOnDone(enabled);
+                      }}
+                    />
+                    <span className="switch-track" />
+                  </label>
+                </div>
               </>
             ) : section === "usage" ? (
               <UsagePanel />

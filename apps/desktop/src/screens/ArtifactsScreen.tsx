@@ -22,6 +22,23 @@
  */
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+
+function SearchGlyph() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <circle cx="7" cy="7" r="4.25" stroke="currentColor" strokeWidth="1.2" />
+      <path d="m10.2 10.2 3 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function ViewGlyph() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M2.5 4h11M2.5 8h11M2.5 12h11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  );
+}
 import {
   chat,
   type BridgeError,
@@ -122,6 +139,31 @@ export function ArtifactsScreen() {
     <>
       <header className="screen-head">
         <h1>Artifacts</h1>
+        {/* The captured header carries search and a view toggle beside New
+            artifact (docs/screens/artifacts.md layout). The toggle's states
+            were never observed, so it stays disabled-honest. */}
+        <div className="screen-head-tools">
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Search artifacts"
+            title="Search artifacts"
+            onClick={() => {
+              document.querySelector<HTMLInputElement>(".projects-search")?.focus();
+            }}
+          >
+            <SearchGlyph />
+          </button>
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Toggle artifact view"
+            disabled
+            title="The view toggle's states were not observed in the reference capture"
+          >
+            <ViewGlyph />
+          </button>
+        </div>
         {state.kind === "ready" && state.tasks.length > 0 ? (
           <input
             type="search"
