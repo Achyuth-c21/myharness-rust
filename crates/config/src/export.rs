@@ -404,6 +404,8 @@ pub fn provider_label(profile: &ProfileDocument) -> &'static str {
         Some(ProviderKind::OpenAiResponses) => "openai-responses",
         // Phase 8's local extension (`docs/13` Phase 8).
         Some(ProviderKind::Local) => "local",
+        // The OpenRouter preset (owner direction, `docs/14` §9 item 79).
+        Some(ProviderKind::OpenRouter) => "openrouter",
         None => "unknown",
     }
 }

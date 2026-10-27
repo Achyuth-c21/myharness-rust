@@ -1413,3 +1413,21 @@ documented spelling. **Gates:** workspace 600/0 (no Rust change), `cargo metadat
 clippy clean, `tsc --noEmit` clean, `vite build` ok, shell E2E **52/52**, setup E2E
 19/19, user journeys 12/12, a11y **18/18 clean** (the new pane and controls included),
 native 20/20.
+
+### 4.26 The OpenRouter family (2026-10-28)
+
+Owner direction (`docs/14` §9 item 79): OpenRouter joins the family list as a
+prebuilt choice. It is a **preset of the OpenAI Chat Completions wall**, not a new
+wire: `AdapterKind::OpenRouter` pins `https://openrouter.ai/api/v1`, the profile form
+carries a required static key (`inferenceOpenRouterApiKey`) and no base field, the
+catalog entry is probe/discovery-capable (`DiscoveryStyle::OpenAiCompat`, `base_key:
+None`), egress derives `openrouter.ai`, and the chat factory arm instantiates the same
+wall with the preset kind (`provider_id` `openrouter`, matching the wall's `id()`).
+The static-key families' missing-credential refusal moved to the bridge
+(`CONFIG_VALIDATION`, zero requests). Tests: the openai crate's battery unchanged,
+config form/catalog coverage extended (`openrouter_requires_only_the_key_and_has_no_base_field`),
+two bridge probe tests (the preset probe via the lane's stub override, and the
+missing-key refusal), and the setup E2E grew S20 (the family selects, the form is
+key-only, no base field) with the catalog stub entry. **Gates:** workspace 603/0,
+clippy clean, setup E2E 20/20, journeys 12/12, shell 52/52, a11y 18/18, native 20/20,
+tsc/vite clean. Traces `TEST-CFG-121/151`, `TEST-AI-*`, `TEST-EXT-007`.

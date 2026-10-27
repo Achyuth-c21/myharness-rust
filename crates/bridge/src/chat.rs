@@ -324,6 +324,26 @@ impl ConfigBackend {
                 );
                 (Box::new(adapter), secret)
             }
+            myharness_config::ProviderKind::OpenRouter => {
+                // OpenRouter (owner direction, `docs/14` §9 item 79): the
+                // openai wall at the family's own preset — the base the
+                // adapter normalizes is fixed, so none is read here.
+                let secret =
+                    optional_secret(connection, self.secrets(), "inferenceOpenRouterApiKey", false)?;
+                let adapter = OpenAiCompatAdapter::new(
+                    OpenAiClientConfig {
+                        kind: AdapterKind::OpenRouter,
+                        base_url: String::new(),
+                        idle_timeout: idle_timeout(
+                            connection,
+                            myharness_provider_openai::DEFAULT_IDLE_TIMEOUT,
+                        ),
+                        custom_headers: custom_headers_for_probe(connection)?,
+                    },
+                    reqwest::Client::new(),
+                );
+                (Box::new(adapter), secret)
+            }
             myharness_config::ProviderKind::Custom => {
                 let base =
                     optional_string(connection, "inferenceCustomBaseUrl")?.ok_or_else(|| {
@@ -441,6 +461,7 @@ fn provider_id(provider: myharness_config::ProviderKind) -> &'static str {
         ProviderKind::Foundry => "foundry",
         ProviderKind::Gateway => "gateway",
         ProviderKind::OpenAi => "openai",
+        ProviderKind::OpenRouter => "openrouter",
         ProviderKind::Custom => "custom",
         ProviderKind::OpenAiResponses => "openai-responses",
         ProviderKind::Local => "local",

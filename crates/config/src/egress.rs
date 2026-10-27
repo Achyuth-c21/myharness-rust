@@ -327,6 +327,11 @@ fn provider_hosts(
                 hosts.extend(host_of(&Value::String(url)));
             }
         }
+        Some(ProviderKind::OpenRouter) => {
+            // OpenRouter's endpoint is the family's own preset — the host is
+            // fixed, the form carries no base override (`docs/14` §9 item 79).
+            hosts.push("openrouter.ai".to_string());
+        }
         Some(ProviderKind::OpenAiResponses) => {
             // Override when the user set one; otherwise the first-party host
             // the Responses wire shares with Chat Completions (`docs/13`

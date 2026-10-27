@@ -40,6 +40,7 @@ export type ProviderKind =
   | "foundry"
   | "gateway"
   | "openai"
+  | "openrouter"
   | "custom"
   | "openai-responses"
   | "local";
@@ -297,7 +298,7 @@ export async function discoverModels(request: {
  * stored by the probe.
  */
 export async function discoverOpenAiModels(request: {
-  kind: "openai" | "custom";
+  kind: "openai" | "custom" | "openrouter";
   baseUrl: string;
   apiKey?: string;
   customHeaders?: Record<string, string>;

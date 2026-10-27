@@ -104,6 +104,13 @@ pub enum ProviderKind {
     /// endpoint first-party by default and overridable.
     #[serde(rename = "openai-responses")]
     OpenAiResponses,
+    /// OpenRouter (`https://openrouter.ai/api/v1`, static key) — the same
+    /// Chat Completions wire as the `openai` family at a known endpoint,
+    /// carried by that wall as a preset kind (owner direction, whole-app
+    /// campaign phase 6 follow-up; `docs/14` §9 item 79). No base URL
+    /// field: the endpoint is the family's own preset.
+    #[serde(rename = "openrouter")]
+    OpenRouter,
     /// A locally running inference server — the Ollama / llama.cpp surface
     /// (Phase 8's local extension, `docs/13` Phase 8; `docs/14` §9): a
     /// native wall whose destination gate is loopback-only by construction,
@@ -764,6 +771,10 @@ mod tests {
             ProviderKind::OpenAiResponses => json!({
                 "inferenceCredentialKind": "static",
                 "inferenceOpenAiResponsesApiKey": "placeholder-credential",
+            }),
+            ProviderKind::OpenRouter => json!({
+                "inferenceCredentialKind": "static",
+                "inferenceOpenRouterApiKey": "placeholder-credential",
             }),
             ProviderKind::Local => json!({
                 "inferenceCredentialKind": "static",

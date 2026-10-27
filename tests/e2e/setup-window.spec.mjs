@@ -161,6 +161,21 @@ function installStub(page, state = {}) {
         case "tabSchema":
           return { type: "schema", schema: tabSchemaFor(command.tab) };
         case "connectionSchema":
+          // OpenRouter's schema mirrors the real bridge's: the key is the
+          // family's only field — the endpoint is the wall's preset, so the
+          // form carries no base URL field (docs/14 item 79).
+          if (command.provider === "openrouter") {
+            return {
+              type: "schema",
+              schema: {
+                provider: "openrouter",
+                fields: [
+                  { key: "inferenceOpenRouterApiKey", label: "OpenRouter API key", kind: "secret", group: "credentials", required: true },
+                  { key: "inferenceStreamIdleTimeoutSec", label: "Stream idle timeout", kind: "number", group: "advanced" },
+                ],
+              },
+            };
+          }
           return { type: "schema", schema: seed.connectionSchema };
         case "familyCatalog":
           return {
@@ -168,6 +183,7 @@ function installStub(page, state = {}) {
             families: [
               { id: "anthropic", label: "Claude API (first-party)", probeSupported: true, discovery: "none", baseKey: null, baseRequired: false, credentialSlot: "inferenceAnthropicApiKey" },
               { id: "gateway", label: "Anthropic-compatible gateway", probeSupported: true, discovery: "gateway", baseKey: "inferenceGatewayBaseUrl", baseRequired: true, credentialSlot: "inferenceGatewayApiKey" },
+              { id: "openrouter", label: "OpenRouter", probeSupported: true, discovery: "openai-compat", baseKey: null, baseRequired: false, credentialSlot: "inferenceOpenRouterApiKey" },
             ],
           };
         case "validate":
@@ -449,7 +465,7 @@ try {
       nodes.map((n) => n.value),
     );
     await expectTrue(
-      options.length >= 3 && options.includes("gateway") && options.includes("anthropic"),
+      options.length >= 4 && options.includes("gateway") && options.includes("anthropic") && options.includes("openrouter"),
       `the family picker offered [${options.join(",")}]`,
     );
     await freshPage.click(".setup-nav-item:has-text('Limits')");
@@ -494,6 +510,32 @@ try {
       `the profile picker offered [${picker.join(",")}]`,
     );
     await freshContext.close();
+  });
+
+  await step("S20 OpenRouter: the family selects, the form is key-only, no base field (item 79)", async () => {
+    const ctx = await browser.newContext({ viewport: { width: 900, height: 720 } });
+    const page = await ctx.newPage();
+    await installStub(page);
+    await page.goto(`${BASE}/setup-desktop-3p`);
+    await page.waitForSelector(".setup-window");
+    await page.waitForFunction(() => {
+      const picker = document.querySelector("#family-picker");
+      return picker && picker.options.length >= 4;
+    });
+    await page.selectOption("#family-picker", "openrouter");
+    // The family's own schema arrives: the key field, no base URL field.
+    await page.waitForSelector("#field-inferenceOpenRouterApiKey");
+    const baseField = await page.$("#field-inferenceOpenAiBaseUrl, #field-inferenceOpenRouterBaseUrl");
+    await expectTrue(baseField === null, "the OpenRouter form must not carry a base URL field");
+    const secret = await page.getAttribute("#field-inferenceOpenRouterApiKey", "type");
+    await expectTrue(secret === "password", `the key field was type ${secret}`);
+    const commands = await page.evaluate(() => window.__mhCommands);
+    const schemaReq = commands.filter((c) => c.type === "connectionSchema").pop();
+    await expectTrue(
+      schemaReq && schemaReq.provider === "openrouter",
+      "the schema request must name the openrouter family",
+    );
+    await ctx.close();
   });
 
   await step("S19 an unreadable library keeps its error banner (WA-09)", async () => {
