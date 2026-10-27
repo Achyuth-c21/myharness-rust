@@ -1018,3 +1018,14 @@ recorded unknowns:
     (WebKitGTK GPU-less EGL compositing under Xvfb without a window manager)
     rather than an app defect; `Unknown`, monitored — a recurrence under a
     real desktop session would reopen it as a P1.
+
+77. **The setup window shows the user their own hosts (2026-10-28, whole-app
+    campaign WA-08).** The renderer read had inherited the export bundle's
+    private-host redaction, so a self-hosted base URL (the `custom` and
+    `local` families' whole purpose) displayed as `<private-host>` and an
+    untouched Apply failed URL validation. Campaign decision: host redaction
+    is the export bundle's gate (`TEST-CFG-007/008` — a bundle leaves the
+    machine, the setup window does not); the renderer read keeps handle,
+    credential-shaped-value, and query-string redaction. `redact_document_for`
+    applies `redact_private_hosts_in` only for the Export target;
+    `renderer_read_keeps_the_users_own_hosts` pins both sides.

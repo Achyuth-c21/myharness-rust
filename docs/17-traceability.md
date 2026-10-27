@@ -1270,3 +1270,79 @@ E2E 52/52, setup E2E **18/18**, a11y **18/18** clean, native fixture **20/20**
 (the loopback mock never got exercised end-to-end through the shell — the input
 injection could not complete the click-through creation, `docs/14` §9 item 75);
 no installer/bundle; window captures inspected in-session, not committed.
+
+### 4.22 Whole-application test campaign — phase 3: adversarial pass (2026-10-28)
+
+Phase 3 attacked the running release shell with hostile state. Every scenario ran
+in the isolated sweep session (Xvfb/X11, throwaway `XDG_CONFIG_HOME`/`XDG_DATA_HOME`,
+private dbus + dedicated gnome-keyring Secret Service, a mode-driven hostile mock on
+127.0.0.1:18111 whose per-request behavior is file-controlled). Crafted state, observed
+behavior:
+
+| Scenario | Observed in the release shell | Verdict |
+|---|---|---|
+| Corrupt applied profile JSON | Main window boots; the setup window names the profile `Broken (applied)` and banners `CONFIG_PARSE: key must be a string at line 1 column 100` | Honest failure — verified |
+| Future `schemaVersion: 99` | The setup window renders the profile without complaint; writes and applies refuse `CONFIG_SCHEMA` and the previous profile stays active (`crates/config` tests pin this) | Tolerant read, fail-closed write — by design |
+| Corrupt `_meta.json` | **WA-09 (P2)**: `loadProfiles` set the library's error banner and returned `[]`, so the boot fell into the first-run state and overwrote it with "No configuration profile exists yet" — the user was invited to create a profile in a broken library while their profile files sat unreachable | **fixed** |
+| Meta entry whose file is missing | Banner `CONFIG_NOT_FOUND: no profile "<id>" in the library` | Honest failure — verified |
+| Corrupt `sessions.db` (4096 random bytes) | The database is renamed `sessions.db.corrupt-<ms>`, a fresh store opens, the shell boots normally | Quarantine-rename — verified |
+| Corrupt memory directory (binary `index.json`, non-UTF-8 entry) | `index.json` is healed to a valid empty cache, `entries/` recreated, chat unaffected; the entry file stays untouched until read | Degrade-never-delete — verified |
+| Keyring absent (no Secret Service on the bus) | The send refuses before any wire contact: banner `SESSION_ERROR the audit key store failed`, the draft is preserved, no session row, app alive | Honest failure — verified |
+| Deep-link argv fuzz (`myharness://random`, traversal suffix, bad percent-encoding, foreign scheme) | Unknown routes and schemes ignored; no navigation away from the main window; only the setup host opens its dedicated surface | Fail-closed — verified |
+
+**`WA-09` — the error banner was clobbered by the first-run banner.** `loadProfiles`
+now returns `null` on a list error and the boot stops there with the bridge's error
+intact; no first-run draft is synthesized (nothing can be created in an unreadable
+library). The release-shell retest shows `CONFIG_PARSE: EOF while parsing a string at
+line 1 column 46` surviving the boot. E2E S19 pins it. Traces `TEST-UX-009`.
+
+**`WA-08` (found during the phase-4 live flow, P2) — export-grade host redaction in
+the user's own setup window.** A self-hosted base URL rendered as `<private-host>`:
+the renderer read had inherited `redact_private_hosts_in`, so the `custom` and `local`
+families — private hosts by nature — displayed an unreadable endpoint, and an
+untouched Apply failed validation. Host redaction is the export bundle's gate
+(`TEST-CFG-007/008`): `redact_document_for` now applies it only for the Export target;
+the renderer read keeps handle, credential-shaped-value, and query-string redaction.
+`private_hosts_are_redacted` now targets the export function its wording always meant;
+`renderer_read_keeps_the_users_own_hosts` pins both sides. The decision is recorded in
+`docs/14` §9 item 77. Traces `TEST-CFG-007/008`.
+
+Also observed during the pass: a third silent shell exit (the WA-07 class, `docs/14`
+§9 item 76) around a setup-window open — the count is now three, all in the GPU-less
+Xvfb environment, none on retry, still no diagnostics.
+
+### 4.23 Whole-application test campaign — phase 4: live provider flow (2026-10-28)
+
+Phase 4 closed the standing gap (`docs/14` §9 item 40, retired): the **first live
+turn through the real release shell**. With an applied `custom` profile against the
+loopback mock (crafted directly into the isolated library, camelCase schema), a click
+on the New screen's "Send me a daily briefing" chip prefilled the composer and the
+send produced: a session row (audit key minted through the dedicated keyring), a real
+`POST /v1/chat/completions` with the app-internal turn as the OpenAI wire shape —
+model id verbatim, `stream: true` — the streamed reply rendered in the transcript,
+the sidebar updated, and the composer label switched to `custom/mock-model`.
+
+The hostile-response matrix then drove five more turns through the same shell
+(deleting the session between rounds restores the idea chips — a click-only send loop;
+delete + its confirm dialog exercised on every round):
+
+| Mock behavior | Surfaced in the transcript |
+|---|---|
+| A frame of invalid JSON mid-stream | `the stream carried a frame that is not valid JSON: key must be a string at line 1 column 2` |
+| A different model in the echo | `the provider began model "a-completely-different-model" while the request named "mock-model"; the stream was stopped` |
+| HTTP 500 with a JSON error body | the provider's own message verbatim (`the sweep mock is unhappy`) |
+| Connection dropped mid-stream | `the stream ended before the [DONE] sentinel` |
+| 6-second stall before the first frame | completed normally — the idle window tolerates a slow start |
+
+No silent retry, no invented wording, no substitution, no fake content — the
+provider-facing prohibitions (`RULES.md` §2) hold through the real shell. With this,
+the phase-2 leftover is closed: the creation flow's click-through plus the live send
+are verified in the release binary (the creation itself remains browser-E2E-verified;
+text injection into the release webview stays lossy — `docs/14` §9 item 75).
+
+**Gates after the phase-3/4 fixes:** workspace **600/0** Rust tests, clippy
+`-D warnings` clean, `tsc --noEmit` clean, `vite build` ok, shell E2E 52/52, setup
+E2E **19/19** (S19 new), a11y 18/18, native 20/20. Standing limits unchanged: no
+installer/bundle, no screen-reader pass in Xvfb, captures inspected in-session and
+not committed. WA-07 remains open-as-unknown (three silent Xvfb exits, `docs/14`
+§9 item 76).
