@@ -11,6 +11,10 @@
  * renderer dev server: `npm run dev` in apps/desktop (port 5173).
  * Run: node tests/e2e/a11y.spec.mjs
  *
+ * Baseline: `IMP-39` option (c) splits the observed tertiary sample — text uses
+ * AA derivatives (`#6f6e68` light / `#94928c` dark) and icons keep `#898781`.
+ * The scan is green as of that decision (18/18) and fails on new findings.
+ *
  * Exit code: 0 when no serious/critical WCAG violation is found; 1 otherwise.
  * Moderate/minor findings are reported but do not fail the baseline.
  */
