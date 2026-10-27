@@ -85,8 +85,14 @@ pub enum SetupCommand {
     /// the registration records the setup surface offers, unlocks, and
     /// addresses families through, instead of hard-coding ids in the UI.
     FamilyCatalog,
-    /// `validate` — the issues of a draft, without persisting it.
-    Validate { document: Value },
+    /// `validate` — the issues of a draft, without persisting it. `secrets`
+    /// carries the renderer's typed credentials so a required slot that only
+    /// exists in the pending map is validated as present; nothing is stored.
+    Validate {
+        document: Value,
+        #[serde(default)]
+        secrets: BTreeMap<String, String>,
+    },
     /// `testConnection` — the Connection tab's *Test connection* (`docs/13`
     /// Phase 3): a real one-token inference against the gateway through the
     /// native adapter. The typed credential rides `secrets` exactly like the
@@ -1529,8 +1535,13 @@ fn run<B: SetupBackend>(backend: &B, command: SetupCommand) -> Result<SetupRespo
         SetupCommand::FamilyCatalog => Ok(SetupResponse::FamilyCatalog {
             families: myharness_config::forms::family_catalog(),
         }),
-        SetupCommand::Validate { document } => {
-            let document = decode_document(document)?;
+        SetupCommand::Validate { document, secrets } => {
+            let mut document = decode_document(document)?;
+            // A typed credential is deliberately absent from the document
+            // (`docs/18` §10). For validation only, mark its slot present so a
+            // required-field check does not reject the draft; the marker never
+            // reaches the library and no secret is stored.
+            mark_pending_secrets(&mut document, &secrets);
             Ok(SetupResponse::Issues {
                 issues: myharness_config::forms::validate_document(&document),
             })
@@ -1718,6 +1729,33 @@ fn apply_secrets<B: SetupBackend>(
         }
     }
     Ok(())
+}
+
+/// Mark every credential slot the renderer supplied a typed value for as
+/// present, without storing anything. Used by `validate` only: the profile
+/// document is a decode of the renderer's draft, never the stored profile, and
+/// the marker is discarded with it.
+fn mark_pending_secrets(
+    document: &mut ProfileDocument,
+    secrets: &BTreeMap<String, String>,
+) {
+    for section in SECTIONS {
+        let Some(map) = section_mut(document, section) else {
+            continue;
+        };
+        for key in myharness_config::export::SECRET_KEYS {
+            let path = format!("{section}/{key}");
+            if secrets
+                .get(&path)
+                .is_some_and(|value| !value.trim().is_empty())
+            {
+                map.insert(
+                    key.to_string(),
+                    serde_json::json!({ "secretRef": "pending" }),
+                );
+            }
+        }
+    }
 }
 
 /// The keychain account a credential is stored under. The account is derived from
@@ -1936,12 +1974,52 @@ mod tests {
             &backend,
             SetupCommand::Validate {
                 document: serde_json::to_value(&document).unwrap(),
+                secrets: BTreeMap::new(),
             },
         );
         let SetupResponse::Issues { issues } = response else {
             panic!("expected an issues response");
         };
         assert!(issues.iter().any(|i| i.field == "inferenceGatewayApiKey"));
+    }
+
+    /// A credential typed into an empty slot validates as present without being
+    /// persisted or stored — the setup Apply path (`WA-05`).
+    #[test]
+    fn validate_accepts_a_pending_secret_without_storing_it() {
+        let (backend, id) = backend();
+        let mut document = backend.library().read(&id).unwrap();
+        document.connection = myharness_config::Section(json!({
+            "inferenceCredentialKind": "static",
+            "inferenceGatewayBaseUrl": "https://gateway.example",
+        }));
+        let secrets = BTreeMap::from([(
+            "connection/inferenceGatewayApiKey".to_string(),
+            "typed-credential".to_string(),
+        )]);
+        let response = dispatch(
+            &backend,
+            SetupCommand::Validate {
+                document: serde_json::to_value(&document).unwrap(),
+                secrets,
+            },
+        );
+        let SetupResponse::Issues { issues } = response else {
+            panic!("expected an issues response");
+        };
+        assert!(
+            !issues.iter().any(|i| i.field == "inferenceGatewayApiKey"),
+            "{issues:?}"
+        );
+        // Validation is read-only: the marker did not reach the stored profile
+        // and the typed value was not written to the secret store.
+        let stored = backend.library().read(&id).unwrap();
+        assert!(stored.connection.0.get("inferenceGatewayApiKey").is_none());
+        assert!(backend
+            .secrets()
+            .load("profile/connection/inferenceGatewayApiKey")
+            .unwrap()
+            .is_none());
     }
 
     // -----------------------------------------------------------------------

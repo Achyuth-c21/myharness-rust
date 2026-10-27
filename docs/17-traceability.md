@@ -506,7 +506,7 @@ modal (`docs/09` §2.1; `docs/screens/setup-desktop-3p.md`). It is the surface t
 | `TEST-CFG-166` | The deep link `setup-desktop-3p` opens the dedicated window and never navigates the main renderer (ARCH-NAV-03) | Available (unit + native) | `apps/desktop/src-tauri/src/lib.rs`; the native fixture asserts the window was created (log proof) and that the main renderer was not navigated |
 | `TEST-CFG-167` | The setup window renders the captured layout: title, profile selector, Export, nine nav entries, a scrolling content pane and a fixed Apply footer | Available (E2E) | `tests/e2e/setup-window.spec.mjs` S01–S03 |
 | `TEST-CFG-168` | A clean draft leaves Apply disabled; an edit makes it dirty; Discard restores the applied values | Available (E2E) | `tests/e2e/setup-window.spec.mjs` S05–S07 |
-| `TEST-CFG-169` | Apply writes the draft and then applies the profile, and the written document carries a credential **handle**, never a value; the masked field shows the typed text without exposing a stored handle | Available (E2E) | `tests/e2e/setup-window.spec.mjs` S08–S09 (S09 asserts the mask reflects typing and stays `type=password`) |
+| `TEST-CFG-169` | Apply writes the draft and then applies the profile, and the written document carries a credential **handle**, never a value; the masked field shows the typed text without exposing a stored handle, and validation receives the typed credential | Available (E2E) | `tests/e2e/setup-window.spec.mjs` S08–S09 (S09 asserts the mask reflects typing, stays `type=password`, and travels on `validate`); `crates/bridge/src/setup.rs` `validate_accepts_a_pending_secret_without_storing_it` |
 | `TEST-CFG-170` | The Egress tab is read-only, shows the derived list, and says which group had no captured hostnames | Available (E2E) | `tests/e2e/setup-window.spec.mjs` S10 |
 | `TEST-CFG-177` | The main window never renders the setup surface — the route redirects away from it | Available (E2E) | `tests/e2e/setup-window.spec.mjs` S12 |
 | `TEST-CFG-178` | The setup window shows none of the main app's chrome — the captured window is standalone | Available (E2E) | `tests/e2e/setup-window.spec.mjs` S13 |
@@ -1175,12 +1175,13 @@ phase — feature-surface sweeps — starts from this record rather than re-liti
 
 ### 4.21 Whole-application test campaign — phase 2: feature-surface sweep (in progress)
 
-Phase 2 starts with hands-on testing of the running release shell. The first finding is in the
-setup window's credential field.
+Phase 2 starts with hands-on testing of the running release shell. The first two findings are in
+the setup window's credential flow.
 
 | ID | Severity | State | Summary |
 |---|---|---|---|
 | `WA-04` | P1 | **fixed in this phase** | The API-key field stayed visually empty while typing: the controlled input was bound to the profile document, but the typed secret lived only in `pendingSecrets` |
+| `WA-05` | P1 | **fixed in this phase** | Apply rejected a typed credential: `validate` ran against the draft without the pending secrets, so an empty credential slot read as missing |
 
 **`WA-04` — the credential field discarded visible typing.** In the setup window, typing into a
 `secret` field (e.g. the OpenRouter/OpenAI-compatible API key) left the box empty. The field is a
@@ -1192,6 +1193,18 @@ was recorded. Fix: `Field` takes `secretValue` (the in-memory typed text) and re
 input's value with `type="password"`, so the mask updates per key; the stored handle still only
 drives the "Stored — type to replace" placeholder, and Discard/profile reload clear the pending
 map as before. Regression: S09 now asserts the masked field shows `typed-credential` and remains
-`type=password`. The rebuilt release shell was relaunched with the setup window; automated gates
-are setup E2E **16/16**, shell E2E **52/52**, `tsc --noEmit` clean, `vite build` 74 modules.
-Traces `TEST-CFG-169`, `TEST-UX-009`.
+`type=password`. Native verification: a disposable test string typed into the release shell's
+OpenAI credential field rendered as a mask; the draft was discarded and nothing was stored.
+
+**`WA-05` — Apply did not validate the typed credential.** With `WA-04` fixed, the mask updated,
+but Apply still reported "The profile has invalid fields" and "OpenAI API key is required …"
+because the `validate` request carried only the draft; the typed key lives in `pendingSecrets`
+until the write. The slot is deliberately absent from the document (`docs/18` §10), so the
+required-field check could not see it. Fix: `validate` accepts `secrets`; the bridge marks each
+non-empty pending slot present on a decoded draft for validation only (the marker is never stored,
+and the draft is not persisted). `SetupWindow.apply` sends `pendingSecrets`; S09 asserts the
+validate request carries the typed credential, and the bridge test
+`validate_accepts_a_pending_secret_without_storing_it` proves the required-field issue clears
+while neither the profile nor the secret store changes. Gates after the fix: **597/0** Rust tests,
+workspace clippy `-D warnings` clean, setup E2E **16/16**, shell E2E **52/52**, a11y **18/18**,
+`tsc --noEmit` clean, `vite build` 74 modules. Traces `TEST-CFG-169`, `TEST-UX-009`.
