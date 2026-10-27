@@ -103,6 +103,10 @@ function installStub(page, state = {}) {
         case "applyProfile":
           // A fresh install carries no profiles (whole-app campaign WA-06):
           // the boot state the real shell serves before the first profile.
+          // An unreadable library errors (WA-09): the banner must survive.
+          if (seed.listError) {
+            return { type: "error", error: { code: "CONFIG_PARSE", message: "CONFIG_PARSE: the library index is corrupt", retryable: false } };
+          }
           return seed.noProfiles && !seed.createdId
             ? { type: "profiles", profiles: [] }
             : {
@@ -488,6 +492,27 @@ try {
     await expectTrue(
       picker.some((text) => text.includes("New profile")),
       `the profile picker offered [${picker.join(",")}]`,
+    );
+    await freshContext.close();
+  });
+
+  await step("S19 an unreadable library keeps its error banner (WA-09)", async () => {
+    // The boot used to fall through to the first-run state, overwriting the
+    // library's error banner with "No configuration profile exists yet" and
+    // inviting a profile creation inside a broken library.
+    const freshContext = await browser.newContext({ viewport: { width: 900, height: 720 } });
+    const freshPage = await freshContext.newPage();
+    await installStub(freshPage, { listError: true });
+    await freshPage.goto(`${BASE}/setup-desktop-3p`);
+    await freshPage.waitForSelector(".setup-window");
+    const banner = await freshPage.textContent(".setup-banner");
+    await expectTrue(
+      banner.includes("the library index is corrupt"),
+      `banner was ${banner}`,
+    );
+    await expectTrue(
+      !banner.includes("No configuration profile exists yet"),
+      `the first-run banner replaced the error: ${banner}`,
     );
     await freshContext.close();
   });
