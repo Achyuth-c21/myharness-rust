@@ -60,9 +60,13 @@ second_exit_time_lt() { # second_exit_time_lt <args...> <max-seconds>
   echo "second took $((SECONDS - start))s"; return 1
 }
 
-# R1 — cold boot stays up with a live webview (window + app:// pass-through branch).
+# R1 — cold boot stays up with a live webview AND a mounted SPA (window + app://
+# pass-through branch). The renderer handshake is the rendered-content proof:
+# a load-error page never executes the bundle that invokes `renderer_ready`.
 launch
 is_up; check "R1 cold boot: process + webview child alive" || true
+wait_log "renderer ready" 10
+check "R1 cold boot: renderer mounted (not a load-error page)" || true
 
 # R2 — second launch (no args) exits fast; primary persists (docs/02 §2 step 2).
 ( second_exit_time_lt 12 >/dev/null 2>&1 ) & SUB=$!

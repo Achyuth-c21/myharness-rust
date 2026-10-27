@@ -181,6 +181,14 @@ fn ping() -> myharness_bridge::Response {
     myharness_bridge::dispatch(myharness_bridge::Command::Ping)
 }
 
+/// Renderer-mounted handshake for `tests/native/shell-runtime.sh` (TEST-ARCH-001):
+/// the webview executed the SPA, so a live process is not mistaken for a rendered
+/// document (`WA-03`). Debug builds trace it; release builds print nothing.
+#[tauri::command]
+fn renderer_ready() {
+    dlog("renderer ready");
+}
+
 /// The profile-library root (`docs/09` §3.1: `~/.config/Claude-3p/configLibrary`).
 ///
 /// `XDG_CONFIG_HOME` wins when it is an absolute path (the Linux convention);
@@ -675,6 +683,7 @@ pub fn run() {
         .register_uri_scheme_protocol("app", |_context, request| adapt(request))
         .invoke_handler(tauri::generate_handler![
             ping,
+            renderer_ready,
             chat_command,
             pick_workspace_folder,
             reveal_workspace_folder,

@@ -11,6 +11,7 @@
  * the exact original redirect rule is unknown (docs/06); /new was the observed entry.
  */
 import { useCallback, useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { TitleBar } from "./components/TitleBar";
 import { Sidebar } from "./components/Sidebar";
@@ -60,6 +61,14 @@ function useWindowKind(): "main" | "setup" | null {
 
 export default function App() {
   const kind = useWindowKind();
+
+  // WA-03/TEST-ARCH-001: report that the SPA mounted. The native fixture uses this
+  // to distinguish a rendered document from a webview load-error page; a browser
+  // preview has no Tauri host, so the rejected invoke is ignored.
+  useEffect(() => {
+    void invoke("renderer_ready").catch(() => {});
+  }, []);
+
   if (kind === null) return <LoadingShell label="Starting…" />;
   // The setup window is a standalone surface: no title bar, no sidebar.
   if (kind === "setup") return <SetupWindow />;
