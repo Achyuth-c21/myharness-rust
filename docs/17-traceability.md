@@ -506,7 +506,7 @@ modal (`docs/09` §2.1; `docs/screens/setup-desktop-3p.md`). It is the surface t
 | `TEST-CFG-166` | The deep link `setup-desktop-3p` opens the dedicated window and never navigates the main renderer (ARCH-NAV-03) | Available (unit + native) | `apps/desktop/src-tauri/src/lib.rs`; the native fixture asserts the window was created (log proof) and that the main renderer was not navigated |
 | `TEST-CFG-167` | The setup window renders the captured layout: title, profile selector, Export, nine nav entries, a scrolling content pane and a fixed Apply footer | Available (E2E) | `tests/e2e/setup-window.spec.mjs` S01–S03 |
 | `TEST-CFG-168` | A clean draft leaves Apply disabled; an edit makes it dirty; Discard restores the applied values | Available (E2E) | `tests/e2e/setup-window.spec.mjs` S05–S07 |
-| `TEST-CFG-169` | Apply writes the draft and then applies the profile, and the written document carries a credential **handle**, never a value | Available (E2E) | `tests/e2e/setup-window.spec.mjs` S08–S09 |
+| `TEST-CFG-169` | Apply writes the draft and then applies the profile, and the written document carries a credential **handle**, never a value; the masked field shows the typed text without exposing a stored handle | Available (E2E) | `tests/e2e/setup-window.spec.mjs` S08–S09 (S09 asserts the mask reflects typing and stays `type=password`) |
 | `TEST-CFG-170` | The Egress tab is read-only, shows the derived list, and says which group had no captured hostnames | Available (E2E) | `tests/e2e/setup-window.spec.mjs` S10 |
 | `TEST-CFG-177` | The main window never renders the setup surface — the route redirects away from it | Available (E2E) | `tests/e2e/setup-window.spec.mjs` S12 |
 | `TEST-CFG-178` | The setup window shows none of the main app's chrome — the captured window is standalone | Available (E2E) | `tests/e2e/setup-window.spec.mjs` S13 |
@@ -1172,3 +1172,26 @@ browser preview has no Tauri host, so the invoke rejection is ignored there. Tra
 **Phase 1 status: complete.** All three findings are closed (`WA-01`, `WA-02`, `WA-03`), the
 baseline is reproducible from the commands above, and the real shell renders. The next campaign
 phase — feature-surface sweeps — starts from this record rather than re-litigating boot.
+
+### 4.21 Whole-application test campaign — phase 2: feature-surface sweep (in progress)
+
+Phase 2 starts with hands-on testing of the running release shell. The first finding is in the
+setup window's credential field.
+
+| ID | Severity | State | Summary |
+|---|---|---|---|
+| `WA-04` | P1 | **fixed in this phase** | The API-key field stayed visually empty while typing: the controlled input was bound to the profile document, but the typed secret lived only in `pendingSecrets` |
+
+**`WA-04` — the credential field discarded visible typing.** In the setup window, typing into a
+`secret` field (e.g. the OpenRouter/OpenAI-compatible API key) left the box empty. The field is a
+controlled input: its `value` came from the profile document, while a typed credential is
+deliberately kept only in the renderer's `pendingSecrets` map (the document must carry a handle,
+never a value — `docs/18` §10, `TEST-CFG-162/163`). The pending text was sent on the request but
+never fed back to the input, so each keystroke re-rendered the input empty even though the secret
+was recorded. Fix: `Field` takes `secretValue` (the in-memory typed text) and renders it as the
+input's value with `type="password"`, so the mask updates per key; the stored handle still only
+drives the "Stored — type to replace" placeholder, and Discard/profile reload clear the pending
+map as before. Regression: S09 now asserts the masked field shows `typed-credential` and remains
+`type=password`. The rebuilt release shell was relaunched with the setup window; automated gates
+are setup E2E **16/16**, shell E2E **52/52**, `tsc --noEmit` clean, `vite build` 74 modules.
+Traces `TEST-CFG-169`, `TEST-UX-009`.

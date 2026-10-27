@@ -265,6 +265,12 @@ try {
 
   await step("S09 a typed credential travels on the request, not in the document", async () => {
     await page.fill("#field-inferenceGatewayApiKey", "typed-credential");
+    // Regression (manual campaign finding): a secret is stored outside the
+    // profile document, but the masked input must still show what was typed.
+    const shown = await page.inputValue("#field-inferenceGatewayApiKey");
+    await expectTrue(shown === "typed-credential", `the masked field showed "${shown}"`);
+    const inputType = await page.getAttribute("#field-inferenceGatewayApiKey", "type");
+    await expectTrue(inputType === "password", `the credential field type was ${inputType}`);
     await page.click(".setup-primary-button");
     await page.waitForFunction(() => {
       const commands = window.__mhCommands ?? [];
