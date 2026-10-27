@@ -277,6 +277,11 @@ try {
       return commands.filter((c) => c.type === "writeProfile").length >= 2;
     });
     const commands = await page.evaluate(() => window.__mhCommands);
+    const validation = commands.filter((c) => c.type === "validate").at(-1);
+    await expectTrue(
+      validation?.secrets?.["connection/inferenceGatewayApiKey"] === "typed-credential",
+      "the typed credential did not travel on validation",
+    );
     const writes = commands.filter((c) => c.type === "writeProfile");
     const last = writes[writes.length - 1];
     await expectTrue(

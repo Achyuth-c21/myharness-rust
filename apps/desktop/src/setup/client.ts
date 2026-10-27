@@ -189,7 +189,7 @@ export type SetupCommand =
   | { type: "tabSchema"; tab: SetupTab }
   | { type: "connectionSchema"; provider: ProviderKind }
   | { type: "familyCatalog" }
-  | { type: "validate"; document: ProfileDocument }
+  | { type: "validate"; document: ProfileDocument; secrets: Record<string, string> }
   | {
       type: "testConnection";
       document: ProfileDocument;

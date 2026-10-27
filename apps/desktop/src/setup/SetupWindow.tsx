@@ -471,7 +471,11 @@ export default function SetupWindow() {
     setBanner(null);
     // Validate before writing: the shipped form blocks Apply while invalid
     // (docs/09 §2.2, "Required fields marked `*`; Apply blocks/shows errors").
-    const validation = await setup({ type: "validate", document: draft });
+    const validation = await setup({
+      type: "validate",
+      document: draft,
+      secrets: pendingSecrets,
+    });
     if (validation.type === "issues" && validation.issues.some((i) => i.severity === "error")) {
       setIssues(validation.issues);
       setPhase("ready");
