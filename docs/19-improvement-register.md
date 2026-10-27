@@ -25,6 +25,13 @@ or are unavailable; no silent translation. **Tests:** `TEST-AI-022/023/024`, `TE
 
 ### IMP-02 — Make model policy explicit and per-provider (P0)
 
+**Status (2026-10-23): superseded in part by the open model layer** — the owner removed
+family-level model-ID policy outright (`docs/14` §9 item 29; `docs/17` §4.14); ids travel
+verbatim and the provider's own wire error is the refusal. What stands: the *never a
+`return true` escape hatch* clause — no rebuild validator has ever had one, and the
+remaining shape checks are honest shape checks. The capability/policy registry for
+*capabilities* (vision, tools, context limits — IMP-03) remains a proposal.
+
 **Baseline:** shipped policy accepts only Anthropic-family IDs; the live patch bypasses it with
 `function So(e){return!0}`. A policy bypass is not an extension mechanism.
 
@@ -69,6 +76,12 @@ validation.
 **Compatibility:** new providers require explicit selection; no model-name heuristics. **Tests:**
 `TEST-EXT-003/005/006`, all applicable `TEST-AI-*`.
 
+**Status (2026-10-23): partially realized by the open model layer** — the OpenAI Chat
+Completions wire landed as one native wall serving the `openai` and `custom` families
+(`crates/providers/openai`; `docs/17` §4.14). The "its own model-ID validation" clause is
+superseded: family gates were removed by owner decision (`docs/14` §9 item 29). OpenAI
+*Responses*, Gemini, MiniMax-native, and Ollama remain proposals.
+
 ### IMP-06 — MiniMax M3.1 Flash as the transparent reconstruction default (P1)
 
 **Baseline:** current live UI selects MiniMax M3.1 Flash through an OpenRouter-style gateway and the
@@ -80,6 +93,30 @@ Claude model. No policy bypass.
 
 **Compatibility:** visible default remains, but provider identity and request shape are correct.
 **Tests:** `TEST-AI-024`, `TEST-UX-002`.
+
+### IMP-18 — The open model layer: any model, any provider, custom OpenAI-compatible endpoints (P0, owner-approved 2026-10-23)
+
+**Status (2026-10-23): approved and implemented** on the `phase-3` lane (commits
+`6e7a738`, `8a3d1b8`; state record `MEMORY.md` §7d); `docs/17` §4.14, `docs/14` §9
+items 29–32, `docs/13` Appendix C. What this entry records as decided then shipped:
+
+- The harness takes **any model id any provider serves**: family-level model-ID gates
+  were removed everywhere; `validate_open_model_id` checks shape only; a nonconforming
+  id is the provider's own wire error to reject (verbatim message; no invented refusal).
+- One native wall for the OpenAI Chat Completions wire
+  (`crates/providers/openai`) serving two families: first-party `openai` and the
+  user-defined `custom` endpoint (base required, credential OPTIONAL — a keyless send
+  with no `authorization` header; helper-script kind allowed).
+- Bridge: one shared probe lane for both families with the optional-credential
+  resolver; discovery command additive (`setup_discover_openai_models`); renderer
+  family picker on the Connection tab; probe/discover unlocked for the two families.
+- `mantle`/`foundry` adapters remain Phase-3 road-map work; probe stays locked (never
+  faked) until they land.
+
+**Compatibility:** none broken — the three original families keep their lanes; the
+superseded policy paragraphs are annotated in IMP-02/IMP-05. **Tests:** the
+`crates/providers/openai` 21-fixture wire battery, the bridge lane tests, the
+`TEST-AI-007` flips (§4.10–§4.12), `TEST-CFG-004/123/124` amendments.
 
 ## 2. Security and privacy
 
@@ -349,3 +386,121 @@ F1, find/zoom roles, Ctrl+W/Q window roles) arrive with the features or menu sur
 native menu carrying the remaining documented accelerators without touching frameless geometry;
 turn the deferral off. Native window roles (Close/Quit) land with it as bridge commands with
 `docs/18` rows. **Tests:** extend the native runtime fixture with per-accelerator assertions.
+
+## 6. Phase 5 follow-ups
+
+These are proposals, not claims about shipped behavior. Phase 5's local/stdio path is implemented
+(`docs/17` §4.16); the items below close its conformance and UX gaps.
+
+### IMP-31 — Live HTTP MCP and OAuth conformance fixtures (P1)
+
+**Baseline:** the manager is tested with a scripted connector, a real stdio fixture, and an
+injected OAuth HTTP transport. No live Streamable HTTP server, redirect, or keychain-backed OAuth
+flow is exercised end-to-end.
+
+**Proposal:** add a local HTTP MCP fixture (including a redirect case) and a synthetic OAuth token
+server, then run the real transport and keychain store in an integration lane. Keep credentials
+synthetic and per-test. **Compatibility:** none. **Tests:** `TEST-MCP-001/006/007`.
+
+### IMP-32 — Model-driven tool discovery (P1)
+
+**Baseline:** tool search is a deterministic UI/developer surface. A model receives only the
+session's frozen tool list; it cannot request a schema or a tool that was not pre-selected.
+
+**Proposal:** add an explicit, policy-gated discovery step (or a bounded meta-tool) that returns
+schemas for live tools on demand, with the same namespacing, approval, and audit rules as normal
+calls. Never auto-execute a discovered tool and never mutate a frozen snapshot mid-turn.
+**Compatibility:** more tool declarations may appear on demand. **Tests:** `TEST-MCP-002/004/008`.
+
+### IMP-33 — Persistent, actionable MCP failure surface (P1)
+
+**Baseline:** per-server failures are recorded, status events and a Developer retry exist, but no
+persistent toast/action survives a screen change. `startupFailureToast` is config only.
+
+**Proposal:** one durable failure record per server with a retry action and a dismiss that does not
+hide the underlying state; never block boot. **Compatibility:** adds a visible notice.
+**Tests:** `TEST-MCP-009`, `TEST-UX-013`.
+
+### IMP-34 — Plugin signature verification and marketplace (P0/P1)
+
+**Baseline:** plugins are local-only; `Required` refuses every install because verification is not
+implemented, and `Optional` reports `Unverified`. There is no marketplace or `.dxt`/`.mcpb`
+installer.
+
+**Proposal:** define a signed manifest/integrity format, verify before install, pin publisher
+identity, and only then offer a marketplace. Until then, keep the current honest refusal and
+labels. **Compatibility:** required-signature installs become possible only after verification
+lands. **Tests:** `TEST-EXT-001/002/006/008`.
+
+### IMP-35 — Approval prompt durability and per-session tool turns (P1)
+
+**Baseline:** a pending approval is an in-memory oneshot tied to the current renderer. Navigating
+away can lose it; one global approval mutex serializes tool turns across sessions.
+
+**Proposal:** persist pending prompts with an expiry, re-emit them when the session reopens, and
+scope the approval lock per session (or per approval key) so unrelated sessions can run in
+parallel. **Compatibility:** approvals may survive navigation; tool turns are less serialized.
+**Tests:** `TEST-MCP-003`, `TEST-AI-019`.
+
+### IMP-36 — DNS/IP egress checks and custom-transport redirects (P0)
+
+**Baseline:** the egress allowlist checks the configured host before connect. The pinned `rmcp`
+Streamable HTTP client follows only same-origin 307/308 redirects and refuses cross-origin hops;
+the production OAuth refresh client applies the allowlist and disables redirects. DNS/IP
+resolution and link-local/metadata targets are not checked, and a custom transport client would
+bypass the redirect guarantee.
+
+**Proposal:** add DNS/IP checks for link-local/metadata/loopback unless explicitly allowed; if a
+custom transport client is ever supplied, re-run the allowlist on every hop. Keep stdio's
+non-inspection explicit. **Compatibility:** some local/metadata hosts stop working unless allowed.
+**Tests:** `TEST-MCP-007`, `TEST-AI-020`.
+
+### IMP-37 — Complete tool schema validation and audio results (P2)
+
+**Baseline:** the validator covers a bounded JSON Schema subset; `pattern`, `format`, and external
+`$ref` are not enforced. MCP audio results are explicit errors because the provider SDK has no
+audio part.
+
+**Proposal:** add the missing keywords behind the same bounded, fail-closed validator, and carry
+audio through the provider SDK only when a provider wire can actually accept it. Until then, keep
+the explicit errors. **Compatibility:** stricter argument rejection; audio remains unsupported on
+wires without a slot. **Tests:** `TEST-MCP-008/010`, `TEST-AI-019`.
+
+### IMP-38 — Code terminal, worktrees, remote placement, and Fast mode (P1/P2)
+
+**Baseline:** Phase 6 Slice 1 implements the Code dashboard and local folder-backed sessions,
+reusing the Cowork transcript/tool/approval surface. There is no PTY/terminal, worktree/GitHub
+metadata, SSH/WSL/remote placement, or capability-gated Fast mode; the composer shows Fast as
+visibly disabled and local is the only placement.
+
+**Proposal:** add each surface only behind its own policy/capability gate and native adapter:
+a bounded PTY lifecycle that drains on stop/quit, worktree metadata that never deletes
+uncommitted work, an explicit remote placement chooser with no local fallback, and Fast mode
+that is enabled only when the selected model declares support and never changes model identity.
+Until then, keep the controls disabled/explicit and keep the deferred test IDs unimplemented.
+**Compatibility:** adds native/terminal permissions and remote transport. **Tests:**
+`TEST-CODE-003/005/006/007/008`, `TEST-SESSION-010`.
+
+### IMP-39 — Accessible tertiary text without erasing the observed token (P1)
+
+**Baseline:** the whole-application campaign's phase 1 (`docs/17` §4.20, finding `WA-02`) ran
+axe-core (WCAG 2.0/2.1/2.2 A+AA) over nine routes in light and dark: 10 serious `color-contrast`
+violations across 33 nodes. Every light-mode finding is the preserved token
+`--mh-text-3: #898781` — documented in `docs/07` as the observed tertiary text/icon value — on
+`#fcfcfb`/`#f3f3f3` surfaces at 3.23–3.59:1 for 12 px text (`.tasks-title`, `.profile-provider`,
+`.settings-group-label`, `.error-code`); `.code-placement` is 4.1:1 on the dark `#282827` surface.
+AA requires 4.5:1 for text below the large-text threshold; the 3:1 non-text threshold does not
+apply to these labels.
+
+**Proposal:** treat this as a preservation-vs-accessibility conflict, not a rebuild defect, and
+let the owner choose explicitly:
+
+- **(a) preserve** the observed token and record an AA exception for tertiary chrome text;
+- **(b) darken** the light-mode value (and lift the dark surface value) until every text use is
+  ≥4.5:1, registered as a deliberate deviation from `docs/07`; or
+- **(c) split the token**: keep `#898781` only for icons/non-text (3:1 requirement) and introduce a
+  text-safe tertiary token for labels.
+
+Option (c) preserves the most observed evidence. Whichever is chosen, the token decision is
+recorded in `docs/07` and `tests/e2e/a11y.spec.mjs` is the gate. **Compatibility:** visual only;
+no behavior or data change. **Tests:** `TEST-UX-012/014`, `tests/e2e/a11y.spec.mjs`.

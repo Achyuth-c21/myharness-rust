@@ -12,8 +12,9 @@ chooses an explicit, testable strategy and labels it as a decision.
 - The observed routes and screens: Cowork, Code, Projects, Artifacts, Scheduled, Customize, Settings,
   Search/Filter, third-party setup.
 - Local session persistence, transcripts, tool approvals, artifacts, memory, usage, retention.
-- Native provider adapters for Claude API, Bedrock, Bedrock Mantle, Vertex AI, Foundry, and an
-  Anthropic-compatible Gateway.
+- Native provider adapters for Claude API, Bedrock, Bedrock Mantle, Foundry, and an
+  Anthropic-compatible Gateway. (The shipped Vertex family is **out of rebuild scope** — owner
+  decision 2026-10-23; no adapter, no form family, no config keys for it. `docs/04` §3.1.)
 - MCP servers, skills, plugins, desktop extensions, and document skills.
 - Third-party capability/policy/telemetry/egress configuration with a separate setup window.
 - An extension layer for additional native providers/SDKs/protocols.
@@ -31,22 +32,26 @@ chooses an explicit, testable strategy and labels it as a decision.
 
 ## 2. Recommended stack
 
+The rebuild's stack is **Tauri 2 + Rust** — the authority is [`STACK.md`](../STACK.md) and
+[docs/21](21-repo-layout.md); the workspace and every implemented crate follow it. This table
+records the verified rebuild choices:
+
 | Layer | Choice | Rationale |
 |---|---|---|
-| Shell | Electron 44.x (match observed major) | Preserves window/protocol/security model and observed behavior |
-| Language | TypeScript everywhere | Safer IPC/contracts; original was TS before minification |
-| Main | Node 24.x | Matches runtime; native SDK support |
-| UI | React + Tailwind CSS v4 | Matches observed stack and tokens |
-| Routing | Client-side router with typed route table | Preserves `/new`, `/epitaxy`, etc. |
-| State | Query cache + small local stores | Original uses React Query/local stores; avoid global mutable singleton |
-| Persistence | SQLite (WAL) + content-addressed files | Better atomicity/retention than many JSON files |
-| Validation | Zod at every boundary; AJV for JSON Schema where needed | Provider/tool/config validation |
-| Logging | Structured JSON logs with redaction | Auditable, supportable |
-| Errors | Sentry-compatible crash/error queue | Matches product behavior |
-| Terminal | `node-pty` + xterm | Code/terminal sessions |
-| MCP | Official MCP SDK | Protocol fidelity |
-| Packaging | Electron Forge (deb/rpm/dmg/msix) | Matches observed makers |
-| Tests | Vitest + Playwright Electron + mock native SDK servers | Unit, UI, wire conformance |
+| Shell | Tauri 2 (`tao` + `wry`), custom `app://` protocol | Preserves the window/protocol/security model; hardened protocol classification in `crates/app-shell` |
+| Language | Rust (workspace, 2021 edition) for everything privileged | Secrets/providers never reach the renderer (`ARCH-PROC-02/03/05`); typed bridge replaces the preload namespaces |
+| Renderer | React + TypeScript + Vite | Matches the observed SPA surface; browser E2E over the same routes |
+| Persistence | SQLite (WAL) + content-addressed files | Atomicity/retention; verified migrations, quarantine, backup (`crates/store`) |
+| Validation | Typed serde contracts at every boundary | Provider/tool/config validation without a second schema language |
+| Terminal | `portable-pty` | Code/terminal sessions |
+| MCP | `rmcp` (the Rust MCP SDK) | Protocol fidelity (`docs/12` §5.1) |
+| Packaging | Tauri bundler (deb/rpm/dmg/msix) | Matches the observed makers (Phase 9) |
+| Tests | cargo per-crate suites + Playwright over the renderer + wire batteries against mock servers | Unit, UI, wire conformance (`tests/README.md`) |
+
+**Preservation note (not the rebuild stack).** The *shipped* app is Electron 44.x with a
+Node 24 main process, TypeScript-before-minification, and Electron Forge makers — those are
+the observed facts the investigation preserves (`docs/09`, `docs/15`); they are recorded so
+the rebuild's behavior can be compared against the original, not as choices to copy.
 
 **Rebuild decisions.** The original shipped React/Tailwind/Electron and used JSON/NDJSON storage.
 SQLite is an improvement for atomicity and retention; it is not claimed as original. Preserve the
@@ -141,18 +146,33 @@ Build:
 Tests: `TEST-CFG-001..012`, `TEST-UX-009`.
 
 Exit: applying an invalid profile does not change the live config; secrets never appear in renderer
-storage/logs; all six provider forms validate their model IDs; profile switch/relaunch is observable.
+storage/logs; all five supported provider forms validate their model IDs; profile switch/relaunch
+is observable. (The shipped sixth family, Vertex, is out of rebuild scope — `docs/04` §3.1.)
 
 ### Phase 3 — Native provider adapters
+
+> **Owner decision, 2026-10-23 — the open model layer.** Phase 3's adapter surface
+> widened: the harness now takes any model any provider serves and adds the
+> first-party `openai` and user-defined `custom` OpenAI-compatible wire families,
+> with all family-level model-ID gates removed. See **Appendix C** at the end of
+> this document; the decision records are `docs/14` §9 items 29–32, the test rows
+> are `docs/17` §4.14, and the improvement entry is `docs/19` IMP-18.
 
 Order:
 
 1. Anthropic-compatible Gateway (the current deployment path).
 2. Claude API.
 3. Bedrock.
-4. Vertex AI.
-5. Bedrock Mantle.
-6. Foundry.
+4. Bedrock Mantle.
+5. Foundry.
+
+(The shipped Phase-3 plan listed the Vertex AI family at position 4. **On 2026-10-23 the
+owner directed the Vertex family out of rebuild scope**: the implemented slice-4 adapter
+was deleted — crate, wire battery, bridge probe lane, config form family and keys,
+renderer unlock — and nothing Vertex-shaped is rebuilt. The pre-removal state is
+preserved at `7b84886` on the `phase-3` lane; the reconstructed wire reading remains
+recorded as an unknown in `docs/14` §9 item 28. The shipped app keeps the family —
+`docs/09` §2.2 stays.)
 
 For each adapter:
 
@@ -205,6 +225,15 @@ tool never reaches the provider; tool-result images survive.
 
 ### Phase 6 — Cowork, Code, Projects, Artifacts, Scheduled
 
+All five build areas are implemented on the `phase-6-code` lane (slice 1 Code,
+`1d672e3`; slice 2 Projects, `35958b8`; slice 3 Artifacts, `8aa7987`; slice 4
+Scheduled, `48eb6ac`; slice 5 Search, `424eabc`) — merged to `dev` and pushed
+2026-10-26 with the owner's approval (merge `f3fdc70`, fix `3229372`). The Code
+slice deliberately defers terminal/PTY,
+worktrees/GitHub, SSH/WSL/remote placement, and Fast mode (`docs/14` §9
+items 53–57); the later slices carry their own recorded scope decisions
+(items 59–65).
+
 Build:
 
 - Cowork home/task/transcript/composer.
@@ -249,6 +278,20 @@ Each is a signed adapter package with a manifest, native SDK, conformance suite,
 No shared translation layer. A provider that only speaks OpenAI Chat Completions is supported by an
 explicit adapter for that native protocol, not by converting Anthropic requests.
 
+Slice 1 — OpenAI Responses — is implemented on the `phase-8` lane (merged to `dev` with the
+owner's approval, 2026-10-26): `crates/providers/openai-responses`, the native wall with its
+17-fixture wire battery (`docs/17` §4.18; the recorded readings are `docs/14` §9 item 71).
+Slice 2 — the family's setup surface — is implemented on the same lane: the config family,
+form fields, egress/export, the bridge probe lane and chat factory arm, the additive
+discovery command, and the renderer unlock (`docs/17` §4.18). Slices 3–4 (final sprint,
+2026-10-26): the **local provider extension** — Ollama/llama.cpp compat surface, loopback-only
+destination gate, keyless default, 20-fixture battery (`docs/17` §4.19) — and the
+**extension-package machinery** (`crates/extensions`: manifest schema + structural gates,
+SHA-256 integrity, the TrustAnchor seam whose production anchor refuses every signature fail-closed,
+an isolated loader) plus the **family catalog** crossing the bridge (`TEST-EXT-007`'s data
+half: the setup UI reads the catalog instead of hard-coding ids). The trust-anchor
+provisioning decision and the agent-side registration remain recorded residuals.
+
 Tests: `TEST-EXT-001..008`.
 
 Exit: adding a provider requires no changes to the agent or UI beyond registration; a broken adapter
@@ -265,6 +308,16 @@ cannot prevent app boot; no extension can bypass model policy or credential isol
 
 Exit: signed installers for Linux/macOS/Windows (platform tests), clean install/upgrade/rollback,
 no P0 security findings, all P0/P1 traceability rows green.
+
+Final-sprint state (2026-10-26, on disk): the store-level backup/restore machinery is
+implemented and tested (`crates/store::backup` — VACUUM INTO snapshots, verified atomic
+restore, the displaced database kept aside); performance budgets are measured over a real
+workload and pinned by a test; the threat-model review is recorded (`docs/14` §9 item 74).
+Recorded as NOT done: signed installers (no tauri bundler CLI or production credential in
+this environment — the fail-closed verification gates hold by construction), bit-for-bit
+reproducible artifacts (two independent builds hash differently — recorded honestly), and
+the in-app restore flow (the file cannot move under a live connection; deferred with the
+reason).
 
 ## 5. Feature preservation vs improvement
 
@@ -334,7 +387,7 @@ Every improvement must be tested and documented as an improvement, not presented
 | `TEST-CFG-001` | Profile apply is atomic; invalid config leaves old profile intact |
 | `TEST-CFG-002` | Draft discard restores applied values exactly |
 | `TEST-CFG-003` | Bootstrap override is read-only and visibly labeled |
-| `TEST-CFG-004` | All six providers validate required fields and model IDs |
+| `TEST-CFG-004` | All five supported providers validate required fields and model IDs (the shipped sixth family, Vertex, is out of rebuild scope — `docs/04` §3.1) |
 | `TEST-CFG-005` | Credential kind is exclusive; helper failure does not fall back |
 | `TEST-CFG-006` | Secrets are keychain-backed and absent from renderer storage/logs |
 | `TEST-CFG-007` | Export/support bundle warns and redacts by default |
@@ -470,3 +523,49 @@ A feature is done when:
 6. It has no secrets/personal data in fixtures, logs, docs, or telemetry.
 7. Its traceability row is complete in [17](17-traceability.md).
 8. An improvement, if any, is recorded in [19](19-improvement-register.md).
+
+## Appendix C — The open model layer (owner decision, 2026-10-23)
+
+The owner approved widening the rebuild from an Anthropic-first family set into an
+**open multi-provider harness**: any model, any provider, plus a user-defined
+OpenAI-compatible endpoint. Design reference: the DeepSeek harness. This rides
+alongside the Phase-3 adapter work above, not instead of it.
+
+**What was decided (recorded in `docs/14` §9 items 29–32):**
+
+1. **No model-ID family policy.** Every family's validator is one shared shape-only
+   predicate (`validate_open_model_id` — a non-empty id). Model ids travel to the
+   provider verbatim; a nonconforming id is the provider's own wire error to reject,
+   and the adapter surfaces that error verbatim — never a locally invented refusal.
+   (`docs/17` §4.10–§4.12's `TEST-AI-007` rows pin "travels verbatim".)
+2. **Two OpenAI-compatible wire families.** First-party `openai` (base URL optional,
+   default `https://api.openai.com/v1`; static key required) and `custom` (base URL
+   required; **credential optional — a keyless send with no `authorization` header**;
+   helper-script kind allowed). One native wall for the wire:
+   `crates/providers/openai` (`myharness-provider-openai`), with no shared transport
+   plumbing, no router, and no translation gateway. The app-internal format stays
+   Anthropic Messages.
+3. **`mantle`/`foundry` stay stubbed.** Their forms exist; their probe lanes refuse
+   until their native adapters land — locked, not faked.
+4. **Setup surface.** A net-new provider-family picker on the Connection tab;
+   **Test connection** and **Discover models** unlocked for the two new families;
+   discovery is the additive command `setup_discover_openai_models` (the gateway's
+   command is untouched for e2e-fixture stability).
+
+**Wire readings every fixture pins** (`docs/14` §9 item 31): system blocks join
+`\n\n` into one `role:"system"` message; `max_tokens` (not `max_completion_tokens`);
+no `stream_options`; `top_k`/thinking/betas/`cache_control` have no slot on this
+wire; reasoning streams via `delta.reasoning_content` (fallback `delta.reasoning`);
+tool arguments via `delta.tool_calls` with synthesized ids, closing at
+`finish_reason`; stop map stop→`end_turn`, length→`max_tokens`,
+tool_calls/function_call→`tool_use`, content_filter→`ContentFilter`, unknown→
+`Other` verbatim; usage prompt/completion_tokens + cached-token detail; echo is a
+**prefix** match; documents and tool-result media are refused explicitly; assistant
+Reasoning/RedactedThinking blocks are omitted from cross-wire replay — the one
+deliberate deviation from `RULES.md` §2's letter, owner-sanctioned, with a
+fail-the-send flip available if reversed; count_tokens is refused explicitly, never
+estimated.
+
+**Status:** implemented on the `phase-3` lane (commits `6e7a738`, `8a3d1b8`,
+`8422880`); test rows `docs/17` §4.14; state record `MEMORY.md` §7d. Not pushed;
+docs are never agent-committed.

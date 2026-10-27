@@ -228,6 +228,288 @@ Response: `allow`/`deny`, optional `always` and scope. Denied tools never reach 
 executed results; the model receives a denial result only if policy permits. Persistent approvals
 expire per `mcpScheduledTaskApprovalLifetimeDays` or the session policy.
 
+> **Rebuild deviation (Phase 5).** The rebuild's `chat://tool-approval` event (below) is a
+> rebuild-defined shape, and a policy-denied call is always returned to the model as a tool error
+> so the transcript remains grammatically valid. The shipped denial-result gate was not observed
+> (`docs/17` §4.16, `docs/14` §9 item 44).
+
+### 4.5 Rebuild chat bridge (Phase 4 + Phase 5 subset)
+
+This is the **rebuild's** transport for the chat half of
+`web.LocalAgentModeSessions` (`crates/bridge/src/chat.rs`; `docs/17` §4.15–4.16). It is a
+deliberately smaller contract than the shipped namespace — folders, memory, and attachments are
+not part of it — and the names below are rebuild names, not captured wire names.
+
+One Tauri command, `chat_command`, carries a tagged `ChatCommand` (camelCase tags and fields).
+The Phase 4 commands are:
+
+| Command | Fields | Response |
+|---|---|---|
+| `createSession` | `title?` | `session` (row + empty transcript) |
+| `listSessions` | `archived?` (absent = both) | `sessions` (Cowork/chat only; Code uses `listCodeSessions`) |
+| `openSession` | `id` | `session` (recovers a crashed live turn first) |
+| `sendTurn` | `sessionId`, `text`, `maxTokens?` | `turn` or `toolTurn` (user + assistant/tool rows + usage + stop reason; `toolTurn` also carries `warnings`) |
+| `stopTurn` | `sessionId` | `stopped` (idempotent) |
+| `archiveSession` | `id`, `archived` | `ack` |
+| `renameSession` | `id`, `title` | `ack` |
+| `deleteSession` | `id` | `ack` (honors legal hold; clears the frozen snapshot and session grants) |
+| `usageSummary` | `days` (1–366), `utcOffsetMinutes?` | `usage` (since Phase 7 the response also carries `surfaces`: the Cowork/Code shares of the same window, each folding only its own surface's ledger rows; a surface with no rows is a zero summary, never a missing field — `docs/14` §9 item 68) |
+
+The Phase 5 additions are:
+
+| Command | Fields | Response |
+|---|---|---|
+| `mcpStatus` | — | `mcpStatus` (redacted servers + warnings) |
+| `mcpTools` | — | `mcpTools` (live executable tools for the session picker) |
+| `mcpSearchTools` | `query`, `limit?` | `toolSearch` (live/cached hits; cached hits are metadata only) |
+| `setSessionTools` | `sessionId`, `tools` | `ack` (validates live names, persists `mcpTools`, installs the frozen snapshot) |
+| `respondToolApproval` | `approvalId`, `decision` (`allow`/`deny`), `scope?` (`once`/`session`/`persistent`) | `ack` |
+| `retryMcpServer` | `server` | `mcpStatus` |
+| `forgetMcpOAuth` | `server` | `ack` |
+| `listSkills` | — | `skills` |
+| `selectSkill` | `name` | `skillSelection` (instructions only; no execution, no approval grant) |
+| `setSkillEnabled` | `name`, `enabled` | `skills` |
+| `setSkillCreationEnabled` | `enabled` | `skills` |
+| `listPlugins` | — | `plugins` |
+| `installPlugin` | `path` (absolute local directory) | `pluginInstalled` |
+| `uninstallPlugin` | `name` | `plugins` |
+| `setPluginEnabled` | `name`, `enabled` | `plugins` (server enablement applies on next app start) |
+| `setPluginSignaturePolicy` | `policy` (`optional`/`required`) | `plugins` |
+
+A failure is `ChatResponse::Error { error, userTurnRecorded }`, where `error` is the
+`docs/18` §11 envelope (`code`, `message`, `retryable`) and `userTurnRecorded` says whether
+the user's turn reached the store. A provider failure carries the provider's own message
+verbatim; a pre-persistence failure is `userTurnRecorded: false` and leaves the renderer's
+draft intact. A command that needs an unavailable runtime returns `UNSUPPORTED` rather than
+pretending the feature exists.
+
+Content deltas stream on the rebuild-only event `chat://turn-event`:
+
+```ts
+interface ChatTurnEvent {
+  sessionId: string;
+  event: TurnEvent; // docs/18 §4.3, tagged by `type` in snake_case
+}
+```
+
+Only content events (text, reasoning, citations, tool calls) are emitted live; usage, the
+native stop reason, and the terminal error are carried by the command response. A turn that
+executed at least one tool returns `toolTurn` instead of `turn`, with every assistant/tool row
+in order and non-fatal audit/persistence `warnings`. Tool results also arrive as
+`TurnEvent::ToolResult`.
+
+Approvals arrive on `chat://tool-approval`:
+
+```ts
+interface ToolApprovalEvent {
+  id: string;
+  sessionId: string;
+  callId: string;
+  toolName: string;       // internal `<server>:<tool>`
+  displayName: string;
+  argumentsPreview: unknown; // redacted and bounded
+  allowedScopes: ("once" | "session" | "persistent")[];
+}
+```
+
+Background MCP boot/retry state arrives on `chat://mcp-status` with redacted
+`servers` and `warnings`. A browser preview has no Tauri host, so the renderer reports
+`BRIDGE_UNAVAILABLE` instead of inventing a transcript, session row, tool, or total.
+
+Rules enforced at this seam: the renderer is untrusted (UUID ids, bounded title/text/tool
+names, timezone clamped to ±840 minutes); credentials, server env/headers, OAuth tokens, and
+raw tool arguments never cross back; the session's provider/model is fixed and a profile that
+now serves another target refuses the send (`MODEL_UNAVAILABLE`, no substitution); a
+tool-enabled send first capability-gates the model and fails `MODEL_UNSUPPORTED` rather than
+sending tools to a model that did not advertise them; missing selected tools fail before the
+selection is stored or sent; changing tools during a running turn is `TURN_IN_PROGRESS`; stop
+is idempotent; archive/delete refuse while a turn runs; recovery on open skips a turn this
+process is running. Cowork sends no system prompt in this phase (the shipped bootstrap prompt
+was not captured); Code adds only the workspace-folder block described in §4.6. No retry,
+model picker, attachment, or general system-prompt assembly exists yet (`docs/14` §9 items
+33–40).
+
+### 4.6 Rebuild Code bridge (Phase 6 Slice 1)
+
+Code uses the same `chat_command` transport and the same `chat://turn-event` stream as Cowork,
+but a separate, strict command set so a Code route can never open or send into a Cowork session
+(and vice versa). Names below are rebuild names (`crates/bridge/src/chat.rs`); the shipped Code
+namespace was not fully captured.
+
+| Command | Fields | Response |
+|---|---|---|
+| `listCodeSessions` | `archived?` | `sessions` (only rows with `surface: "code"`) |
+| `createCodeSession` | `title?`, `cwd`, `permissionMode` (`default`/`acceptEdits`/`plan`/`bypass`) | `session` (row + empty transcript) |
+| `openCodeSession` | `id` | `session` (refuses a Cowork id with `SESSION_SURFACE_MISMATCH`) |
+| `sendCodeTurn` | `sessionId`, `text`, `maxTokens?` | `turn` or `toolTurn`; refuses a Cowork id, a missing/changed folder, or a disabled mode before contacting the provider |
+| `codeDashboard` | `range?` (`7d`/`30d`/`all`), `utcOffsetMinutes?` | `codeDashboard` |
+
+`createCodeSession` validates and canonicalizes `cwd` first, then resolves the applied profile
+(no session is created without a model), and stores the canonical `cwd`, the resolved `model`,
+the stored permission spelling, and
+`extra.providerId`/`profileId`/`placement: "local"`/`originCwd`. `cwd` is absolute, bounded,
+control-free, existing, a directory, canonicalized, and checked against configured allowed roots;
+a symlink cannot escape an allowed root. The renderer never supplies `surface`, `model`, or
+`providerId`.
+
+`sendCodeTurn` revalidates the stored canonical folder and the current `CodePolicy` on every
+send. A deleted/renamed folder is `FOLDER_UNAVAILABLE`; a path that no longer canonicalizes to the
+stored spelling is `CODE_FOLDER_CHANGED`; a policy-disabled Bypass or malformed stored mode is
+refused. The canonical folder is also added to the model's system context. That is not a
+filesystem sandbox: this slice has no built-in file tools, and an MCP server's process cwd is its
+own configuration. Plan mode filters every tool from the provider request; when tools are
+selected it uses an empty tool snapshot instead of resolving the MCP servers, so an offline
+server cannot block a Plan turn, and a stale/hallucinated call is denied by the agent gate.
+Accept-edits auto-approves only a host-declared edit-tool set (empty in this slice); Bypass
+auto-approves only policy `Ask` decisions and never a `Deny`.
+
+`codeDashboard` returns:
+
+```ts
+interface CodeDashboardResponse {
+  summary: {
+    range: "7d" | "30d" | "all";
+    days: number;
+    truncated: boolean;          // daily strip cap (3,660 days); totals stay all-time
+    timezoneOffsetMinutes: number;
+    from: string;
+    to: string;
+    totals: UsageTotals;         // input/output/cache/search/errors/events
+    daily: DailyUsage[];
+    messages: number;            // Code user+assistant turns in range
+    sessions: number;            // distinct Code sessions with usage events
+    activeDays: number;
+    peakHour: number | null;     // device-local hour
+    favoriteModel: string | null;
+    models: { model: string; totals: UsageTotals; sessions: number; sharePercent: number }[];
+  };
+  sessions: SessionRecord[];     // recent non-archived Code rows
+  repositories: { cwd: string; sessionCount: number; lastActivityAt: number }[];
+  policy: { codeEnabled: boolean; localSessionsEnabled: boolean; bypassAllowed: boolean; workspaceRestricted: boolean };
+}
+```
+
+`policy.bypassAllowed` is true only when `capabilities/disableBypassPermissionsMode` is
+explicitly `false`; the renderer must keep Bypass visible but disabled otherwise. The response
+never includes allowed folder roots, credentials, or provider secrets.
+
+The native folder picker is a separate Tauri command:
+
+```ts
+pick_workspace_folder(): Promise<string | null>
+```
+
+`null` means the user cancelled; a UTF-8/path failure rejects with the standard `BridgeError`.
+`rfd` does not expose a platform-picker failure separately from cancellation, so a failed portal
+is also observed as `null`; the bridge still revalidates any path. A browser preview has no Tauri
+host and reports `BRIDGE_UNAVAILABLE` instead of inventing a folder. The chosen path is still
+untrusted and is revalidated by `createCodeSession`.
+
+### 4.7 Rebuild Projects/Artifacts/Scheduled/Search bridge (Phase 6 slices 2–5)
+
+All commands ride the same `chat_command` transport. Names below are rebuild
+names (`crates/bridge/src/chat.rs`, `crates/bridge/src/scheduler.rs`).
+
+Projects:
+
+| Command | Fields | Response |
+|---|---|---|
+| `listProjects` | — | `projects` (rows + bridge-computed `folderAvailable`) |
+| `createProject` | `name`, `instructions?`, `cwd`, `memoryEnabled?` | `project`; the folder is canonicalized against the same workspace policy as Code before storage |
+| `openProject` | `id`, `archived?` | `projectDetail` (project + its sessions, both surfaces); a deleted id is `PROJECT_MISSING` |
+| `updateProject` | `id`, `name`, `instructions?`, `memoryEnabled?` | `project` (the folder is not editable) |
+| `deleteProject` | `id` | `projectDeleted` (`orphanedSessions` counts sessions still referencing the id) |
+
+`createSession` gained optional `projectId`/`cwd`: the bridge resolves the
+folder (never the renderer), refuses a project whose folder no longer
+resolves (`FOLDER_UNAVAILABLE`), and stores `project_id` + `cwd` on the
+session. A folder-bound Cowork turn carries the same quoted path-as-data
+system block Code uses. A turn in a project bumps the project's activity
+stamp (best-effort; a failure is a warning on tool turns only).
+
+The Phase 7 additions so far (memory, `docs/11` §5; `docs/14` §9 items 66–67):
+
+| Command | Fields | Response |
+|---|---|---|
+| `memoryOverview` | — | `memoryOverview` (`policy` effective state, `baselineHash?`, `baselineChanged`, `count`); always answers so the panel can explain a disabled state |
+| `listMemoryEntries` | — | `memoryEntries` |
+| `createMemoryEntry` | `content` | `memoryEntry` (bounds refused, never truncated) |
+| `updateMemoryEntry` | `id`, `content` | `memoryEntry`; a missing id is `MEMORY_MISSING` |
+| `deleteMemoryEntry` | `id` | `ack` |
+| `resetMemory` | — | `memoryReset` (`deleted` count); explicit and audited |
+
+Every memory command except `memoryOverview` is gated by the effective
+`memoryEnabled` capability read fail-closed from the merged profile
+(disabled → the typed refusal, never a silent no-op). Error codes:
+`MEMORY_MISSING`, `MEMORY_CORRUPT` (a corrupt file is renamed aside and
+named in the audit trail, `docs/14` §9 item 66), `CONFIG_IO`,
+`CONFIG_VALIDATION`, `UNSUPPORTED` (broken memory directory).
+
+The Phase 7 diagnostics commands (`docs/features/updates-telemetry-privacy.md`
+§7; `docs/14` §9):
+
+| Command | Fields | Response |
+|---|---|---|
+| `diagnosticsPreview` | — | `diagnosticsPreview` (`entries`: the manifest of exactly what a bundle would include, including the never-included list); writes nothing |
+| `diagnosticsBuild` | `consent` | `diagnosticsBundle` (`file`, `entries`); `consent: false` (or absent) is the typed `CONSENT_REQUIRED` refusal and writes nothing |
+
+The bundle is a redacted markdown document under the app-managed
+`diagnostics/` directory: version/platform/time, the effective configuration
+through the export redaction and then the free-text redaction, local counts
+(sessions by surface, turns, usage events, memory entries), and the effective
+telemetry policy. **There is no upload in this build** — the bundle stays on
+the device; the action is appended to `diagnostics/log.jsonl` with no
+contents (bounded at 2 MiB). A diagnostics command without an attached
+directory answers `UNSUPPORTED` — diagnostics degrade, never chat.
+
+Retention (Phase 7, `TEST-CFG-009`) has no bridge command: the sweeps run at
+boot through the Phase-4 engine, governed by the merged limits section —
+`coworkSessionRetentionDays` → the `chat` surface, `codeSessionRetentionDays`
+→ `code`, `sessionRetentionHold` suspends everything, and per-session legal
+holds are honored throughout. Nothing deletes unless a profile explicitly
+configures days (`docs/14` §9 item 69).
+
+Artifacts:
+
+| Command | Fields | Response |
+|---|---|---|
+| `createArtifactTask` | — | `session` (a normal Cowork session with `extra.artifactTask: true`; no turn is generated on the task's behalf) |
+
+The library filters `listSessions` rows on that marker; there is no artifact
+content model, so nothing in the response can claim a completed artifact.
+
+Scheduled tasks:
+
+| Command | Fields | Response |
+|---|---|---|
+| `listScheduledTasks` | — | `scheduledTasks` (rows + `scheduleSummary` + `lastRun` + `contextUnavailable`) |
+| `scheduledTemplates` | — | `templates` (the six captured cards; name/schedule label are the captured copy, prompts are rebuild prefill text) |
+| `createScheduledTask` | `name`, `prompt`, `cron`, `projectId?`/`cwd?` (mutually exclusive), `enabled?` | `scheduledTask`; an enabled task arms immediately |
+| `updateScheduledTask` | `id`, `name`, `prompt`, `cron` | `scheduledTask` (rearms if enabled) |
+| `setScheduledTaskEnabled` | `id`, `enabled` | `scheduledTask` (disable disarms; enable rearms) |
+| `deleteScheduledTask` | `id` | `ack` (run rows go with the task; run-created sessions stay) |
+| `runScheduledTaskNow` | `id` | `scheduledRun` (the terminal run row; the run used the scheduled approval context) |
+| `previewSchedule` | `cron`, `count?` (1–10) | `schedulePreview` (`times`: epoch millis in the device zone) |
+
+`cron` is the 5-field subset: `*`, values, comma lists, `a-b` ranges, and
+`*/step` on minute/hour; day-of-month and month must be `*`
+(`CONFIG_VALIDATION` otherwise). The shell ticks every 30 s: due armed
+occurrences run on the interactive send path (`scheduled=true`, so only the
+scheduled approval lifetime applies); an occurrence missed past the 60 s
+grace is recorded as `skipped` with the reason and never executed late. A
+run creates a normal Cowork session carrying
+`extra.scheduledTaskId`/`scheduledRunId`.
+
+Search/filter is renderer-local: the palette combines `listSessions`,
+`listCodeSessions`, and `listProjects` (all existing commands); the filter
+menu composes client-side over the same rows. No new search command exists,
+and no query leaves the device.
+
+Two shell commands accompany the slices: `reveal_workspace_folder(path)`
+(project detail's "Open folder") refuses non-absolute, non-existent,
+non-canonical paths before opening the OS file manager, and
+`pick_workspace_folder` is shared by Code and Projects.
+
 ## 5. HTTP contracts inside `app://`
 
 ### 5.1 Static server
@@ -303,6 +585,7 @@ Exact host mappings and credential kinds are in [12](12-ai-architecture.md). Sum
 | Vertex | `<region>-aiplatform.googleapis.com` (or rep host), Google OAuth/Workforce | publisher models/static |
 | Foundry | `<resource>.services.ai.azure.com`, Entra/API key | deployments/static |
 | Gateway | configured base, bearer/x-api-key | `GET /v1/models?limit=1000`, 3 pages, 10 s/page |
+| OpenAI Responses (Phase 8 slice 1) | `{base}/responses` (default `https://api.openai.com/v1`), Bearer (static key required — first-party only) | `GET {base}/models` (single page, 10 s) |
 
 Provider errors must be mapped to:
 

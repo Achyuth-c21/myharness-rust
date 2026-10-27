@@ -17,12 +17,15 @@ apps/desktop/            the desktop app
     setup/               setup-desktop-3pwindow content
   src-tauri/             Tauri 2 shell crate (bin): lifecycle wiring, windows, app:// protocol
 crates/                  Rust workspace libraries (one module per roadmap stage)
-  bridge/                typed IPC envelope replacing the Electron preload namespaces (docs/18)
+  bridge/                typed IPC envelope replacing the Electron preload namespaces (docs/18);
+                         chat.rs = Cowork/Code commands, policy.rs = Code folder/permission policy
   config/                profiles, managed overlay, validation, credentials assembly
   secrets/               OS keychain only (keyring); secrecy/zeroize
   protocol-core/         TurnEvent / ModelDescriptor / usage types
   provider-sdk/          adapter trait + conformance kit (no protocol translation, ever)
-  providers/             six native adapters (gateway, anthropic, bedrock, bedrock-mantle, vertex, foundry)
+  providers/             eight provider adapter crates (gateway, anthropic, bedrock, bedrock-mantle,
+                         foundry, openai, openai-responses, local; the shipped Vertex family is out of
+                         rebuild scope — owner decision 2026-10-23, docs/04 §3.1)
   agent/                 turn loop: streaming, tools, approvals, cancellation
   sessions/              session metadata, transcripts, retention
   store/                 SQLite WAL: migrations, repos, content-addressed files
@@ -62,8 +65,10 @@ Trust boundaries from docs/10 section 8 are preserved by structure: the renderer
 
 ## State
 
-- `cargo metadata` parses the 26-member workspace; every crate is a documented stub (`lib.rs` header names
-  its roadmap phase and spec docs).
-- Frontend is a minimal Vite shell; `npm install` not yet run.
+- `cargo metadata` parses the 27-member workspace; every crate's `lib.rs` header names its
+  roadmap phase and spec docs. Several crates are implemented through Phase 8 slice 1 (the
+  Responses extension); the remaining scaffolds say so explicitly.
+- The frontend is a React + TypeScript + Vite renderer with browser E2E coverage; the Tauri
+  shell hosts the bridge and native runtime.
 - Icons not yet generated: run `cargo tauri icon <source>` (see `apps/desktop/src-tauri/icons`).
 - Branch model: `main` is the reviewed baseline, `dev` is the working copy per the repo workflow.

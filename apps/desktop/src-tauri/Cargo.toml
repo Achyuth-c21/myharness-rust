@@ -28,7 +28,14 @@ serde_json = { workspace = true }
 tokio = { workspace = true }
 
 [features]
-default = ["single-instance"]
+# `custom-protocol` is Tauri's production switch: without it `tauri` compiles
+# with `cfg(dev)` and every build (release included) loads `devUrl` instead of
+# the embedded `app://` bundle. The whole-app test campaign found the release
+# artifact failing with "Could not connect to localhost" because this was
+# missing (docs/17 §4.20). This repo drives the desktop binary with plain
+# `cargo build`, not `tauri dev`, so it belongs in the default set.
+default = ["single-instance", "custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
 # Linux single-instance support uses libdbus (system library). Build with
 # `cargo check --no-default-features -p myharness-desktop` where dbus headers are
 # unavailable; CI machines must keep the default (docs/02 §2, TEST-ARCH-002).
