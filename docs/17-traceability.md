@@ -978,10 +978,11 @@ every bundle until a trust anchor exists, `TEST-UPDATE-001`).
   no-zombie settings close (T34/T35, renumbered from T31/T32 when Phase 4 added T31–T33); its run
   record and bug ledger live in [tests/report-phase1.md](../tests/report-phase1.md). Runner:
   `node tests/e2e/shell.spec.mjs` against a dev server verified to serve title `myharness` (see
-  `docs/14` §7 trap 13), plus the **19/19 native runtime fixture** `tests/native/shell-runtime.sh`
+  `docs/14` §7 trap 13), plus the **20/20 native runtime fixture** `tests/native/shell-runtime.sh`
   (single-instance second-launch routing, cold-start/second-launch deep links fail-closed, Setup3p
-  Phase-2 deferral — `docs/14` §9 supplement item 4) and the **16/16 setup-window battery**
-  `tests/e2e/setup-window.spec.mjs`. The whole-application campaign's phase-1 run is §4.20.
+  Phase-2 deferral, and the R1 renderer-mount handshake — `docs/14` §9 supplement item 4) and the
+  **16/16 setup-window battery** `tests/e2e/setup-window.spec.mjs`. The whole-application campaign's
+  phase-1 run is §4.20.
 
 ### 4.18 Native provider adapters — the Responses extension, Phase 8 slice 1 (`TEST-EXT`, `TEST-AI`)
 
@@ -1105,7 +1106,7 @@ runs below force `GDK_BACKEND=x11` under Xvfb so the window is capturable.
 | Renderer bundle | `vite build` | 74 modules, built |
 | Shell E2E | `node tests/e2e/shell.spec.mjs` | **52/52** (T01–T49 including T28b–T28d) |
 | Setup E2E | `node tests/e2e/setup-window.spec.mjs` | **16/16** |
-| Native runtime | `bash tests/native/shell-runtime.sh` | **19/19** (real binary, Xvfb/X11) |
+| Native runtime | `bash tests/native/shell-runtime.sh` | **20/20** (real binary, Xvfb/X11; R1 renderer handshake) |
 | Release launch | release binary, dev server stopped | before fix: error page; after fix: embedded `app://` bundle renders |
 | Accessibility | `node tests/e2e/a11y.spec.mjs` | 18 route/mode scans; **0 serious/critical** (clean after `IMP-39` option c) |
 
@@ -1115,7 +1116,7 @@ runs below force `GDK_BACKEND=x11` under Xvfb so the window is capturable.
 |---|---|---|---|
 | `WA-01` | P0 | **fixed in this phase** | The release artifact loaded `devUrl` and could not start without the Vite server |
 | `WA-02` | P1 | **fixed in this phase** (`IMP-39` option c) | Light-mode tertiary text failed WCAG AA; token split keeps the observed value for icons and adds an AA text derivative |
-| `WA-03` | P3 | open — test-infrastructure gap | The native cold-boot check proves a live process/webview, not a rendered app |
+| `WA-03` | P3 | **fixed in this phase** | The native cold-boot check proved a live process/webview, not a rendered app; R1 now asserts a renderer mount handshake |
 
 **`WA-01` — the release build was a dev build.** With the Vite server stopped, the
 release binary opened a 1200×800 window showing Chromium's
@@ -1125,7 +1126,8 @@ sets `dev = !custom-protocol`, and `apps/desktop/src-tauri/Cargo.toml` never ena
 Fix: `default = ["single-instance", "custom-protocol"]` plus
 `custom-protocol = ["tauri/custom-protocol"]`. Verified after the fix: with no server on
 5173 the release binary renders the embedded bundle over `app://`, and the workspace
-suite, clippy, and the native fixture stay green (596/0, clean, 19/19). This corrects the
+suite, clippy, and the native fixture stay green (596/0, clean; 20/20 in the final phase-1
+run after the `WA-03` renderer handshake). This corrects the
 Phase 9 record's implicit reading: *the release binary builds* is not *the artifact runs*.
 Traces `TEST-ARCH-001/003/004`, `ARCH-PROC`, `docs/02` §2, `docs/13` Phase 9.
 
@@ -1144,13 +1146,16 @@ is still rendered where 3:1 governs. Re-run: **18/18 route/mode scans clean**, 0
 serious/critical. Traces `TEST-UX-012/014`, `IMP-39`; the token extension is recorded in
 `docs/07` §1.2.
 
-**`WA-03` — the native fixture cannot see an error page.** Before `WA-01` was fixed, the
-19-check native fixture was green while the window displayed the connection-refused error:
-R1 asserts the process and `WebKitWebProcess` are alive, not that the document rendered.
-This is the exact "green test that contradicts the docs" posture the repository forbids.
-Proposal (not implemented in this phase): add a rendered-content assertion to R1 — e.g. the
-`app://` response body or a captured document title — so cold boot proves the shell, not the
-process tree. Traces `TEST-ARCH-001/003`, `docs/14` §9 supplement item 4.
+**`WA-03` — the native fixture could not see an error page; fixed with a mount handshake.**
+Before `WA-01` was fixed, the then-19-check native fixture was green while the window displayed
+the connection-refused error: R1 asserted the process and `WebKitWebProcess` were alive, not that
+the document rendered. This is the exact "green test that contradicts the docs" posture the
+repository forbids. Fix: the renderer invokes `renderer_ready` from its first React effect
+(`apps/desktop/src/App.tsx`), and the shell logs `[myharness] renderer ready` in debug builds
+(`apps/desktop/src-tauri/src/lib.rs`). A page that fails to load never executes the bundle, so R1
+now asserts the SPA mounted as well as the process/webview tree; the suite is **20/20**. The
+browser preview has no Tauri host, so the invoke rejection is ignored there. Traces
+`TEST-ARCH-001/003`, `docs/14` §9 supplement item 4.
 
 #### Limits of this phase
 
@@ -1163,3 +1168,7 @@ process tree. Traces `TEST-ARCH-001/003`, `docs/14` §9 supplement item 4.
   blocked in the Xvfb session (`org.a11y.Bus` cannot start); contrast measurement is axe's.
 - Window captures were inspected in-session and are **not** committed (`evidence/README.md`
   rules 3–8); this section records the result in prose.
+
+**Phase 1 status: complete.** All three findings are closed (`WA-01`, `WA-02`, `WA-03`), the
+baseline is reproducible from the commands above, and the real shell renders. The next campaign
+phase — feature-surface sweeps — starts from this record rather than re-litigating boot.
