@@ -3446,3 +3446,114 @@ html[data-motion="reduced"] *::after {
   gap: calc(var(--mh-unit) * 1);
   margin-top: calc(var(--mh-unit) * 2);
 }
+
+/* ---------- Trust this workspace (UI-SCREEN-32; docs/screens/trust-workspace.md) ---------- */
+
+.trust-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(11, 11, 11, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 70;
+}
+
+.trust-dialog {
+  width: min(440px, calc(100vw - 48px));
+  background: var(--mh-surface-1);
+  border: 1px solid var(--mh-border-hair);
+  border-radius: var(--mh-radius-card);
+  box-shadow: 0 8px 32px rgba(11, 11, 11, 0.24);
+  padding: calc(var(--mh-unit) * 6);
+}
+
+.trust-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--mh-text-1);
+}
+
+.trust-body {
+  margin: calc(var(--mh-unit) * 3) 0 0;
+  font-size: 13px;
+  color: var(--mh-text-2);
+}
+
+.trust-folder {
+  margin: calc(var(--mh-unit) * 3) 0 0;
+  font-family: var(--mh-font-mono);
+  font-size: 12px;
+  color: var(--mh-text-1);
+  word-break: break-all;
+  background: var(--mh-surface-2);
+  border: 1px solid var(--mh-border-hair);
+  border-radius: var(--mh-radius-input);
+  padding: calc(var(--mh-unit) * 2);
+}
+
+.trust-note {
+  margin: calc(var(--mh-unit) * 3) 0 0;
+  font-size: 12px;
+  color: var(--mh-text-3);
+}
+
+.trust-source {
+  margin: calc(var(--mh-unit) * 2) 0 0;
+  font-size: 12px;
+  color: var(--mh-text-3);
+}
+
+.trust-source code {
+  font-family: var(--mh-font-mono);
+}
+
+.trust-error {
+  margin: calc(var(--mh-unit) * 2) 0 0;
+  font-size: 12px;
+  color: var(--mh-text-1);
+}
+
+.trust-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: calc(var(--mh-unit) * 2);
+  margin-top: calc(var(--mh-unit) * 5);
+}
+
+.trust-cancel,
+.trust-confirm {
+  border: 1px solid var(--mh-border-hair);
+  border-radius: var(--mh-radius-input);
+  font: inherit;
+  font-size: 13px;
+  padding: calc(var(--mh-unit) * 1.5) calc(var(--mh-unit) * 4);
+  cursor: pointer;
+}
+
+.trust-cancel {
+  background: transparent;
+  color: var(--mh-text-1);
+}
+
+.trust-cancel:hover:not(:disabled) {
+  background: var(--mh-hover-fill);
+}
+
+.trust-confirm {
+  background: var(--mh-text-1);
+  color: var(--mh-surface-1);
+  border-color: var(--mh-text-1);
+  font-weight: 600;
+}
+
+.trust-confirm:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.trust-cancel:disabled,
+.trust-confirm:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

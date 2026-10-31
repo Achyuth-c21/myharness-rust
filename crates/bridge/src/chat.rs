@@ -26,6 +26,7 @@
 //! `docs/11` §4.3); the in-memory implementation remains a test seam.
 
 use std::collections::{BTreeMap, HashMap};
+use std::path::Path;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -57,6 +58,7 @@ use tokio_util::sync::CancellationToken;
 use crate::catalog::{CatalogRuntime, PluginsView, SkillsView};
 use crate::mcp::{ApprovalDecision, ToolRuntime};
 use crate::policy::{validate_workspace_folder, CodePolicy, CodePolicyView};
+use crate::trust::{now_millis, WorkspaceTrustStore};
 use crate::setup::{
     bridge_provider_error, bridge_secret_error, custom_headers_for_probe, first_probe_model,
     parse_probe_scheme, resolve_optional_probe_credential, resolve_probe_credential, BridgeError,
@@ -646,6 +648,18 @@ pub enum ChatCommand {
         #[serde(default)]
         archived: Option<bool>,
     },
+    /// The workspace trust gate (UI-SCREEN-32; `docs/screens/trust-workspace.md`).
+    /// The renderer asks before showing the modal; the bridge answers from the
+    /// stored decisions only — never a heuristic. The answer carries the
+    /// canonical spelling the bridge verified.
+    CheckWorkspaceTrust {
+        folder: String,
+    },
+    /// Record the trust decision for the canonicalized folder. Storing is part
+    /// of deciding: a failed persist refuses.
+    TrustWorkspace {
+        folder: String,
+    },
     CreateCodeSession {
         #[serde(default)]
         title: Option<String>,
@@ -900,6 +914,12 @@ pub enum ChatResponse {
     Session {
         session: SessionView,
     },
+    /// The workspace trust answer (`folder` is the canonical spelling the
+    /// bridge verified; the renderer displays that, never its own copy).
+    WorkspaceTrust {
+        folder: String,
+        trusted: bool,
+    },
     CodeDashboard {
         summary: CodeUsageSummary,
         sessions: Vec<SessionRow>,
@@ -1132,6 +1152,15 @@ fn session_failure(error: impl std::fmt::Display) -> ChatFailure {
     ChatFailure::before_send(BridgeError::new("SESSION_ERROR", error.to_string()))
 }
 
+/// The trust store is behind a mutex; a poisoned lock is a visible refusal,
+/// never a silently skipped gate.
+fn poisoned_trust_store() -> ChatFailure {
+    ChatFailure::before_send(BridgeError::new(
+        "SESSION_ERROR",
+        "the workspace trust store is unavailable",
+    ))
+}
+
 /// Map a memory-layer failure onto the wire. A corrupt entry file is its
 /// own visible code — "unreadable and set aside" — never a generic error.
 fn memory_failure(error: myharness_memory::MemoryError) -> ChatFailure {
@@ -1182,6 +1211,7 @@ pub struct ChatService<K: AuditKeyStore, R: ChatTargetResolver> {
     catalog: Option<std::sync::Arc<CatalogRuntime>>,
     memory: Option<std::sync::Arc<myharness_memory::MemoryStore>>,
     diagnostics_dir: Option<std::path::PathBuf>,
+    trust: Mutex<WorkspaceTrustStore>,
 }
 
 impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
@@ -1194,7 +1224,18 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
             catalog: None,
             memory: None,
             diagnostics_dir: None,
+            // Empty by default and therefore fail-closed: nothing is trusted
+            // until a store is attached and a decision is recorded.
+            trust: Mutex::new(WorkspaceTrustStore::new(None)),
         }
+    }
+
+    /// Attach the workspace trust store (UI-SCREEN-32). Production passes a
+    /// file-backed store so a decision survives restart; the default is an
+    /// in-memory empty store where nothing is trusted.
+    pub fn with_workspace_trust(mut self, trust: WorkspaceTrustStore) -> Self {
+        self.trust = Mutex::new(trust);
+        self
     }
 
     /// Attach the MCP/tool runtime. Without it, sends remain tool-free and
@@ -1292,6 +1333,25 @@ async fn run<K: AuditKeyStore, R: ChatTargetResolver>(
             Ok(ChatResponse::Sessions { sessions })
         }
         ChatCommand::ListCodeSessions { archived } => service.list_code_sessions(archived),
+        ChatCommand::CheckWorkspaceTrust { folder } => {
+            let policy = service.targets.code_policy()?;
+            let canonical = validate_workspace_folder(&folder, &policy)?;
+            let folder_text = canonical
+                .to_str()
+                .ok_or_else(|| {
+                    ChatFailure::before_send(BridgeError::new(
+                        "CONFIG_VALIDATION",
+                        "the selected folder path is not valid UTF-8",
+                    ))
+                })?
+                .to_string();
+            let trusted = service.workspace_trusted(&canonical)?;
+            Ok(ChatResponse::WorkspaceTrust {
+                folder: folder_text,
+                trusted,
+            })
+        }
+        ChatCommand::TrustWorkspace { folder } => service.trust_workspace(&folder),
         ChatCommand::CreateCodeSession {
             title,
             cwd,
@@ -1594,6 +1654,47 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
         })
     }
 
+    /// The trust answer for an already-canonicalized folder (UI-SCREEN-32).
+    fn workspace_trusted(&self, canonical_folder: &Path) -> Result<bool, ChatFailure> {
+        Ok(self
+            .trust
+            .lock()
+            .map_err(|_| poisoned_trust_store())?
+            .is_trusted(&canonical_folder.to_string_lossy()))
+    }
+
+    /// Record the trust decision (TrustWorkspace). The folder is validated and
+    /// canonicalized here — the renderer never canonicalizes on its own — and
+    /// a failed persist refuses: a decision that cannot be stored was not made
+    /// (REQ-CODE-09).
+    fn trust_workspace(&self, folder: &str) -> Result<ChatResponse, ChatFailure> {
+        let policy = self.targets.code_policy()?;
+        let canonical = validate_workspace_folder(folder, &policy)?;
+        let folder_text = canonical
+            .to_str()
+            .ok_or_else(|| {
+                ChatFailure::before_send(BridgeError::new(
+                    "CONFIG_VALIDATION",
+                    "the selected folder path is not valid UTF-8",
+                ))
+            })?
+            .to_string();
+        self.trust
+            .lock()
+            .map_err(|_| poisoned_trust_store())?
+            .trust(&folder_text, now_millis())
+            .map_err(|error| {
+                ChatFailure::before_send(BridgeError::new(
+                    "TRUST_STORE_FAILED",
+                    format!("the trust decision could not be stored: {error}"),
+                ))
+            })?;
+        Ok(ChatResponse::WorkspaceTrust {
+            folder: folder_text,
+            trusted: true,
+        })
+    }
+
     fn create_code_session(
         &self,
         title: Option<String>,
@@ -1620,6 +1721,16 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
             )));
         }
         let canonical = validate_workspace_folder(cwd, &policy)?;
+        // The trust gate (UI-SCREEN-32, REQ-CODE-09, IMP-41): a
+        // folder-executing Code session is impossible until the workspace
+        // decision is stored. The check lives here — the privileged side —
+        // not only in the renderer, which is untrusted.
+        if !self.workspace_trusted(&canonical)? {
+            return Err(ChatFailure::before_send(BridgeError::new(
+                "CODE_WORKSPACE_UNTRUSTED",
+                "this workspace has not been trusted for Code sessions",
+            )));
+        }
         let cwd = canonical
             .to_str()
             .ok_or_else(|| {
@@ -2969,6 +3080,15 @@ impl<K: AuditKeyStore, R: ChatTargetResolver> ChatService<K, R> {
                 return Err(ChatFailure::before_send(BridgeError::new(
                     "CODE_FOLDER_CHANGED",
                     "the session folder no longer resolves to the recorded path; choose the folder again",
+                )));
+            }
+            // The trust gate holds for the session's whole life (REQ-CODE-09):
+            // a send into a workspace whose stored decision is gone — a removed
+            // or reset trust file — is refused before any provider request.
+            if !self.workspace_trusted(&canonical)? {
+                return Err(ChatFailure::before_send(BridgeError::new(
+                    "CODE_WORKSPACE_UNTRUSTED",
+                    "this workspace has not been trusted for Code sessions",
                 )));
             }
             let mode = session

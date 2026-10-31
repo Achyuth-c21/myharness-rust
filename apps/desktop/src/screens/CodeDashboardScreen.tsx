@@ -13,8 +13,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   chat,
+  checkWorkspaceTrust,
   emitSessionsChanged,
   pickWorkspaceFolder,
+  trustWorkspace,
   type BridgeError,
   type ChatResponse,
   type CodePermissionMode,
@@ -23,6 +25,7 @@ import {
 } from "../chat/client";
 import { codeDraftKey, loadDraft, saveDraft } from "../chat/drafts";
 import { formatRelative, titleFromMessage } from "../chat/format";
+import { TrustWorkspaceModal } from "../components/TrustWorkspaceModal";
 import { LoadingShell } from "../components/shells";
 
 type CodeDashboard = Extract<ChatResponse, { type: "codeDashboard" }>;
@@ -208,6 +211,12 @@ export function CodeDashboardScreen() {
   const [folder, setFolder] = useState<string | null>(null);
   const [folderError, setFolderError] = useState<BridgeError | null>(null);
   const [folderNote, setFolderNote] = useState<string | null>(null);
+  // The trust gate (UI-SCREEN-32): a start on an untrusted folder opens the
+  // modal instead of the session; Cancel aborts, Trust records the decision
+  // and proceeds. The gate itself is the bridge's — this modal is the path.
+  const [trustPrompt, setTrustPrompt] = useState<{ folder: string } | null>(null);
+  const [trustBusy, setTrustBusy] = useState(false);
+  const [trustError, setTrustError] = useState<string | null>(null);
   const [permission, setPermission] = useState<CodePermissionMode>("default");
   const [draft, setDraft] = useState(() => loadDraft(codeDraftKey()));
   const [creating, setCreating] = useState(false);
@@ -290,38 +299,93 @@ export function CodeDashboardScreen() {
     setFolderError(result.error);
   };
 
+  const createSessionAndOpen = useCallback(
+    async (cwd: string, text: string, mode: CodePermissionMode) => {
+      sendingRef.current = true;
+      setCreating(true);
+      setCreateError(null);
+      try {
+        const response = await chat({
+          type: "createCodeSession",
+          title: titleFromMessage(text) === "New chat" ? "New Code task" : titleFromMessage(text),
+          cwd,
+          permissionMode: mode,
+        });
+        if (response.type === "session") {
+          // Keep the origin draft until the session screen has taken it over and
+          // the first turn succeeds; an open/send failure must not lose the text.
+          emitSessionsChanged();
+          navigate(`/epitaxy/${response.session.session.id}`, {
+            state: { pendingText: text, originKey: codeDraftKey() },
+          });
+        } else if (response.type === "error") {
+          setCreateError(response.error);
+          setDraft(text);
+          saveDraft(codeDraftKey(), text);
+        }
+      } finally {
+        sendingRef.current = false;
+        setCreating(false);
+      }
+    },
+    [navigate],
+  );
+
   const send = async () => {
     if (!canSend || sendingRef.current) return;
     const cwd = folder;
     if (!cwd) return;
-    sendingRef.current = true;
-    setCreating(true);
-    setCreateError(null);
     const text = draft;
-    const title = titleFromMessage(text);
-    try {
-      const response = await chat({
-        type: "createCodeSession",
-        title: title === "New chat" ? "New Code task" : title,
-        cwd,
-        permissionMode: permission,
-      });
-      if (response.type === "session") {
-        // Keep the origin draft until the session screen has taken it over and
-        // the first turn succeeds; an open/send failure must not lose the text.
-        emitSessionsChanged();
-        navigate(`/epitaxy/${response.session.session.id}`, {
-          state: { pendingText: text, originKey: codeDraftKey() },
-        });
-      } else if (response.type === "error") {
-        setCreateError(response.error);
-        setDraft(text);
-        saveDraft(codeDraftKey(), text);
+    // The trust gate (UI-SCREEN-32): ask the bridge before the create. The
+    // bridge refuses an untrusted folder at create and send regardless
+    // (CODE_WORKSPACE_UNTRUSTED) — the modal is how the decision gets made,
+    // not the enforcement itself.
+    const verdict = await checkWorkspaceTrust(cwd);
+    if (verdict.kind === "checked") {
+      if (!verdict.trusted) {
+        setTrustError(null);
+        setTrustPrompt({ folder: verdict.folder });
+        return;
       }
-    } finally {
-      sendingRef.current = false;
-      setCreating(false);
+      await createSessionAndOpen(cwd, text, permission);
+      return;
     }
+    // A preview's BRIDGE_UNAVAILABLE keeps flowing to the create below, whose
+    // honest state is already the documented behavior; a real failure surfaces.
+    if (verdict.error.code !== "BRIDGE_UNAVAILABLE") {
+      setCreateError(verdict.error);
+      setDraft(text);
+      saveDraft(codeDraftKey(), text);
+      return;
+    }
+    await createSessionAndOpen(cwd, text, permission);
+  };
+
+  const cancelTrust = () => {
+    // Cancel aborts: no session, no folder access, nothing recorded.
+    setTrustPrompt(null);
+    setTrustError(null);
+  };
+
+  const confirmTrust = async () => {
+    if (!trustPrompt || trustBusy) return;
+    setTrustBusy(true);
+    setTrustError(null);
+    const result = await trustWorkspace(trustPrompt.folder);
+    if (result.kind === "error") {
+      setTrustBusy(false);
+      setTrustError(
+        result.error.code === "BRIDGE_UNAVAILABLE"
+          ? "Trusting a workspace is available in the desktop app."
+          : result.error.message,
+      );
+      return;
+    }
+    setTrustBusy(false);
+    setTrustPrompt(null);
+    // The decision is stored; resume the start the gate interrupted.
+    const cwd = result.folder;
+    await createSessionAndOpen(cwd, draft, permission);
   };
 
   const updateDraft = (value: string) => {
@@ -599,6 +663,15 @@ export function CodeDashboardScreen() {
             </section>
           </div>
         </>
+      ) : null}
+      {trustPrompt ? (
+        <TrustWorkspaceModal
+          folder={trustPrompt.folder}
+          busy={trustBusy}
+          error={trustError}
+          onCancel={cancelTrust}
+          onTrust={() => void confirmTrust()}
+        />
       ) : null}
     </div>
   );
