@@ -126,7 +126,20 @@ export function DeveloperPanel() {
           <span>{error.message}</span>
         </div>
       ) : null}
-      <h3>MCP servers</h3>
+      <div className="settings-inline">
+        <h3>Local MCP servers</h3>
+        {/* The observed pane opens with Edit config (docs/23 §3.4 item 25);
+            the config file lives in the app data directory and the shell does
+            not expose an editor yet — inert rather than a dead control. */}
+        <button
+          type="button"
+          className="text-btn"
+          disabled
+          title="Editing the MCP config file needs a shell capability that is not exposed yet (docs/14 §9)"
+        >
+          Edit config
+        </button>
+      </div>
       {servers.length === 0 ? (
         error ? null : <div className="settings-note">No MCP servers are configured.</div>
       ) : (
@@ -134,7 +147,13 @@ export function DeveloperPanel() {
           {servers.map((server) => (
             <div key={server.name} className="settings-row">
               <div>
-                <div className="settings-row-title">{server.name}</div>
+                <div className="settings-row-title">
+                  <span
+                    className={`server-badge server-${server.status.state}`}
+                    aria-label={server.status.state === "connected" ? "Running" : server.status.state}
+                  />
+                  {server.name}
+                </div>
                 <div className="settings-row-sub">{statusText(server)}</div>
               </div>
               <div className="settings-row-actions">
@@ -158,6 +177,16 @@ export function DeveloperPanel() {
                   onClick={() => void forget(server.name)}
                 >
                   Forget OAuth
+                </button>
+                {/* The observed detail action (docs/23 §3.4 item 25); the
+                    shell does not expose server logs to the renderer yet. */}
+                <button
+                  type="button"
+                  className="text-btn"
+                  disabled
+                  title="Server logs are not exposed by this build's shell yet (docs/14 §9)"
+                >
+                  View logs
                 </button>
               </div>
             </div>

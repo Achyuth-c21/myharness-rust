@@ -1784,6 +1784,102 @@ try {
     );
   });
 
+  await step("T52 the settings pane bodies carry the observed anatomy with honest states (docs/23 §3.4; IMP-43)", async () => {
+    // Usage: the observed 30d default and header copy.
+    await page.goto(`${BASE}/#settings/usage`);
+    await page.waitForSelector("[role=dialog][aria-label=Settings]");
+    await expectTrue(
+      (await page.getByText("Token usage on this device across Chat, Cowork, and Code", { exact: false }).count()) === 1,
+      "the usage header copy is the observed sentence",
+    );
+    await expectTrue(
+      await page.locator('.usage-range-btn:has-text("30d")').getAttribute("aria-pressed") === "true",
+      "the usage range defaults to 30d",
+    );
+    await page.keyboard.press("Escape");
+    // General: Interface font row + Font licenses, chat font defaults to Serif.
+    await page.goto(`${BASE}/#settings/general`);
+    await page.waitForSelector("[role=dialog][aria-label=Settings]");
+    await expectTrue(
+      (await page.locator(".settings-pref-row", { hasText: "Interface font" }).count()) === 1,
+      "the Interface font row is present",
+    );
+    await expectTrue(
+      (await page.getByRole("button", { name: "Font licenses" }).isDisabled()) === true,
+      "Font licenses is inert: its target was never observed",
+    );
+    await expectTrue(
+      (await page.locator("#chat-font").inputValue()) === "serif",
+      "the chat font defaults to the observed Anthropic Serif",
+    );
+    await page.keyboard.press("Escape");
+    // Claude Code: the two live theme preview cards and the observed controls.
+    await page.goto(`${BASE}/#settings/claude-code`);
+    await page.waitForSelector("[role=dialog][aria-label=Settings]");
+    await expectTrue(
+      (await page.locator(".code-theme-card").count()) === 2,
+      "two theme preview cards render (Claude Light / Claude Dark)",
+    );
+    await expectTrue(
+      (await page.locator(".code-theme-card").first().getAttribute("aria-checked")) === "true",
+      "Claude Light is the default theme selection",
+    );
+    await expectTrue(
+      (await page.locator("#code-font").getAttribute("placeholder")) === "e.g. JetBrains Mono",
+      "the Code font placeholder is the observed one",
+    );
+    await expectTrue(
+      (await page.locator("#code-font-size").inputValue()) === "default",
+      "Code font size defaults to the observed Default · 12 px",
+    );
+    await page.locator(".code-theme-card").nth(1).click();
+    await expectTrue(
+      (await page.locator(".code-theme-card").nth(1).getAttribute("aria-checked")) === "true",
+      "selecting a preview card records the theme",
+    );
+    await page.keyboard.press("Escape");
+    // System: the observed rows, each honestly disabled.
+    await page.goto(`${BASE}/#settings/desktop`);
+    await page.waitForSelector("[role=dialog][aria-label=Settings]");
+    for (const label of ["Run on startup", "System tray", "Keep computer awake"]) {
+      await expectTrue(
+        (await page.locator(".settings-pref-row", { hasText: label }).count()) === 1,
+        `the System pane carries the observed ${label} row`,
+      );
+    }
+    await expectTrue(
+      (await page.getByText("Ctrl+Alt+Space").count()) === 1,
+      "Quick Entry shows the observed default binding",
+    );
+    await expectTrue(
+      (await page.getByRole("button", { name: "Manage" }).isDisabled()) === true,
+      "Storage Manage is disabled-honest",
+    );
+    await page.keyboard.press("Escape");
+    // Cowork: the observed rows above the memory section.
+    await page.goto(`${BASE}/#settings/cowork`);
+    await page.waitForSelector("[role=dialog][aria-label=Settings]");
+    for (const label of ["Cowork files", "Trusted Cowork folders", "Preferred browser", "Allowed sites", "Global instructions"]) {
+      await expectTrue(
+        (await page.locator(".settings-pref-row", { hasText: label }).count()) === 1,
+        `the Cowork pane carries the observed ${label} row`,
+      );
+    }
+    await page.keyboard.press("Escape");
+    // Developer: the observed heading and Edit config, still honest in preview.
+    await page.goto(`${BASE}/#settings/developer`);
+    await page.waitForSelector("[role=dialog][aria-label=Settings]");
+    await expectTrue(
+      (await page.getByRole("heading", { name: "Local MCP servers" }).count()) === 1,
+      "the Developer pane carries the observed Local MCP servers heading",
+    );
+    await expectTrue(
+      (await page.getByRole("button", { name: "Edit config" }).isDisabled()) === true,
+      "Edit config is disabled-honest in this build",
+    );
+    await page.keyboard.press("Escape");
+  });
+
 } finally {
   await browser.close();
 }

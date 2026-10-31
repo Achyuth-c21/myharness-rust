@@ -19,6 +19,7 @@ import { MemoryPanel } from "../settings/MemoryPanel";
 import { DeveloperPanel } from "../settings/DeveloperPanel";
 import { PluginsPanel } from "../settings/PluginsPanel";
 import { SkillsPanel } from "../settings/SkillsPanel";
+import { CodeSettingsPanel } from "../settings/CodeSettingsPanel";
 import { useFocusTrap } from "./focusTrap";
 import {
   applyChatFont,
@@ -199,6 +200,26 @@ export function SettingsModal({ section, onSection, onClose }: Props) {
                 </p>
                 <h3>Appearance</h3>
                 <ThemeControl />
+                {/* The observed Interface font row + Font licenses link
+                    (docs/23 §3.4 item 18). The interface typeface is fixed in
+                    this build, so the row is informative, not a control. */}
+                <div className="settings-pref-row">
+                  <span className="settings-pref-label">Interface font</span>
+                  <span className="settings-value">
+                    Anthropic Sans
+                    {/* The link exists in the original; its target was never
+                        observed (docs/23 §3.4 item 18) — inert rather than a
+                        guessed URL. */}
+                    <button
+                      type="button"
+                      className="text-btn settings-link-inline"
+                      disabled
+                      title="The licenses surface's target was not observed (docs/23 §3.4 item 18)"
+                    >
+                      Font licenses
+                    </button>
+                  </span>
+                </div>
                 <div className="settings-pref-row">
                   <label className="settings-pref-label" htmlFor="chat-font">Chat font</label>
                   <select
@@ -267,6 +288,8 @@ export function SettingsModal({ section, onSection, onClose }: Props) {
               </>
             ) : section === "usage" ? (
               <UsagePanel />
+            ) : section === "claude-code" ? (
+              <CodeSettingsPanel />
             ) : section === "data-privacy-controls" ? (
               <PrivacyPanel />
             ) : section === "cowork" ? (
