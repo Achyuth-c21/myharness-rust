@@ -48,6 +48,7 @@ import {
 } from "../chat/drafts";
 import { LoadingShell } from "../components/shells";
 import { useFocusTrap } from "../components/focusTrap";
+import { reportProviderContactFailure } from "../components/Notice";
 import { modelLabel } from "../chat/format";
 
 function ArrowUpIcon() {
@@ -746,6 +747,10 @@ export function SessionScreen({
               error: response.error,
               recorded: response.userTurnRecorded,
             });
+            // A failed provider contact also raises the observed top banner
+            // (UI-SCREEN-33; docs/23 §3.8 item 34). The reporter filters to
+            // the contact-failure codes; the inline state above stays.
+            reportProviderContactFailure(response.error);
           }
           setDraft(text);
           saveDraft(draftKey, text);

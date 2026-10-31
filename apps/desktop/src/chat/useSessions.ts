@@ -14,6 +14,7 @@ import {
   SESSIONS_CHANGED,
   type SessionRecord,
 } from "./client";
+import { reportBackgroundFailure } from "../components/Notice";
 
 export interface SessionList {
   sessions: SessionRecord[];
@@ -46,6 +47,15 @@ export function useChatSessions(
     } else if (response.type === "error" && response.error.code === "BRIDGE_UNAVAILABLE") {
       setSessions([]);
       setUnavailable(true);
+    } else if (response.type === "error") {
+      // A real bridge failure must not leave the list silently empty
+      // (UI-SCREEN-33; docs/23 §3.8 item 34). BRIDGE_UNAVAILABLE above is the
+      // browser preview's honest state and never reaches the toast surface.
+      reportBackgroundFailure({
+        code: response.error.code,
+        message: `The session list could not load. ${response.error.message}`,
+        action: { label: "Check again", run: () => void refresh() },
+      });
     }
   }, [archived, surface]);
 
