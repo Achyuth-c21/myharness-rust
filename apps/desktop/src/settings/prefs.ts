@@ -204,3 +204,24 @@ export function saveTranscriptView(view: TranscriptView): void {
     // Session-only, as above.
   }
 }
+
+// ─── The language choice (UI-SCREEN-20; IMP-47). Renderer-side until the
+// bridge/identity phase consumes it; the dialog states that honestly.
+
+const LOCALE_KEY = "ui.locale";
+
+export function loadLocale(): string {
+  try {
+    return localStorage.getItem(LOCALE_KEY) ?? "en-US";
+  } catch {
+    return "en-US";
+  }
+}
+
+export function saveLocale(locale: string): void {
+  try {
+    localStorage.setItem(LOCALE_KEY, locale);
+  } catch {
+    // Session-only, as above.
+  }
+}

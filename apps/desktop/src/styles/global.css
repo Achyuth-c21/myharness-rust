@@ -3886,3 +3886,66 @@ html[data-motion="reduced"] *::after {
 .server-stopped {
   background: var(--mh-icon-3);
 }
+
+/* ---------- Language dialog (UI-SCREEN-20; docs/23 §3.3 item 15) ---------- */
+
+.language-dialog {
+  width: min(620px, calc(100vw - 48px));
+  background: var(--mh-surface-1);
+  border: 1px solid var(--mh-border-hair);
+  border-radius: var(--mh-radius-card);
+  box-shadow: 0 8px 32px rgba(11, 11, 11, 0.24);
+  padding: calc(var(--mh-unit) * 6);
+}
+
+.language-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: calc(var(--mh-unit) * 4);
+}
+
+.language-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: calc(var(--mh-unit) * 2);
+}
+
+.language-option {
+  position: relative;
+  border: 1px solid var(--mh-border-hair);
+  border-radius: var(--mh-radius-input);
+  background: transparent;
+  text-align: left;
+  padding: calc(var(--mh-unit) * 2) calc(var(--mh-unit) * 3);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--mh-unit) * 0.5);
+}
+
+.language-option:hover {
+  background: var(--mh-hover-fill);
+}
+
+.language-option.active {
+  background: var(--mh-hover-fill);
+  border-color: var(--mh-text-1);
+}
+
+.language-native {
+  font-size: 13px;
+  color: var(--mh-text-1);
+}
+
+.language-english {
+  font-size: 11px;
+  color: var(--mh-text-3);
+}
+
+.language-check {
+  position: absolute;
+  top: calc(var(--mh-unit) * 2);
+  right: calc(var(--mh-unit) * 2);
+  color: var(--mh-text-1);
+}

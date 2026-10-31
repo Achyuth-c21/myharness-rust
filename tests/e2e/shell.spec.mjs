@@ -1880,6 +1880,48 @@ try {
     await page.keyboard.press("Escape");
   });
 
+  await step("T53 the language dialog opens from the account menu and persists the choice (UI-SCREEN-20, IMP-47)", async () => {
+    await page.goto(`${BASE}/new`);
+    await page.waitForSelector("#composer");
+    await page.locator(".account-row").click();
+    await page.getByRole("menuitem", { name: "Language" }).click();
+    const dialog = page.getByRole("dialog", { name: "Choose your language" });
+    await dialog.waitFor();
+    await expectTrue(
+      (await dialog.getByRole("option").count()) === 11,
+      "the dialog offers the observed 11 locales",
+    );
+    await expectTrue(
+      (await dialog.getByRole("option", { name: "English English (United States)" }).getAttribute("aria-selected")) === "true",
+      "English (United States) starts selected",
+    );
+    await expectTrue(
+      (await dialog.getByRole("option", { name: "हिन्दी Hindi (India)" }).count()) === 1,
+      "each option shows the autonym over the English label",
+    );
+    await dialog.getByRole("option", { name: "Français French (France)" }).click();
+    await expectTrue(
+      (await dialog.getByRole("option", { name: "Français French (France)" }).getAttribute("aria-selected")) === "true",
+      "selecting applies immediately (no Apply button)",
+    );
+    await dialog.getByRole("button", { name: "Close language dialog" }).click();
+    await expectTrue(
+      (await page.getByRole("dialog", { name: "Choose your language" }).count()) === 0,
+      "close X dismisses the dialog",
+    );
+    // The choice persists across a reopen.
+    await page.reload();
+    await page.waitForSelector("#composer");
+    await page.locator(".account-row").click();
+    await page.getByRole("menuitem", { name: "Language" }).click();
+    await dialog.waitFor();
+    await expectTrue(
+      (await dialog.getByRole("option", { name: "Français French (France)" }).getAttribute("aria-selected")) === "true",
+      "the stored choice is checked on reopen",
+    );
+    await page.getByRole("button", { name: "Close language dialog" }).click();
+  });
+
 } finally {
   await browser.close();
 }
