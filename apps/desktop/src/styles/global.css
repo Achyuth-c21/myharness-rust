@@ -3118,10 +3118,6 @@ html[data-motion="reduced"] *::after {
 }
 
 .filter-menu {
-  position: absolute;
-  top: calc(100% + var(--mh-unit) * 1);
-  right: 0;
-  width: 230px; /* captured menu width (docs/screens/search-palette.md) */
   display: flex;
   flex-direction: column;
   background: var(--mh-surface-2);
@@ -3130,6 +3126,13 @@ html[data-motion="reduced"] *::after {
   box-shadow: 0 8px 32px rgba(11, 11, 11, 0.24);
   padding: calc(var(--mh-unit) * 1);
   z-index: 45;
+}
+
+/* TEST-UX-015 (docs/23 §3.1 item 5): the flyout is portaled to the document
+   body and fixed to the trigger's rect — the sidebar's scroll containers clip
+   absolutely-positioned children, which cut the menu down to one row. */
+.filter-menu-fixed {
+  position: fixed;
 }
 
 .filter-row {

@@ -13,7 +13,7 @@
  * placeholder and no personal name is baked into source), the "· Gateway"
  * provider label, and a disclosure chevron; its menu behavior is unchanged.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { NAV_ITEMS } from "../routes";
 import { ModeSwitch } from "./ModeSwitch";
@@ -102,14 +102,6 @@ function FilterIcon() {
   );
 }
 
-function ChevronRight() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path d="m6 3.5 4.5 4.5L6 12.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
 function ChevronDown() {
   return (
     <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -180,6 +172,7 @@ export function Sidebar({ onOpenSettings, onOpenSearch }: Props) {
   // remaining filters compose client-side over those rows (AND, immediate).
   const [filters, setFilters] = useState<TaskFilters>(loadFilters);
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
+  const filterTriggerRef = useRef<HTMLButtonElement>(null);
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const { sessions, unavailable } = useChatSessions(
     filters.status === "archived" ? true : false,
@@ -284,13 +277,15 @@ export function Sidebar({ onOpenSettings, onOpenSearch }: Props) {
         </div>
 
         {/* Tasks header + independent list scroll (docs/05 §2 sidebar scrolls alone).
-            The chevron is the section's disclosure indicator in the reference, not
-            an interactive control. Filter composes immediately (UI-SCREEN-23). */}
+            The reference label is plain "Tasks"; a `˅` appears only while the
+            filter menu is open (docs/23 §3.1 item 4/5). Filter composes
+            immediately (UI-SCREEN-23); the flyout portals out of the sidebar's
+            scroll containers (TEST-UX-015). */}
         <div className="sidebar-scroll">
           <div className="tasks-head">
             <span className="tasks-title">
               Tasks
-              <ChevronRight />
+              {filterMenuOpen ? <ChevronDown /> : null}
             </span>
             <div className="tasks-tools">
               <button
@@ -305,6 +300,7 @@ export function Sidebar({ onOpenSettings, onOpenSearch }: Props) {
               <span className="filter-anchor">
                 <button
                   type="button"
+                  ref={filterTriggerRef}
                   className="icon-btn icon-btn-sm"
                   aria-label="Filter tasks"
                   aria-haspopup="menu"
@@ -322,6 +318,7 @@ export function Sidebar({ onOpenSettings, onOpenSearch }: Props) {
                     filters={filters}
                     onChange={setFilters}
                     surface={surface}
+                    anchor={filterTriggerRef.current}
                     onClose={() => setFilterMenuOpen(false)}
                   />
                 ) : null}

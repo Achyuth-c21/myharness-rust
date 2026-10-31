@@ -15,9 +15,19 @@
  * The Type options are surface-dependent (docs/features/search-and-filter.md):
  * the sidebar task list is scoped by the Cowork|Code mode switch (Phase 4),
  * so the submenu offers the current surface's vocabulary.
+ *
+ * Geometry (TEST-UX-015; docs/23 §3.1 item 5): the flyout must render all
+ * five rows fully, dropping below-right of the filter icon. The sidebar and
+ * its list scroll container clip absolutely-positioned children, so the menu
+ * portals to the document body and anchors fixed to the trigger's rect —
+ * the original's flyout escapes the sidebar's overflow the same way.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import { useFocusTrap } from "./focusTrap";
+
+const MENU_WIDTH = 230; /* captured menu width (docs/screens/search-palette.md) */
+const MENU_GAP = 4; /* --mh-unit drop distance below the trigger */
 
 export interface TaskFilters {
   type: "all" | "chat" | "code";
@@ -100,21 +110,67 @@ interface Props {
   /** The surface vocabulary the current mode supports (surface-dependent). */
   surface: "chat" | "code";
   onClose: () => void;
+  /** The filter trigger button; the fixed anchor for the portal placement. */
+  anchor: HTMLElement | null;
 }
 
-export function TaskFilterMenu({ filters, onChange, surface, onClose }: Props) {
+export function TaskFilterMenu({ filters, onChange, surface, onClose, anchor }: Props) {
   const [openRow, setOpenRow] = useState<MenuRow | null>(null);
   const trapRef = useRef<HTMLDivElement>(null);
+  const [placement, setPlacement] = useState<CSSProperties>({ visibility: "hidden" });
   useFocusTrap(trapRef, true);
+
+  useLayoutEffect(() => {
+    if (!anchor) return;
+    const place = () => {
+      const rect = anchor.getBoundingClientRect();
+      const top = rect.bottom + MENU_GAP;
+      // Below-right of the icon (docs/23 §3.1 item 5), right edge tracking the
+      // trigger, clamped to the viewport; a short window scrolls the menu
+      // instead of clipping it.
+      const left = Math.min(
+        Math.max(8, rect.right - MENU_WIDTH),
+        Math.max(8, window.innerWidth - MENU_WIDTH - 8),
+      );
+      setPlacement({
+        position: "fixed",
+        top,
+        left,
+        width: MENU_WIDTH,
+        maxHeight: Math.max(120, window.innerHeight - 8 - top),
+        overflowY: "auto",
+      });
+    };
+    place();
+    window.addEventListener("resize", place);
+    return () => window.removeEventListener("resize", place);
+  }, [anchor]);
 
   useEffect(() => {
     const onOutside = (event: MouseEvent) => {
-      if (event.target instanceof Node && trapRef.current && !trapRef.current.contains(event.target)) {
-        onClose();
-      }
+      const target = event.target instanceof Node ? event.target : null;
+      if (!target) return;
+      if (trapRef.current?.contains(target)) return;
+      // The trigger toggles the menu itself (docs/14 §7 trap 5: close by
+      // toggling the trigger, not by clicking elsewhere); a press on it must
+      // not double-close through this handler.
+      if (anchor?.contains(target)) return;
+      onClose();
     };
     document.addEventListener("mousedown", onOutside);
     return () => document.removeEventListener("mousedown", onOutside);
+  }, [onClose, anchor]);
+
+  useEffect(() => {
+    // The menu is viewport-fixed while its anchor lives in the scrolling
+    // sidebar; a sidebar scroll would detach the two, so any scroll outside
+    // the menu closes it.
+    const onScroll = (event: Event) => {
+      if (event.target instanceof Node && trapRef.current?.contains(event.target)) return;
+      onClose();
+    };
+    window.addEventListener("scroll", onScroll, true);
+    return () => window.removeEventListener("scroll", onScroll, true);
   }, [onClose]);
 
   const options = (row: MenuRow): { value: string; label: string; disabled?: boolean }[] => {
@@ -171,8 +227,14 @@ export function TaskFilterMenu({ filters, onChange, surface, onClose }: Props) {
     return option?.label ?? String(value);
   };
 
-  return (
-    <div className="filter-menu" role="menu" aria-label="Filter tasks" ref={trapRef}>
+  return createPortal(
+    <div
+      className="filter-menu filter-menu-fixed"
+      role="menu"
+      aria-label="Filter tasks"
+      ref={trapRef}
+      style={placement}
+    >
       {(Object.keys(ROW_LABELS) as MenuRow[]).map((row) =>
         openRow === row ? (
           <div key={row} className="filter-options" role="group" aria-label={ROW_LABELS[row]}>
@@ -228,6 +290,7 @@ export function TaskFilterMenu({ filters, onChange, surface, onClose }: Props) {
           Reset filters
         </button>
       ) : null}
-    </div>
+    </div>,
+    document.body,
   );
 }
