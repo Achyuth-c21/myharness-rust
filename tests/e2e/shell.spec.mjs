@@ -1922,6 +1922,48 @@ try {
     await page.getByRole("button", { name: "Close language dialog" }).click();
   });
 
+  await step("T54 the composer Add menu opens with the observed rows and honest states (UI-SCREEN-25 §1, IMP-48)", async () => {
+    await page.goto(`${BASE}/new`);
+    await page.waitForSelector("#composer");
+    await page.getByRole("button", { name: "Add", exact: true }).click();
+    const menu = page.getByRole("menu", { name: "Add" });
+    await menu.waitFor();
+    await expectTrue(
+      (await menu.getByRole("menuitem").count()) === 4,
+      "the menu carries the observed four rows",
+    );
+    await expectTrue(
+      (await menu.getByRole("menuitem", { name: /Add files or photos/ }).isDisabled()) === true,
+      "file picking is honest about the missing picker",
+    );
+    await expectTrue(
+      (await menu.getByRole("menuitem", { name: /Add files or photos/ }).innerText()).includes("Ctrl+U"),
+      "the file row carries the observed shortcut hint",
+    );
+    await expectTrue(
+      (await menu.getByRole("menuitem", { name: /Skills/ }).isDisabled()) === true &&
+        (await menu.getByRole("menuitem", { name: /Connectors/ }).isDisabled()) === true,
+      "the submenu rows are labelled placeholders, not fake actions",
+    );
+    // Add plugins has a real target: the settings modal's Plugins pane.
+    await menu.getByRole("menuitem", { name: "Add plugins" }).click();
+    await page.waitForSelector("[role=dialog][aria-label=Settings]");
+    await expectTrue(
+      (await page.locator(".settings-link.active").innerText()) === "Plugins",
+      "Add plugins opens the settings modal at the Plugins pane",
+    );
+    await page.keyboard.press("Escape");
+    // Ctrl+U opens the same menu (the observed shortcut).
+    await page.locator("#composer").focus();
+    await page.keyboard.press("Control+u");
+    await menu.waitFor();
+    await page.keyboard.press("Escape");
+    await expectTrue(
+      (await page.getByRole("menu", { name: "Add" }).count()) === 0,
+      "Escape closes the Add menu",
+    );
+  });
+
 } finally {
   await browser.close();
 }
