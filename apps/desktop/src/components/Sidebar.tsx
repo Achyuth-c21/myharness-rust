@@ -20,6 +20,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { NAV_ITEMS } from "../routes";
 import { ModeSwitch } from "./ModeSwitch";
+import { LanguageDialog } from "./LanguageDialog";
 import { openSetupWindow } from "../setup/client";
 import { useChatSessions } from "../chat/useSessions";
 import { chat, type ProjectRecord, type SessionRecord } from "../chat/client";
@@ -168,6 +169,7 @@ const NAV_ICONS: Record<string, () => JSX.Element> = {
 
 export function Sidebar({ onOpenSettings, onOpenSearch }: Props) {
   const [accountOpen, setAccountOpen] = useState(false);
+  const [languageOpen, setLanguageOpen] = useState(false);
   const { pathname } = useLocation();
   const codeMode = pathname.startsWith("/epitaxy");
   const surface = codeMode ? "code" : "chat";
@@ -459,9 +461,8 @@ export function Sidebar({ onOpenSettings, onOpenSearch }: Props) {
             <button
               type="button"
               role="menuitem"
-              disabled
-              title="Language dialog — later phase (docs/05)"
               className="account-item"
+              onClick={() => setLanguageOpen(true)}
             >
               Language
             </button>
@@ -490,6 +491,14 @@ export function Sidebar({ onOpenSettings, onOpenSearch }: Props) {
               Sign out
             </button>
           </div>
+        ) : null}
+        {languageOpen ? (
+          <LanguageDialog
+            onClose={() => {
+              setLanguageOpen(false);
+              setAccountOpen(false);
+            }}
+          />
         ) : null}
       </div>
     </nav>
