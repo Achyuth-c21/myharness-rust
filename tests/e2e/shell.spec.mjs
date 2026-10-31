@@ -387,19 +387,27 @@ try {
     await page.getByRole("button", { name: "Back to New" }).click();
     await page.waitForURL("**/new");
     await page.goto(`${BASE}/epitaxy`);
-    await page.getByRole("heading", { name: "What’s up next?" }).waitFor();
-    await expectTrue(await page.getByRole("heading", { name: "What’s up next?" }).count() === 1, "code greeting");
+    await page.getByRole("heading", { name: "New session" }).waitFor();
+    await expectTrue(await page.getByRole("heading", { name: "New session" }).count() === 1, "the code landing header is the observed New session (UI-SCREEN-31)");
     await expectTrue(await page.getByRole("heading", { name: "You’re here!" }).count() === 0, "cowork greeting must NOT appear in code mode");
     await page.goto(`${BASE}/definitely-not-a-route`);
     await page.waitForURL("**/new");
   });
 
-  await step("T28b Code dashboard preview is honest and fail-closed", async () => {
+  await step("T28b the Code landing is the observed session-list shell, honest in the preview (UI-SCREEN-31, TEST-CODE-010)", async () => {
     await page.goto(`${BASE}/epitaxy`);
     await page.getByText("Code is available in the desktop app.").waitFor();
     await expectTrue(
+      (await page.locator(".code-home-title").innerText()) === "New session",
+      "the landing header is the observed New session",
+    );
+    await expectTrue(
+      (await page.locator(".code-home-glyphs svg").count()) === 2,
+      "the header carries the terminal and globe glyphs",
+    );
+    await expectTrue(
       (await page.locator(".code-stats").count()) === 0,
-      "the preview must not invent usage stats",
+      "the landing must not invent usage stats (the dashboard lives at /epitaxy/dashboard)",
     );
     await expectTrue(
       (await page.locator(".code-session-row").count()) === 0,
@@ -410,14 +418,19 @@ try {
       "the preview must not invent repository rows",
     );
     await expectTrue(
+      (await page.locator(".code-placement-chip").innerText()).includes("This computer"),
+      "the placement chip is the observed This computer",
+    );
+    await expectTrue(
+      (await page.locator(".code-model-label").isDisabled()) &&
+        (await page.locator(".code-model-label").innerText()) === "Default model",
+      "the model label is the observed Default model placeholder, disabled-honest",
+    );
+    await expectTrue(
       await page
         .locator('select[aria-label="Permission mode"] option[value="bypass"]')
         .evaluate((option) => option.disabled),
       "Bypass must be disabled when policy is unknown",
-    );
-    await expectTrue(
-      await page.getByRole("button", { name: "Fast" }).isDisabled(),
-      "Fast mode is deferred and must stay disabled",
     );
     await expectTrue(
       await page.getByRole("button", { name: "Send" }).isDisabled(),
@@ -435,7 +448,7 @@ try {
     await page.waitForURL("**/epitaxy");
   });
 
-  await step("T28c populated Code dashboard renders only the supplied bridge data", async () => {
+  await step("T28c the Code usage dashboard (a rebuild design, /epitaxy/dashboard) renders only the supplied bridge data", async () => {
     const mockContext = await browser.newContext({
       colorScheme: "dark",
       viewport: { width: 1200, height: 900 },
@@ -519,7 +532,7 @@ try {
         },
       };
     });
-    await mockPage.goto(`${BASE}/epitaxy`);
+    await mockPage.goto(`${BASE}/epitaxy/dashboard`);
     await mockPage.locator(".code-session-row", { hasText: "Test Code task" }).waitFor();
     await expectTrue(
       (await mockPage.locator(".code-stat").count()) === 6,

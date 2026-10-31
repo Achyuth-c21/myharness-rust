@@ -3,7 +3,10 @@
  * user-provided reference capture of the shipped home surface:
  *   1. Cowork|Code switch (with tab icons) at the top (docs/06 §4 "persistent in
  *      the sidebar");
- *   2. icon rows: New (+), Projects, Artifacts, Scheduled, Customize (docs/06 §2);
+ *   2. icon rows: Cowork mode — New (+), Projects, Artifacts, Scheduled,
+ *      Customize (docs/06 §2). Code mode — New, Customize, More
+ *      (docs/23 §3.1 item 2), with the workspace-folder tree below instead of
+ *      the Tasks list (UI-SCREEN-31);
  *   3. Tasks header with disclosure chevron + search/filter icons (UI-INT-025
  *      triggers; the chevron is a section indicator, not a control);
  *   4. task rows from the local session store (Phase 4; empty until a task exists);
@@ -14,12 +17,12 @@
  * provider label, and a disclosure chevron; its menu behavior is unchanged.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, NavLink, useLocation } from "react-router-dom";
+import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { NAV_ITEMS } from "../routes";
 import { ModeSwitch } from "./ModeSwitch";
 import { openSetupWindow } from "../setup/client";
 import { useChatSessions } from "../chat/useSessions";
-import { chat, type ProjectRecord } from "../chat/client";
+import { chat, type ProjectRecord, type SessionRecord } from "../chat/client";
 import { formatRelative } from "../chat/format";
 import {
   activeFilterCount,
@@ -251,37 +254,79 @@ export function Sidebar({ onOpenSettings, onOpenSearch }: Props) {
       <div className="sidebar-top">
         <ModeSwitch />
         <div className="sidebar-list">
-          {NAV_ITEMS.map((item) => {
-            const Icon = NAV_ICONS[item.path];
-            const to = item.path === "/new" && codeMode ? "/epitaxy" : item.path;
-            return (
+          {codeMode ? (
+            <>
+              {/* The observed Code sidebar (docs/23 §3.1 item 2): New,
+                  Customize, More — not the Cowork list. */}
               <NavLink
-                key={item.path}
-                to={to}
+                to="/epitaxy"
                 className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
+                end
               >
-                {Icon ? <Icon /> : null}
-                <span>{item.label}</span>
+                <PlusIcon />
+                <span>New</span>
               </NavLink>
-            );
-          })}
-          <button
-            type="button"
-            className="nav-item nav-button"
-            disabled
-            title="Customize route was not captured in the evidence — docs/06 §1"
-          >
-            <CustomizeIcon />
-            <span>Customize</span>
-          </button>
+              <button
+                type="button"
+                className="nav-item nav-button"
+                disabled
+                title="Customize is not built yet; the observed route is documented in docs/screens/customize.md"
+              >
+                <CustomizeIcon />
+                <span>Customize</span>
+              </button>
+              <button
+                type="button"
+                className="nav-item nav-button"
+                disabled
+                title="The More menu's contents were never observed — docs/23 §3.1 item 2"
+              >
+                <MoreIcon />
+                <span>More</span>
+              </button>
+            </>
+          ) : (
+            <>
+              {NAV_ITEMS.map((item) => {
+                const Icon = NAV_ICONS[item.path];
+                return (
+                  <NavLink
+                    key={item.path}
+                    to={item.path}
+                    className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
+                  >
+                    {Icon ? <Icon /> : null}
+                    <span>{item.label}</span>
+                  </NavLink>
+                );
+              })}
+              <button
+                type="button"
+                className="nav-item nav-button"
+                disabled
+                title="Customize is not built yet; the observed route is documented in docs/screens/customize.md"
+              >
+                <CustomizeIcon />
+                <span>Customize</span>
+              </button>
+            </>
+          )}
         </div>
 
-        {/* Tasks header + independent list scroll (docs/05 §2 sidebar scrolls alone).
-            The reference label is plain "Tasks"; a `˅` appears only while the
-            filter menu is open (docs/23 §3.1 item 4/5). Filter composes
-            immediately (UI-SCREEN-23); the flyout portals out of the sidebar's
-            scroll containers (TEST-UX-015). */}
+        {codeMode ? (
+          /* Code mode's list area is the observed workspace-folder tree
+             (UI-SCREEN-31; docs/23 §3.1 item 2): folders expandable, a
+             per-folder `+`, sessions nested under folders. */
+          <div className="sidebar-scroll">
+            <CodeFolderTree sessions={sessions} unavailable={unavailable} />
+          </div>
+        ) : (
         <div className="sidebar-scroll">
+          {/* Tasks header + independent list scroll (docs/05 §2 sidebar scrolls alone).
+              The reference label is plain "Tasks"; a `˅` appears only while the
+              filter menu is open (docs/23 §3.1 item 4/5). Filter composes
+              immediately (UI-SCREEN-23); the flyout portals out of the sidebar's
+              scroll containers (TEST-UX-015). */}
           <div className="tasks-head">
             <span className="tasks-title">
               Tasks
@@ -359,6 +404,7 @@ export function Sidebar({ onOpenSettings, onOpenSearch }: Props) {
             ),
           )}
         </div>
+        )}
       </div>
 
       <div className="account">
@@ -445,5 +491,120 @@ export function Sidebar({ onOpenSettings, onOpenSearch }: Props) {
         ) : null}
       </div>
     </nav>
+  );
+}
+
+function MoreIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <circle cx="3.4" cy="8" r="1.3" fill="currentColor" />
+      <circle cx="8" cy="8" r="1.3" fill="currentColor" />
+      <circle cx="12.6" cy="8" r="1.3" fill="currentColor" />
+    </svg>
+  );
+}
+
+/**
+ * The Code-mode list area: the observed workspace-folder tree
+ * (UI-SCREEN-31; docs/23 §3.1 item 2). Folders group the real Code sessions
+ * by their bound cwd; each folder expands (`›`) and carries a per-folder `+`
+ * that starts a session there — implemented as preselecting the folder on the
+ * Code home composer (a Code session is created by its first send, so the
+ * `+` routes there and focuses the input; the trust gate still runs at send).
+ * Populated row anatomy beyond the grouping is `Unknown` (the audit's tree
+ * was empty); the grouping itself is the observed structure.
+ */
+function CodeFolderTree({
+  sessions,
+  unavailable,
+}: {
+  sessions: SessionRecord[];
+  unavailable: boolean;
+}) {
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const navigate = useNavigate();
+
+  const folders = useMemo(() => {
+    const map = new Map<string, SessionRecord[]>();
+    for (const session of [...sessions].sort((a, b) => b.lastActivityAt - a.lastActivityAt)) {
+      const key = session.cwd ?? "";
+      const rows = map.get(key) ?? [];
+      rows.push(session);
+      map.set(key, rows);
+    }
+    // Most recent folder first.
+    return [...map.entries()].sort(
+      (a, b) => (b[1][0]?.lastActivityAt ?? 0) - (a[1][0]?.lastActivityAt ?? 0),
+    );
+  }, [sessions]);
+
+  const label = (cwd: string) => (cwd ? cwd.split("/").filter(Boolean).pop() || cwd : "No folder");
+  const toggle = (cwd: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(cwd)) next.delete(cwd);
+      else next.add(cwd);
+      return next;
+    });
+
+  if (unavailable) {
+    return (
+      <div className="code-tree-note" role="status">
+        The Code workspace list is available in the desktop app.
+      </div>
+    );
+  }
+  if (folders.length === 0) {
+    return (
+      <div className="code-tree-note" role="status">
+        No Code sessions yet. Start one from the composer.
+      </div>
+    );
+  }
+
+  return (
+    <div className="code-tree" role="tree" aria-label="Code workspaces">
+      {folders.map(([cwd, rows]) => {
+        const open = expanded.has(cwd);
+        return (
+          <div key={cwd || "(no folder)"} className="code-tree-folder" role="treeitem" aria-expanded={open}>
+            <div className="code-tree-folder-row">
+              <button
+                type="button"
+                className="code-tree-disclosure"
+                aria-label={`${open ? "Collapse" : "Expand"} ${label(cwd)}`}
+                onClick={() => toggle(cwd)}
+              >
+                <span className={`code-tree-chevron${open ? " open" : ""}`} aria-hidden="true">
+                  ›
+                </span>
+              </button>
+              <span className="code-tree-folder-name" title={cwd || undefined}>
+                {label(cwd)}
+              </span>
+              <button
+                type="button"
+                className="code-tree-add"
+                aria-label={`Start a session in ${label(cwd)}`}
+                title="Start a session in this folder"
+                onClick={() => navigate("/epitaxy", { state: { folder: cwd } })}
+              >
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M8 3.5v9M3.5 8h9" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+                </svg>
+              </button>
+            </div>
+            {open
+              ? rows.map((session) => (
+                  <Link key={session.id} to={`/epitaxy/${session.id}`} className="code-tree-session">
+                    <span className="code-tree-session-title">{session.title}</span>
+                    <span className="code-tree-session-time">{formatRelative(session.lastActivityAt)}</span>
+                  </Link>
+                ))
+              : null}
+          </div>
+        );
+      })}
+    </div>
   );
 }
