@@ -42,7 +42,10 @@
   /* Layout (docs/07 §1.4): sidebar measures ~321px at the app's default window
      and ~425px at 1920 (reference capture) — both fit a 22.2vw fluid rule. */
   --mh-titlebar-h: 36px;
-  --mh-sidebar-w: clamp(300px, 22.2vw, 426px);
+  /* The live audit measured ≈420px on the original at both 1920×1080 and
+     1200×800, matching the boot payload's sidebarWidth: 420 (docs/23 §3.1
+     item 1) — the earlier ~321px reading is superseded (IMP-45). */
+  --mh-sidebar-w: clamp(420px, 21.9vw, 426px);
 
   /* Typography (docs/07 §1.1): interface 13–14px, meta 12px, variable weights.
      Display faces (Anthropic sans/serif) are not vendored — documented system
@@ -178,7 +181,7 @@ body {
 }
 
 .sidebar {
-  width: var(--mh-sidebar-w); /* fluid: ~321px @ default window, ~425px @ 1920 (docs/07 §1.4) */
+  width: var(--mh-sidebar-w); /* ~420px (docs/23 §3.1 item 1; IMP-45) */
   min-width: var(--mh-sidebar-w);
   border-right: 1px solid var(--mh-border-hair);
   background: var(--mh-surface-1);
@@ -411,6 +414,13 @@ body {
 
 .account-item-more {
   margin-left: auto;
+  color: var(--mh-text-3);
+}
+
+/* The Settings row's shortcut hint (docs/23 §3.3 item 14). */
+.account-item-hint {
+  margin-left: auto;
+  font-size: 11px;
   color: var(--mh-text-3);
 }
 
@@ -1083,9 +1093,10 @@ html[data-motion="reduced"] *::after {
 .screen-head h1 {
   /* The original's list-page titles are serif display (docs/screens/projects.md
      "Serif page title"; scheduled-tasks "serif display"; artifacts "Serif
-     Artifacts title") — interface-parity phase, docs/17 section 4.25. */
+     Artifacts title"). The live audit measured ~32px at its viewport
+     (docs/23 §3.5 items 27/29) — superseding IP-01's 16px (IMP-50, docs/17). */
   font-family: var(--mh-font-display);
-  font-size: 16px;
+  font-size: 32px;
   font-weight: var(--mh-w4);
   margin: 0 auto 0 0;
 }

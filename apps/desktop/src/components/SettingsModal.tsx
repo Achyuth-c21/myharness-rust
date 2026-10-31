@@ -149,7 +149,7 @@ export function SettingsModal({ section, onSection, onClose }: Props) {
           <input
             ref={searchRef}
             className="settings-search"
-            placeholder="Search…"
+            placeholder="Search"
             aria-label="Search settings"
             value={filter}
             onChange={(event) => setFilter(event.target.value)}

@@ -40,9 +40,10 @@ function SearchGlyph() {
 }
 
 function SortGlyph() {
+  /* The observed header glyph is the up/down sort arrows (docs/23 §3.5 item 27). */
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path d="M3 4.5h10M4.75 8h6.5M6.5 11.5h3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      <path d="m5 6.5 1.75-2 1.75 2M6.75 4.5v7M11 9.5l-1.75 2-1.75-2M9.25 11.5v-7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

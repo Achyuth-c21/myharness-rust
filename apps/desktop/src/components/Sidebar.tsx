@@ -451,8 +451,10 @@ export function Sidebar({ onOpenSettings, onOpenSearch }: Props) {
               <span className="account-menu-name">Account</span>
               <span className="account-menu-provider">Gateway</span>
             </div>
+            {/* The observed row carries the Ctrl+, hint (docs/23 §3.3 item 14). */}
             <button type="button" role="menuitem" onClick={onOpenSettings} className="account-item">
-              Settings
+              <span>Settings</span>
+              <span className="account-item-hint">Ctrl+,</span>
             </button>
             <button
               type="button"
@@ -476,7 +478,7 @@ export function Sidebar({ onOpenSettings, onOpenSearch }: Props) {
             </button>
             <div className="account-menu-separator" role="separator" aria-hidden="true" />
             <button type="button" role="menuitem" disabled className="account-item">
-              <span>Changelog</span>
+              <span>View changelog</span>
               <span className="account-item-more" aria-hidden="true">
                 ›
               </span>
