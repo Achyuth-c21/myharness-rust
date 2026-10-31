@@ -1176,7 +1176,7 @@ try {
       "templates come from the bridge; the preview shows none rather than faking them",
     );
     // The editor opens client-side; a save without a core reports the boundary.
-    await page.getByRole("button", { name: "New task" }).click();
+    await page.locator(".sched-split-main").click();
     await page.getByRole("dialog", { name: "New scheduled task" }).waitFor();
     await page.locator(".project-dialog input[type=text]").fill("Probe");
     await page.locator(".project-dialog textarea").fill("Say hello");
@@ -1962,6 +1962,59 @@ try {
       (await page.getByRole("menu", { name: "Add" }).count()) === 0,
       "Escape closes the Add menu",
     );
+  });
+
+  await step("T55 the scheduled screen carries the observed header anatomy (docs/23 §3.5 item 30, IMP-49)", async () => {
+    await page.goto(`${BASE}/scheduled-task`);
+    await page.locator('.sched-head button[aria-label="Search tasks"]').waitFor();
+    await expectTrue(
+      (await page.locator('select[aria-label="Sort by"]').inputValue()) === "next-run",
+      "the sort dropdown is present and defaults to the observed Next run",
+    );
+    await expectTrue(
+      (await page.locator(".sched-split-main").innerText()) === "New task",
+      "the split button main reads New task",
+    );
+    // The split menu: Create with Claude is a labelled placeholder; Set up
+    // manually opens the editor.
+    await page.getByRole("button", { name: "New task menu" }).click();
+    const menu = page.getByRole("menu", { name: "New task menu" });
+    await menu.waitFor();
+    await expectTrue(
+      (await menu.getByRole("menuitem").count()) === 2,
+      "the split menu carries the observed two rows",
+    );
+    await expectTrue(
+      (await menu.getByRole("menuitem", { name: "Create with Claude" }).isDisabled()) === true,
+      "the assisted flow is a labelled placeholder",
+    );
+    await menu.getByRole("menuitem", { name: "Set up manually" }).click();
+    await expectTrue(
+      (await menu.count()) === 0,
+      "choosing the manual path closes the menu",
+    );
+    // The banner is the neutral card with the sun glyph and Keep awake.
+    await expectTrue(
+      (await page.locator(".info-banner-neutral .info-banner-line").innerText()).includes(
+        "Scheduled tasks only run while your computer is awake and online.",
+      ),
+      "the banner sentence is present on the neutral card",
+    );
+    await expectTrue(
+      (await page.locator(".info-banner-neutral svg").count()) >= 1,
+      "the banner carries the sun glyph",
+    );
+    await expectTrue(
+      (await page.locator(".info-banner .switch-label").innerText()) === "Keep awake",
+      "the banner carries the Keep awake toggle",
+    );
+    // The empty state carries the stopwatch illustration and the template grid.
+    await expectTrue(
+      (await page.locator(".screen-empty .empty-art").count()) === 1,
+      "the empty state carries the stopwatch illustration",
+    );
+    // The template grid is bridge data; the preview shows none rather than
+    // faking them (T44), and T45 covers the populated grid.
   });
 
 } finally {

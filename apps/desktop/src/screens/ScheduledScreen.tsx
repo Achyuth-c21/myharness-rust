@@ -361,6 +361,10 @@ function ScheduledTaskEditor({
 export function ScheduledScreen() {
   const [state, setState] = useState<TasksState>({ kind: "loading" });
   const [templates, setTemplates] = useState<ScheduledTemplateCard[]>([]);
+  // The observed "New task ˅" split menu (docs/23 §3.5 item 30).
+  const [splitOpen, setSplitOpen] = useState(false);
+  const headerRef = useRef<HTMLElement>(null);
+  const splitRef = useRef<HTMLSpanElement>(null);
   const [filter, setFilter] = useState("");
   const [sort, setSort] = useState<SortKey>("next-run");
   const [editor, setEditor] = useState<{ name: string; prompt: string; cron: string; id?: string } | null>(null);
@@ -443,11 +447,28 @@ export function ScheduledScreen() {
       minute: "2-digit",
     });
 
+  useEffect(() => {
+    if (!splitOpen) return;
+    const onOutside = (event: MouseEvent) => {
+      if (event.target instanceof Node && splitRef.current?.contains(event.target)) return;
+      setSplitOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSplitOpen(false);
+    };
+    document.addEventListener("mousedown", onOutside);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onOutside);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [splitOpen]);
+
   const hasTasks = state.kind === "ready" && state.tasks.length > 0;
 
   return (
     <>
-      <header className="screen-head sched-head">
+      <header className="screen-head sched-head" ref={headerRef}>
         <div>
           <h1>Scheduled tasks</h1>
           <p className="screen-subtitle">
@@ -455,38 +476,92 @@ export function ScheduledScreen() {
             existing task to set one up.
           </p>
         </div>
-        {hasTasks ? (
-          <input
-            type="search"
-            className="projects-search"
-            placeholder="Search tasks"
-            aria-label="Search tasks"
-            value={filter}
-            onChange={(event) => setFilter(event.target.value)}
-          />
-        ) : null}
-        {hasTasks ? (
-          <label className="sched-sort">
-            <span className="field-label">Sort by</span>
-            <select aria-label="Sort by" value={sort} onChange={(event) => setSort(event.target.value as SortKey)}>
-              <option value="next-run">Next run</option>
-              <option value="name">Name</option>
-              <option value="created">Date created</option>
-            </select>
-            <ChevronDown />
-          </label>
-        ) : null}
+        {/* The original shows search and the sort dropdown on the empty screen
+            too (docs/23 §3.5 item 30, capture x24). */}
         <button
           type="button"
-          className="btn-primary"
-          onClick={() => setEditor({ name: "", prompt: "", cron: "0 9 * * *" })}
+          className="icon-btn"
+          aria-label="Search tasks"
+          title="Search tasks"
+          onClick={() => {
+            headerRef.current?.parentElement
+              ?.querySelector<HTMLInputElement>(".projects-search")
+              ?.focus();
+          }}
         >
-          New task
+          <SearchGlyph />
         </button>
+        <input
+          type="search"
+          className="projects-search"
+          placeholder="Search tasks"
+          aria-label="Search tasks"
+          value={filter}
+          onChange={(event) => setFilter(event.target.value)}
+        />
+        <label className="sched-sort">
+          <span className="field-label">Sort by</span>
+          <select aria-label="Sort by" value={sort} onChange={(event) => setSort(event.target.value as SortKey)}>
+            <option value="next-run">Next run</option>
+            <option value="name">Name</option>
+            <option value="created">Date created</option>
+          </select>
+          <ChevronDown />
+        </label>
+        {/* The observed split button (docs/23 §3.5 item 30): its menu is
+            "Create with Claude" / "Set up manually". The assisted flow was
+            never observed, so it is a labelled placeholder; the manual path
+            opens the editor as before. */}
+        <span className="sched-split" ref={splitRef}>
+          <button
+            type="button"
+            className="btn-primary sched-split-main"
+            onClick={() => setEditor({ name: "", prompt: "", cron: "0 9 * * *" })}
+          >
+            New task
+          </button>
+          <button
+            type="button"
+            className="btn-primary sched-split-caret"
+            aria-label="New task menu"
+            aria-haspopup="menu"
+            aria-expanded={splitOpen}
+            onClick={() => setSplitOpen((open) => !open)}
+          >
+            <ChevronDown />
+          </button>
+          {splitOpen ? (
+            <div className="add-menu" role="menu" aria-label="New task menu">
+              <button
+                type="button"
+                role="menuitem"
+                className="add-menu-item"
+                disabled
+                title="The Create-with-Claude flow was never observed — it is a labelled placeholder, not a dead action"
+              >
+                <span>Create with Claude</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="add-menu-item"
+                onClick={() => {
+                  setSplitOpen(false);
+                  setEditor({ name: "", prompt: "", cron: "0 9 * * *" });
+                }}
+              >
+                <span>Set up manually</span>
+              </button>
+            </div>
+          ) : null}
+        </span>
       </header>
 
-      <div className="info-banner" role="status">
-        <span>Scheduled tasks only run while your computer is awake and online.</span>
+      <div className="info-banner info-banner-neutral" role="status">
+        <span className="info-banner-line">
+          <SunGlyph />
+          Scheduled tasks only run while your computer is awake and online.
+        </span>
         <label className="switch">
           <input
             type="checkbox"
@@ -513,14 +588,14 @@ export function ScheduledScreen() {
         <div className="screen-empty" aria-busy="true" />
       ) : state.kind === "unavailable" ? (
         <div className="screen-empty">
-          <ClockGlyph />
+          <StopwatchArt />
           <h2>No scheduled tasks yet.</h2>
           <p>Scheduling is available in the desktop app.</p>
         </div>
       ) : !hasTasks ? (
         <>
           <div className="screen-empty">
-            <ClockGlyph />
+            <StopwatchArt />
             <h2>No scheduled tasks yet.</h2>
             <p />
           </div>
@@ -641,5 +716,39 @@ export function ScheduledScreen() {
         />
       ) : null}
     </>
+  );
+}
+
+
+function SearchGlyph() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <circle cx="7" cy="7" r="4.25" stroke="currentColor" strokeWidth="1.2" />
+      <path d="m10.2 10.2 3 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function SunGlyph() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <circle cx="8" cy="8" r="3" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M8 1.75v1.6M8 12.65v1.6M1.75 8h1.6M12.65 8h1.6M3.6 3.6l1.15 1.15M11.25 11.25l1.15 1.15M12.4 3.6l-1.15 1.15M4.75 11.25 3.6 12.4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** The observed stopwatch illustration, redrawn as line-art (docs/23 §3.5
+    item 30). Hand-drawn-style SVG only — no raster assets, license-clean. */
+function StopwatchArt() {
+  return (
+    <svg width="96" height="96" viewBox="0 0 96 96" fill="none" aria-hidden="true" className="empty-art">
+      <circle cx="48" cy="54" r="26" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeDasharray="2.5 5.5" />
+      <circle cx="48" cy="54" r="20" stroke="currentColor" strokeWidth="2" />
+      <path d="M48 42v12l8 5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M42 22h12M48 22v6M60.5 27.5l4-4M68 20l-3.5 3.5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
+      <path d="M28 34l4 4M68 34l-4 4" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
+      <path d="M20 78c6 4 14 6 28 6s22-2 28-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeDasharray="2.5 5.5" />
+    </svg>
   );
 }
