@@ -1374,7 +1374,7 @@ try {
     await mockContext.close();
   });
 
-  await step("T47 the filter menu composes, badges, and resets; filtered-empty differs from true empty", async () => {
+  await step("T47 the filter menu composes, badges, and resets; the flyout renders unclipped (TEST-UX-015); filtered-empty differs from true empty", async () => {
     const mockContext = await browser.newContext({
       colorScheme: "dark",
       viewport: { width: 1200, height: 900 },
@@ -1444,6 +1444,42 @@ try {
     );
     await mockPage.goto(`${BASE}/new`);
     await mockPage.locator(".task-row", { hasText: "Fresh task" }).waitFor();
+    // TEST-UX-015 (docs/23 §3.1 item 5): before the fix the flyout opened
+    // inside the sidebar's scroll containers and was clipped to one row.
+    await expectTrue(
+      (await mockPage.locator(".tasks-title svg").count()) === 0,
+      "the Tasks label carries no permanent chevron",
+    );
+    await mockPage.getByRole("button", { name: "Filter tasks" }).click();
+    await mockPage.getByRole("menu", { name: "Filter tasks" }).waitFor();
+    await expectTrue(
+      (await mockPage.locator(".tasks-title svg").count()) === 1,
+      "opening the filter flyout adds the ˅ to the Tasks label",
+    );
+    const filterRows = await mockPage.locator(".filter-menu [data-filter-row]").all();
+    await expectTrue(filterRows.length === 5, "all five filter rows render");
+    {
+      const trigger = await mockPage.locator('button[aria-label="Filter tasks"]').boundingBox();
+      let below = true;
+      let insideViewport = true;
+      for (const row of filterRows) {
+        const box = await row.boundingBox();
+        if (!box) below = false;
+        else {
+          if (!trigger || box.y < trigger.y + trigger.height - 1) below = false;
+          if (box.x < 0 || box.y < 0 || box.x + box.width > 1200 || box.y + box.height > 900) {
+            insideViewport = false;
+          }
+        }
+      }
+      await expectTrue(below, "every row sits fully below the filter icon");
+      await expectTrue(insideViewport, "every row is fully inside the viewport (not clipped)");
+    }
+    await mockPage.getByRole("button", { name: "Filter tasks" }).click();
+    await expectTrue(
+      (await mockPage.locator(".filter-menu").count()) === 0,
+      "toggling the trigger closes the flyout (docs/14 §7 trap 5)",
+    );
     await mockPage.getByRole("button", { name: "Filter tasks" }).click();
     await mockPage.getByRole("menu", { name: "Filter tasks" }).waitFor();
     // Last activity: Today hides the 40-day-old row immediately; applying
