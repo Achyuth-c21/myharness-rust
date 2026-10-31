@@ -17,6 +17,7 @@ import { TitleBar } from "./components/TitleBar";
 import { Sidebar } from "./components/Sidebar";
 import { SearchPalette } from "./components/SearchPalette";
 import { SettingsModal } from "./components/SettingsModal";
+import { NoticeSurfaces } from "./components/Notice";
 import { NewTaskScreen } from "./screens/NewTaskScreen";
 import { CoworkSessionScreen, CodeSessionScreen } from "./screens/CoworkSessionScreen";
 import { CodeDashboardScreen } from "./screens/CodeDashboardScreen";
@@ -226,6 +227,9 @@ function MainShell() {
       {settingsSection ? (
         <SettingsModal section={settingsSection} onSection={openSettings} onClose={closeSettings} />
       ) : null}
+      {/* Error surfaces (UI-SCREEN-33): the banner and toast stack render only
+          what real bridge failures report; nothing to show renders nothing. */}
+      <NoticeSurfaces />
     </div>
   );
 }

@@ -42,9 +42,15 @@ export function SkillsPanel() {
   };
 
   if (error) {
+    // The preview's unavailable state reads like the Cowork pane's, not as a
+    // raw internal error string (docs/23 §3.8 item 35, capture o19).
+    const friendly =
+      error.code === "BRIDGE_UNAVAILABLE"
+        ? "Skills are available in the desktop app."
+        : error.message;
     return (
       <div className="settings-note" role="alert">
-        <span className="error-code">{error.code}</span> {error.message}
+        <span className="error-code">{error.code}</span> {friendly}
       </div>
     );
   }

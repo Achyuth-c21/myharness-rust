@@ -1598,6 +1598,136 @@ try {
     await page.keyboard.press("Escape");
   });
 
+  await step("T50 error surfaces: the provider banner and the failure toast render real bridge errors (UI-SCREEN-33, TEST-UX-016)", async () => {
+    const mockContext = await browser.newContext({
+      viewport: { width: 1200, height: 900 },
+    });
+    const mockPage = await mockContext.newPage();
+    await mockPage.addInitScript(() => {
+      let listFailures = true;
+      const row = (id, title) => ({
+        id,
+        surface: "chat",
+        title,
+        cwd: null,
+        model: "model-a",
+        effort: null,
+        permission_mode: null,
+        projectId: null,
+        archived: false,
+        legal_hold: false,
+        createdAt: Date.now(),
+        lastActivityAt: Date.now(),
+        extra: {},
+      });
+      window.__TAURI_INTERNALS__ = {
+        invoke: async (cmd, args) => {
+          if (cmd !== "chat_command") throw new Error(`unexpected command ${cmd}`);
+          const command = args.command;
+          switch (command.type) {
+            case "listSessions":
+            case "listCodeSessions":
+              if (listFailures) {
+                return {
+                  type: "error",
+                  error: {
+                    code: "BRIDGE_ERROR",
+                    message: "the session store is unavailable",
+                    retryable: true,
+                  },
+                };
+              }
+              return { type: "sessions", sessions: [] };
+            case "listProjects":
+              return { type: "projects", projects: [] };
+            case "createSession": {
+              const created = row("sess-err-1", command.title ?? "t");
+              window.__lastSession = created;
+              return { type: "session", session: { session: created, turns: [] } };
+            }
+            case "openSession":
+            case "openCodeSession":
+              return { type: "session", session: { session: window.__lastSession, turns: [] } };
+            case "sendTurn":
+              return {
+                type: "error",
+                error: {
+                  code: "PROVIDER_ERROR",
+                  message: "connection refused by the mock provider",
+                  retryable: true,
+                },
+                userTurnRecorded: true,
+              };
+            default:
+              throw new Error(`unexpected chat command ${command.type}`);
+          }
+        },
+      };
+      window.__healSessionList = () => {
+        listFailures = false;
+      };
+    });
+    await mockPage.goto(`${BASE}/new`);
+    // Toast phase: the list load fails for real; the preview's BRIDGE_UNAVAILABLE
+    // state must NOT toast, this BRIDGE_ERROR must.
+    await mockPage.locator(".notice-toast").waitFor();
+    await expectTrue(
+      (await mockPage.locator(".notice-toast").count()) === 1,
+      "one deduplicated failure toast renders for the real list failure",
+    );
+    await expectTrue(
+      (await mockPage.locator(".notice-toast").innerText()).includes("the session store is unavailable"),
+      "the toast carries the bridge's message",
+    );
+    // Check again is a real re-check: still failing, the toast re-reports.
+    await mockPage.getByRole("button", { name: "Check again" }).click();
+    await mockPage.locator(".notice-toast").waitFor();
+    await expectTrue(
+      (await mockPage.locator(".notice-toast").count()) === 1,
+      "a failed re-check re-reports the toast",
+    );
+    // A re-check that succeeds clears the surface: dismiss + refresh, no new toast.
+    await mockPage.evaluate(() => window.__healSessionList());
+    await mockPage.getByRole("button", { name: "Check again" }).click();
+    await mockPage.waitForFunction(() => document.querySelectorAll(".notice-toast").length === 0);
+    // Banner phase: a send whose provider contact fails raises the observed banner.
+    await mockPage.locator("#composer").fill("hello there");
+    await mockPage.locator(".send-btn").click();
+    await mockPage.waitForURL(/\/cowork\/sess-err-1/);
+    await mockPage.locator(".notice-banner").waitFor();
+    await expectTrue(
+      (await mockPage.locator(".notice-banner-title").innerText()).includes("Can’t reach"),
+      "the banner carries the observed title pattern",
+    );
+    await expectTrue(
+      (await mockPage.locator(".notice-banner-body").innerText()).includes(
+        "The provider didn’t respond",
+      ),
+      "the banner carries the observed body copy",
+    );
+    await expectTrue(
+      (await mockPage.getByRole("button", { name: "Open Setup" }).count()) === 1,
+      "Open Setup is present (the setup window is real)",
+    );
+    await expectTrue(
+      await mockPage.getByRole("button", { name: "Check again" }).isDisabled(),
+      "Check again is disabled with a reason: no provider re-check command exists yet",
+    );
+    await mockPage.locator(".notice-details summary").click();
+    await expectTrue(
+      (await mockPage.locator(".notice-details-body").innerText()).includes(
+        "PROVIDER_ERROR: connection refused by the mock provider",
+      ),
+      "Details reveals the bridge's verbatim code and message",
+    );
+    await mockPage.locator(".notice-banner .notice-close").click();
+    await expectTrue(
+      (await mockPage.locator(".notice-banner").count()) === 0,
+      "the banner is dismissible",
+    );
+    await mockContext.close();
+  });
+
 } finally {
   await browser.close();
 }

@@ -3311,3 +3311,138 @@ html[data-motion="reduced"] *::after {
   align-items: center;
   gap: calc(var(--mh-unit) * 2);
 }
+
+/* ---------- Error surfaces (UI-SCREEN-33; docs/screens/error-surfaces.md) ----------
+   Top-center banner for a failed provider contact; bottom-right stacked toasts
+   for background failures. Colors reuse the design tokens; no new palette. */
+
+.notice-banner {
+  position: fixed;
+  top: calc(var(--mh-unit) * 10);
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(520px, calc(100vw - 64px));
+  background: var(--mh-surface-2);
+  border: 1px solid var(--mh-border-hair);
+  border-radius: var(--mh-radius-card);
+  box-shadow: 0 8px 32px rgba(11, 11, 11, 0.24);
+  padding: calc(var(--mh-unit) * 4);
+  z-index: 60; /* above app chrome (45), below nothing user-facing */
+}
+
+.notice-banner-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--mh-unit) * 2);
+}
+
+.notice-banner-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--mh-text-1);
+}
+
+.notice-banner-body {
+  margin: calc(var(--mh-unit) * 2) 0 0;
+  font-size: 13px;
+  color: var(--mh-text-2);
+}
+
+.notice-details {
+  margin-top: calc(var(--mh-unit) * 2);
+}
+
+.notice-details summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--mh-text-2);
+}
+
+.notice-details-body {
+  margin: calc(var(--mh-unit) * 1) 0 0;
+  font-size: 12px;
+  color: var(--mh-text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--mh-font-mono);
+}
+
+.notice-actions {
+  display: flex;
+  gap: calc(var(--mh-unit) * 2);
+  margin-top: calc(var(--mh-unit) * 3);
+}
+
+.notice-btn {
+  border: 1px solid var(--mh-border-hair);
+  border-radius: var(--mh-radius-input);
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  color: var(--mh-text-1);
+  padding: calc(var(--mh-unit) * 1) calc(var(--mh-unit) * 3);
+  cursor: pointer;
+}
+
+.notice-btn:hover:not(:disabled) {
+  background: var(--mh-hover-fill);
+}
+
+.notice-btn:disabled {
+  color: var(--mh-text-3);
+  cursor: default;
+}
+
+.notice-btn-secondary {
+  border-style: dashed;
+}
+
+.notice-close {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  color: var(--mh-text-3);
+  cursor: pointer;
+  padding: calc(var(--mh-unit) * 1);
+  line-height: 1;
+}
+
+.notice-close:hover {
+  color: var(--mh-text-1);
+}
+
+.notice-toasts {
+  position: fixed;
+  right: calc(var(--mh-unit) * 4);
+  bottom: calc(var(--mh-unit) * 4);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--mh-unit) * 2);
+  z-index: 60;
+}
+
+.notice-toast {
+  width: 320px;
+  background: var(--mh-surface-2);
+  border: 1px solid var(--mh-border-hair);
+  border-radius: var(--mh-radius-card);
+  box-shadow: 0 8px 32px rgba(11, 11, 11, 0.24);
+  padding: calc(var(--mh-unit) * 3);
+}
+
+.notice-toast-body {
+  margin: 0;
+  font-size: 13px;
+  color: var(--mh-text-1);
+  word-break: break-word;
+}
+
+.notice-toast-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: calc(var(--mh-unit) * 1);
+  margin-top: calc(var(--mh-unit) * 2);
+}
