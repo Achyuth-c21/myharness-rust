@@ -1741,6 +1741,49 @@ try {
     await mockContext.close();
   });
 
+  await step("T51 copy parity with the live original (docs/23 §2/§3; IMP-45)", async () => {
+    // The composer model label is the observed "Default model" placeholder.
+    await page.goto(`${BASE}/new`);
+    await page.waitForSelector("#composer");
+    await expectTrue(
+      (await page.locator(".composer-model").innerText()) === "Default model",
+      "the composer model label is the observed Default model placeholder",
+    );
+    // The account menu: the Ctrl+, hint on Settings and the View changelog label.
+    await page.locator(".account-row").click();
+    await page.locator(".account-menu").waitFor();
+    await expectTrue(
+      (await page.locator(".account-item", { hasText: "Settings" }).locator(".account-item-hint").innerText()) === "Ctrl+,",
+      "the Settings row carries the Ctrl+, hint",
+    );
+    await expectTrue(
+      (await page.locator(".account-item", { hasText: "View changelog" }).count()) === 1,
+      "the changelog row reads View changelog",
+    );
+    await page.keyboard.press("Escape");
+    // The settings search placeholder is the observed "Search".
+    await page.goto(`${BASE}/#settings/general`);
+    await page.waitForSelector("[role=dialog][aria-label=Settings]");
+    await expectTrue(
+      (await page.locator('.settings-nav input[type="search"], .settings-nav input').first().getAttribute("placeholder")) === "Search",
+      "the settings search placeholder is Search",
+    );
+    await page.keyboard.press("Escape");
+    // The sidebar is the observed ~420px.
+    await page.goto(`${BASE}/projects`);
+    await page.locator(".sidebar").waitFor();
+    const width = await page.locator(".sidebar").evaluate((el) => el.getBoundingClientRect().width);
+    await expectTrue(width >= 415 && width <= 432, `the sidebar measures ~420px (got ${width})`);
+    // The Projects display title is the original's large serif (~32px) and the
+    // second header icon is the sort glyph (up/down arrows).
+    const titleSize = await page.locator(".screen-head h1").evaluate((el) => getComputedStyle(el).fontSize);
+    await expectTrue(titleSize === "32px", `the Projects display title is ~32px (got ${titleSize})`);
+    await expectTrue(
+      (await page.locator('button[aria-label="Sort projects"]').count()) === 1,
+      "the Projects header carries the sort control",
+    );
+  });
+
 } finally {
   await browser.close();
 }

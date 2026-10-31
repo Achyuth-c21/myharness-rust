@@ -373,7 +373,7 @@ export function NewTaskScreen({ focusOnMount = false }: Props) {
               disabled
               title="The applied profile chooses the model; it is shown on the task. The picker arrives with the model phase."
             >
-              model
+              Default model
             </button>
             <button
               type="button"
