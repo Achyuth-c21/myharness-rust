@@ -21,6 +21,7 @@ import { NoticeSurfaces } from "./components/Notice";
 import { NewTaskScreen } from "./screens/NewTaskScreen";
 import { CoworkSessionScreen, CodeSessionScreen } from "./screens/CoworkSessionScreen";
 import { CodeDashboardScreen } from "./screens/CodeDashboardScreen";
+import { CodeHomeScreen } from "./screens/CodeHomeScreen";
 import { ScreenHead } from "./screens/EmptyStates";
 import { ProjectDetailScreen, ProjectsScreen } from "./screens/ProjectsScreen";
 import { ArtifactsScreen } from "./screens/ArtifactsScreen";
@@ -201,7 +202,13 @@ function MainShell() {
             <Route path="/projects/:projectId" element={<ProjectDetailScreen />} />
             <Route path="/cowork-artifact" element={<ArtifactsScreen />} />
             <Route path="/scheduled-task" element={<ScheduledScreen />} />
-            <Route path="/epitaxy" element={<CodeDashboardScreen />} />
+            {/* The Code landing is the observed session-list IA
+                (UI-SCREEN-31; docs/23 §3.6 item 31). The earlier stats
+                dashboard is a rebuild design and stays reachable, honestly
+                labeled, at /epitaxy/dashboard (IMP-40) — react-router ranks
+                the static segment above /epitaxy/:sessionId. */}
+            <Route path="/epitaxy" element={<CodeHomeScreen />} />
+            <Route path="/epitaxy/dashboard" element={<CodeDashboardScreen />} />
             {/* Code session detail reuses the transcript/tool/approval surface
                 but calls the Code-only bridge commands (Phase 6). */}
             <Route path="/epitaxy/:sessionId" element={<CodeSessionScreen />} />

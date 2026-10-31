@@ -3557,3 +3557,191 @@ html[data-motion="reduced"] *::after {
   opacity: 0.5;
   cursor: default;
 }
+
+/* ---------- Code home: the observed session-list landing (UI-SCREEN-31) ---------- */
+
+.code-home {
+  max-width: 734px; /* the composer column (new-task.md §Layout) */
+  margin: 0 auto;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: calc(var(--mh-unit) * 6) 0 calc(var(--mh-unit) * 8);
+}
+
+.code-home-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.code-home-title {
+  font-size: 28px;
+  font-weight: 400;
+  color: var(--mh-text-1);
+  margin: 0;
+}
+
+.code-home-glyphs {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--mh-unit) * 3);
+  color: var(--mh-icon-3);
+}
+
+.code-home-body {
+  flex: 1; /* the observed body below the header was not populated — stays open */
+}
+
+.code-home-composer {
+  width: 100%;
+}
+
+.code-context-row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--mh-unit) * 2);
+  padding: calc(var(--mh-unit) * 2) calc(var(--mh-unit) * 2) 0;
+}
+
+.code-placement-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--mh-unit) * 1);
+  font-size: 12px;
+  color: var(--mh-text-2);
+  border: 1px solid var(--mh-border-hair);
+  border-radius: 999px;
+  padding: calc(var(--mh-unit) * 1) calc(var(--mh-unit) * 2);
+}
+
+.code-home-toolbar {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--mh-unit) * 2);
+  padding: calc(var(--mh-unit) * 1) calc(var(--mh-unit) * 2) calc(var(--mh-unit) * 2);
+}
+
+.code-permission-select {
+  font: inherit;
+  font-size: 12px;
+  color: var(--mh-text-1);
+  background: transparent;
+  border: 1px solid var(--mh-border-hair);
+  border-radius: var(--mh-radius-input);
+  padding: calc(var(--mh-unit) * 1) calc(var(--mh-unit) * 1);
+}
+
+.code-model-label {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  color: var(--mh-text-2);
+  cursor: default;
+  padding: calc(var(--mh-unit) * 1) calc(var(--mh-unit) * 1);
+}
+
+/* ---------- Code sidebar workspace-folder tree (UI-SCREEN-31) ---------- */
+
+.code-tree {
+  display: flex;
+  flex-direction: column;
+  padding: calc(var(--mh-unit) * 1) calc(var(--mh-unit) * 1) calc(var(--mh-unit) * 4);
+}
+
+.code-tree-note {
+  font-size: 12px;
+  color: var(--mh-text-3);
+  padding: calc(var(--mh-unit) * 2) calc(var(--mh-unit) * 1);
+}
+
+.code-tree-folder {
+  display: flex;
+  flex-direction: column;
+}
+
+.code-tree-folder-row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--mh-unit) * 1);
+  border-radius: var(--mh-radius-input);
+  padding: calc(var(--mh-unit) * 0.5) calc(var(--mh-unit) * 1);
+}
+
+.code-tree-folder-row:hover {
+  background: var(--mh-hover-fill);
+}
+
+.code-tree-disclosure {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: var(--mh-icon-3);
+  cursor: pointer;
+  padding: 0 calc(var(--mh-unit) * 1);
+  line-height: 1;
+}
+
+.code-tree-chevron {
+  display: inline-block;
+  transition: transform 120ms ease;
+}
+
+.code-tree-chevron.open {
+  transform: rotate(90deg);
+}
+
+.code-tree-folder-name {
+  flex: 1;
+  font-size: 13px;
+  color: var(--mh-text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.code-tree-add {
+  border: 0;
+  background: transparent;
+  color: var(--mh-icon-3);
+  cursor: pointer;
+  padding: calc(var(--mh-unit) * 1);
+  border-radius: var(--mh-radius-input);
+  line-height: 1;
+}
+
+.code-tree-add:hover {
+  background: var(--mh-hover-fill);
+  color: var(--mh-text-1);
+}
+
+.code-tree-session {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--mh-unit) * 2);
+  text-decoration: none;
+  border-radius: var(--mh-radius-input);
+  padding: calc(var(--mh-unit) * 1) calc(var(--mh-unit) * 1) calc(var(--mh-unit) * 1)
+    calc(var(--mh-unit) * 6);
+}
+
+.code-tree-session:hover {
+  background: var(--mh-hover-fill);
+}
+
+.code-tree-session-title {
+  font-size: 12.5px;
+  color: var(--mh-text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.code-tree-session-time {
+  font-size: 11px;
+  color: var(--mh-text-3);
+  flex: none;
+}

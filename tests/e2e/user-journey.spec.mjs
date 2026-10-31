@@ -661,7 +661,7 @@ try {
 
   // ───────────────────────── Journey E: code ─────────────────────────
 
-  await step("U10 pick a folder, send a code task, the dashboard keeps both", async () => {
+  await step("U10 the Code landing and the sidebar tree: a folder send opens the observed shell and the tree keeps both (UI-SCREEN-31, TEST-CODE-010)", async () => {
     const context = await browser.newContext({ colorScheme: "dark", viewport: { width: 1200, height: 900 } });
     const page = await context.newPage();
     journeyBackend(page, { folder: "/tmp/journey-code", trusted: ["/tmp/journey-code"] });
@@ -678,14 +678,24 @@ try {
       (await page.locator(".session-head", { hasText: "journey-code" }).count()) === 1,
       "the code session header names the folder",
     );
-    // The dashboard shows the folder as a repository row with the session.
+    // Back: the Code-mode sidebar is the observed workspace-folder tree, and
+    // the session nests under its folder.
     await page.getByRole("button", { name: "Back", exact: true }).click();
     await page.waitForURL("**/epitaxy");
-    await page.locator(".code-repo-row", { hasText: "journey-code" }).waitFor();
-    await expectTrue(
-      (await page.locator(".code-session-row").count()) === 1,
-      "the code session is listed on the dashboard",
+    const folderRow = page.locator(".code-tree-folder-row", { hasText: "journey-code" });
+    await folderRow.waitFor();
+    await page.getByRole("button", { name: "Expand journey-code" }).click();
+    await page.locator(".code-tree-session", { hasText: "fix the flaky test" }).waitFor();
+    // The per-folder `+` starts a session there: it preselects the folder on
+    // the landing composer (the session is created by its first send).
+    await page.getByRole("button", { name: "Start a session in journey-code" }).click();
+    await page.waitForFunction(() =>
+      document.querySelector(".code-folder-chip")?.textContent?.includes("journey-code"),
     );
+    await page.getByPlaceholder("Describe a task or ask a question").fill("one more");
+    await page.locator(".send-btn").click();
+    await page.waitForURL("**/epitaxy/**");
+    await page.getByText(REPLY).waitFor();
     await context.close();
   });
 
@@ -738,10 +748,24 @@ try {
     await dialog.getByRole("button", { name: "Trust workspace" }).click();
     await page.waitForURL("**/epitaxy/**");
     await page.getByText(REPLY).waitFor();
-    // The decision is stored: a second start on the same folder skips the modal.
+    // The decision is stored: a second start on the same folder — through the
+    // sidebar tree's per-folder `+` — skips the modal and opens the observed
+    // session shell.
     await page.getByRole("button", { name: "Back", exact: true }).click();
     await page.waitForURL("**/epitaxy");
-    await page.getByRole("button", { name: "Choose folder" }).click();
+    await page.getByRole("button", { name: "Expand journey-untrusted" }).click();
+    await page.getByRole("button", { name: "Start a session in journey-untrusted" }).click();
+    await page.waitForFunction(() =>
+      document.querySelector(".code-folder-chip")?.textContent?.includes("journey-untrusted"),
+    );
+    await expectTrue(
+      (await page.locator(".code-placement-chip").innerText()).includes("This computer"),
+      "the observed shell carries the This computer chip",
+    );
+    await expectTrue(
+      (await page.locator(".code-model-label").innerText()) === "Default model",
+      "the observed shell carries the Default model label",
+    );
     await page.getByPlaceholder("Describe a task or ask a question").fill("one more");
     await page.locator(".send-btn").click();
     await page.waitForURL("**/epitaxy/**");
