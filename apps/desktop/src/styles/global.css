@@ -3996,3 +3996,54 @@ html[data-motion="reduced"] *::after {
   color: var(--mh-text-3);
   cursor: default;
 }
+
+/* ---------- Scheduled additions (docs/23 §3.5 item 30; IMP-49) ---------- */
+
+/* The original's info banner is a neutral card with the sun glyph, not the
+   rebuild's blue informational style. */
+.info-banner-neutral {
+  background: var(--mh-surface-2);
+  color: var(--mh-text-1);
+  border: 1px solid var(--mh-border-hair);
+}
+
+.info-banner-line {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--mh-unit) * 2);
+}
+
+.sched-split {
+  position: relative;
+  display: inline-flex;
+}
+
+.sched-split .btn-primary {
+  border-radius: 0;
+}
+
+.sched-split-main {
+  border-top-left-radius: var(--mh-radius-input);
+  border-bottom-left-radius: var(--mh-radius-input);
+}
+
+.sched-split-caret {
+  border-top-right-radius: var(--mh-radius-input);
+  border-bottom-right-radius: var(--mh-radius-input);
+  border-left: 1px solid rgba(255, 255, 255, 0.25);
+  display: inline-flex;
+  align-items: center;
+}
+
+.sched-split .add-menu {
+  /* The split button sits at the top of the screen: the menu drops down,
+     not up like the composer's bottom-anchored menu. */
+  top: calc(100% + var(--mh-unit) * 1);
+  bottom: auto;
+  left: auto;
+  right: 0;
+}
+
+.empty-art {
+  color: var(--mh-text-2);
+}
