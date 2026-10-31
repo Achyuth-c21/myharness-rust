@@ -299,6 +299,11 @@ export type ChatCommand =
   | { type: "diagnosticsPreview" }
   | { type: "diagnosticsBuild"; consent: boolean }
   | { type: "listCodeSessions"; archived?: boolean | null }
+  // The workspace trust gate (UI-SCREEN-32): ask before the modal, record the
+  // decision. The bridge canonicalizes; the answer's folder is the verified
+  // spelling, which the UI displays — never its own copy.
+  | { type: "checkWorkspaceTrust"; folder: string }
+  | { type: "trustWorkspace"; folder: string }
   | {
       type: "createCodeSession";
       title?: string | null;
@@ -343,6 +348,7 @@ export type ChatCommand =
 
 export type ChatResponse =
   | { type: "sessions"; sessions: SessionRecord[] }
+  | { type: "workspaceTrust"; folder: string; trusted: boolean }
   | { type: "session"; session: SessionView }
   | { type: "projects"; projects: ProjectRecord[] }
   | { type: "project"; project: ProjectRecord }
@@ -698,4 +704,47 @@ export function reasoningText(content: TurnContent): string {
     )
     .map((part) => part.thinking)
     .join("\n\n");
+}
+
+export type WorkspaceTrustResult =
+  | { kind: "checked"; folder: string; trusted: boolean }
+  | { kind: "error"; error: BridgeError };
+
+async function workspaceTrustAnswer(command: {
+  type: "checkWorkspaceTrust" | "trustWorkspace";
+  folder: string;
+}): Promise<WorkspaceTrustResult> {
+  const response = await chat(command);
+  if (response.type === "workspaceTrust") {
+    return { kind: "checked", folder: response.folder, trusted: response.trusted };
+  }
+  if (response.type === "error") {
+    return { kind: "error", error: response.error };
+  }
+  return {
+    kind: "error",
+    error: {
+      code: "BRIDGE_ERROR",
+      message: "The trust answer had an unexpected shape.",
+      retryable: true,
+    },
+  };
+}
+
+/**
+ * Ask the bridge whether a folder is trusted for Code sessions
+ * (UI-SCREEN-32). The answer comes from stored decisions only; the bridge
+ * canonicalizes and its spelling is authoritative. A browser preview reports
+ * `BRIDGE_UNAVAILABLE`.
+ */
+export async function checkWorkspaceTrust(folder: string): Promise<WorkspaceTrustResult> {
+  return workspaceTrustAnswer({ type: "checkWorkspaceTrust", folder });
+}
+
+/**
+ * Record the trust decision for a folder. A failed persist refuses; the
+ * returned folder is the canonical spelling the bridge stored.
+ */
+export async function trustWorkspace(folder: string): Promise<WorkspaceTrustResult> {
+  return workspaceTrustAnswer({ type: "trustWorkspace", folder });
 }

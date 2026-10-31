@@ -73,6 +73,9 @@ function journeyBackend(page, seed = {}) {
       seq: 1,
       ...seed,
     };
+    // The workspace trust gate (UI-SCREEN-32): stored decisions only, the
+    // same fail-closed shape as the real bridge.
+    const trusted = new Set(seed.trusted ?? []);
     window.__backend = {
       commands: [],
       state,
@@ -321,6 +324,11 @@ function journeyBackend(page, seed = {}) {
         }
         case "previewSchedule":
           return { type: "schedulePreview", times: [1793161200000, 1793247600000, 1793334000000] };
+        case "checkWorkspaceTrust":
+          return { type: "workspaceTrust", folder: command.folder, trusted: trusted.has(command.folder) };
+        case "trustWorkspace":
+          trusted.add(command.folder);
+          return { type: "workspaceTrust", folder: command.folder, trusted: true };
         case "codeDashboard": {
           const codeSessions = state.sessions.filter((s) => s.surface === "code");
           const totals = {
@@ -656,7 +664,7 @@ try {
   await step("U10 pick a folder, send a code task, the dashboard keeps both", async () => {
     const context = await browser.newContext({ colorScheme: "dark", viewport: { width: 1200, height: 900 } });
     const page = await context.newPage();
-    journeyBackend(page, { folder: "/tmp/journey-code" });
+    journeyBackend(page, { folder: "/tmp/journey-code", trusted: ["/tmp/journey-code"] });
     await page.goto(`${BASE}/epitaxy`);
     await page.getByRole("button", { name: "Choose folder" }).waitFor();
     await page.getByRole("button", { name: "Choose folder" }).click();
@@ -682,6 +690,67 @@ try {
   });
 
   // ───────────────────────── Journey F: usage + palette ─────────────────────────
+
+  await step("U13 the trust gate: an untrusted folder opens the modal; Cancel aborts; Trust records and proceeds (UI-SCREEN-32, TEST-CODE-009)", async () => {
+    const context = await browser.newContext({ colorScheme: "dark", viewport: { width: 1200, height: 900 } });
+    const page = await context.newPage();
+    journeyBackend(page, { folder: "/tmp/journey-untrusted" });
+    await page.goto(`${BASE}/epitaxy`);
+    await page.getByRole("button", { name: "Choose folder" }).waitFor();
+    await page.getByRole("button", { name: "Choose folder" }).click();
+    await page.waitForFunction(() => document.body.innerText.includes("journey-untrusted"));
+    await page.getByPlaceholder("Describe a task or ask a question").fill("fix the flaky test");
+    await page.locator(".send-btn").click();
+    // The observed modal (docs/23 §3.6 item 32): exact copy, mono folder path.
+    const dialog = page.getByRole("dialog", { name: "Trust this workspace?" });
+    await dialog.waitFor();
+    await expectTrue(
+      (await dialog.innerText()).includes(
+        "Claude Code may read, write, or execute files in this folder. Only proceed if you trust this workspace.",
+      ),
+      "the modal carries the observed body copy",
+    );
+    await expectTrue(
+      (await dialog.innerText()).includes("Read our security guide for more information."),
+      "the modal carries the security-guide line",
+    );
+    await expectTrue(
+      (await dialog.innerText()).includes("Execution allowed by: .claude/settings.local.json"),
+      "the modal carries the provenance line",
+    );
+    await expectTrue(
+      (await dialog.locator(".trust-folder").innerText()).includes("journey-untrusted"),
+      "the modal names the folder the bridge verified",
+    );
+    // Cancel aborts: no session, the draft is kept.
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expectTrue(
+      (await page.getByRole("dialog", { name: "Trust this workspace?" }).count()) === 0,
+      "Cancel closes the modal",
+    );
+    await expectTrue(
+      page.url().endsWith("/epitaxy"),
+      "Cancel aborts the start; no session route",
+    );
+    // Trust records the decision and proceeds into the session.
+    await page.locator(".send-btn").click();
+    await dialog.waitFor();
+    await dialog.getByRole("button", { name: "Trust workspace" }).click();
+    await page.waitForURL("**/epitaxy/**");
+    await page.getByText(REPLY).waitFor();
+    // The decision is stored: a second start on the same folder skips the modal.
+    await page.getByRole("button", { name: "Back", exact: true }).click();
+    await page.waitForURL("**/epitaxy");
+    await page.getByRole("button", { name: "Choose folder" }).click();
+    await page.getByPlaceholder("Describe a task or ask a question").fill("one more");
+    await page.locator(".send-btn").click();
+    await page.waitForURL("**/epitaxy/**");
+    await expectTrue(
+      (await page.getByRole("dialog", { name: "Trust this workspace?" }).count()) === 0,
+      "a trusted folder starts without the modal",
+    );
+    await context.close();
+  });
 
   await step("U11 the usage panel reflects the tokens the sessions actually produced", async () => {
     const context = await browser.newContext({ colorScheme: "dark", viewport: { width: 1200, height: 900 } });

@@ -356,6 +356,16 @@ async fn plan_mode_does_not_require_a_live_selected_mcp_server() {
     let folder = fixture.dir.path().join("plan-repo");
     std::fs::create_dir_all(&folder).expect("folder");
     let cwd = std::fs::canonicalize(&folder).expect("canonical");
+    // The trust gate (UI-SCREEN-32) precedes every create: record the
+    // decision the way the renderer's modal would.
+    let _ = dispatch(
+        fixture.service.as_ref(),
+        ChatCommand::TrustWorkspace {
+            folder: cwd.to_str().expect("utf-8").into(),
+        },
+        None,
+    )
+    .await;
     let created = dispatch(
         fixture.service.as_ref(),
         ChatCommand::CreateCodeSession {

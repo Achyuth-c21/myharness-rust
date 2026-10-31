@@ -309,6 +309,7 @@ fn init_chat(app: &tauri::AppHandle) -> Result<Chat, String> {
                 catalog,
                 memory,
                 data.join("diagnostics"),
+                data.join("workspace-trust.json"),
             ));
         }
     };
@@ -341,6 +342,7 @@ fn init_chat(app: &tauri::AppHandle) -> Result<Chat, String> {
         catalog,
         memory,
         data.join("diagnostics"),
+        data.join("workspace-trust.json"),
     ))
 }
 
@@ -355,6 +357,7 @@ fn chat_with_tools(
     catalog: Arc<CatalogRuntime>,
     memory: Option<Arc<myharness_memory::MemoryStore>>,
     diagnostics_dir: std::path::PathBuf,
+    trust_path: std::path::PathBuf,
 ) -> Chat {
     let handle = app.clone();
     let prompt = Arc::new(BridgeApprovalPrompt::new(Arc::new(move |event| {
@@ -385,7 +388,13 @@ fn chat_with_tools(
         .with_tools(runtime)
         .with_catalog(catalog)
         .with_memory(memory)
-        .with_diagnostics(Some(diagnostics_dir));
+        .with_diagnostics(Some(diagnostics_dir))
+        // The workspace trust gate (UI-SCREEN-32): decisions live in the app
+        // data directory and survive restart. The gate itself is enforced in
+        // the chat service's Code create/send paths.
+        .with_workspace_trust(myharness_bridge::trust::WorkspaceTrustStore::new(Some(
+            trust_path,
+        )));
     // Phase 7 boot sweeps: retention deletes only the surfaces a profile
     // explicitly configures (never by default), and the tombstone sweep
     // finishes any blob removal a crash interrupted (`docs/11` §13).

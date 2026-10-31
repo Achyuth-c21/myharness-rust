@@ -353,13 +353,46 @@ impl Fixture {
         self.calls.lock().expect("calls mutex").clone()
     }
 
+    /// The trust gate (UI-SCREEN-32) sits before every create; the fixture
+    /// records the decision the way the renderer's modal would. A folder that
+    /// cannot be trusted (relative, missing, outside the allowlist) fails the
+    /// record attempt harmlessly and the create below still answers with its
+    /// own real refusal.
     async fn create_code(&self, cwd: &str, mode: PermissionMode) -> ChatResponse {
+        let _ = self.trust_folder(cwd).await;
+        self.create_code_untrusted(cwd, mode).await
+    }
+
+    /// The create as an untrusted caller would drive it (TEST-CODE-009).
+    async fn create_code_untrusted(&self, cwd: &str, mode: PermissionMode) -> ChatResponse {
         dispatch(
             self.service.as_ref(),
             ChatCommand::CreateCodeSession {
                 title: Some("code work".into()),
                 cwd: cwd.into(),
                 permission_mode: mode,
+            },
+            None,
+        )
+        .await
+    }
+
+    async fn trust_folder(&self, cwd: &str) -> ChatResponse {
+        dispatch(
+            self.service.as_ref(),
+            ChatCommand::TrustWorkspace {
+                folder: cwd.into(),
+            },
+            None,
+        )
+        .await
+    }
+
+    async fn check_trust(&self, cwd: &str) -> ChatResponse {
+        dispatch(
+            self.service.as_ref(),
+            ChatCommand::CheckWorkspaceTrust {
+                folder: cwd.into(),
             },
             None,
         )
@@ -2694,4 +2727,120 @@ fn now_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock")
         .as_millis() as i64
+}
+
+// ---------------------------------------------------------------------
+// The workspace trust gate (UI-SCREEN-32, FEAT-CODE-13, TEST-CODE-009)
+// ---------------------------------------------------------------------
+
+/// An untrusted folder refuses creation; TrustWorkspace records the decision
+/// and the same create then proceeds. Cancel is simply never trusting — the
+/// refusal stays until a decision is stored. The check answer carries the
+/// canonical spelling the bridge verified, never the renderer's copy.
+#[tokio::test]
+async fn an_untrusted_workspace_refuses_creation_until_trust_is_recorded() {
+    let fixture = Fixture::new(reply("ok"), Tail::End);
+    let folder = fixture.dir.path().join("trusted-repo");
+    std::fs::create_dir_all(&folder).expect("folder");
+    let canonical = std::fs::canonicalize(&folder)
+        .expect("canonical folder")
+        .to_str()
+        .expect("utf-8")
+        .to_string();
+
+    let answer = fixture.check_trust(&canonical).await;
+    let ChatResponse::WorkspaceTrust {
+        folder: answered,
+        trusted,
+    } = answer
+    else {
+        panic!("expected a trust answer, got {answer:?}");
+    };
+    assert_eq!(answered, canonical, "the answer carries the canonical spelling");
+    assert!(!trusted, "an unknown folder is untrusted");
+
+    let refused = fixture
+        .create_code_untrusted(&canonical, PermissionMode::Default)
+        .await;
+    let ChatResponse::Error { error, .. } = refused else {
+        panic!("expected a refusal, got {refused:?}");
+    };
+    assert_eq!(error.code, "CODE_WORKSPACE_UNTRUSTED");
+
+    let recorded = fixture.trust_folder(&canonical).await;
+    let ChatResponse::WorkspaceTrust {
+        folder: stored,
+        trusted: recorded_trusted,
+    } = recorded
+    else {
+        panic!("expected a trust answer, got {recorded:?}");
+    };
+    assert_eq!(stored, canonical);
+    assert!(recorded_trusted);
+
+    let created = fixture
+        .create_code_untrusted(&canonical, PermissionMode::Default)
+        .await;
+    assert!(
+        matches!(created, ChatResponse::Session { .. }),
+        "expected a session after trust, got {created:?}"
+    );
+}
+
+/// A send re-checks the gate (REQ-CODE-09): a session whose stored decision is
+/// gone — a removed or reset trust file, simulated by a fresh empty store over
+/// the same database — refuses before any provider request.
+#[tokio::test]
+async fn a_send_into_a_workspace_whose_decision_is_gone_is_refused() {
+    let fixture = Fixture::new(reply("ok"), Tail::End);
+    let folder = fixture.dir.path().join("send-repo");
+    std::fs::create_dir_all(&folder).expect("folder");
+    let canonical = std::fs::canonicalize(&folder)
+        .expect("canonical folder")
+        .to_str()
+        .expect("utf-8")
+        .to_string();
+    let _ = fixture.trust_folder(&canonical).await;
+    let created = fixture
+        .create_code_untrusted(&canonical, PermissionMode::Default)
+        .await;
+    let ChatResponse::Session { session } = created else {
+        panic!("expected a session, got {created:?}");
+    };
+    let session_id = session.session.id;
+
+    // A fresh service over the same database with the default (empty) trust
+    // store: the decision the first service recorded is gone.
+    let store = Store::open(
+        &fixture.dir.path().join("chat.db"),
+        &fixture.dir.path().join("files-root"),
+    )
+    .expect("reopen store");
+    let service = ChatService::new(
+        SessionService::new(store, InMemoryAuditKeys::new()),
+        ScriptedTargets {
+            script: Vec::new(), // the refusal precedes any provider contact
+            tail: Tail::End,
+            calls: Arc::new(Mutex::new(Vec::new())),
+            policy: CodePolicy::default(),
+            memory_policy: myharness_bridge::policy::MemoryPolicy::default(),
+            telemetry: myharness_telemetry::TelemetryPolicy::default(),
+            profile: None,
+            retention: myharness_bridge::policy::RetentionSettings::default(),
+        },
+    );
+    let refused = dispatch(
+        &service,
+        ChatCommand::SendCodeTurn {
+            session_id,
+            text: "hello".into(),
+            max_tokens: None,
+        },
+        None,
+    )
+    .await;
+    let ChatResponse::Error { error, .. } = refused else {
+        panic!("expected a refusal, got {refused:?}");
+    };
+    assert_eq!(error.code, "CODE_WORKSPACE_UNTRUSTED");
 }
