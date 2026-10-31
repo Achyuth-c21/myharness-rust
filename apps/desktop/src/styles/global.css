@@ -3949,3 +3949,50 @@ html[data-motion="reduced"] *::after {
   right: calc(var(--mh-unit) * 2);
   color: var(--mh-text-1);
 }
+
+/* ---------- Composer Add menu (UI-SCREEN-25 §1; docs/23 §3.2 item 12) ---------- */
+
+.add-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.add-menu {
+  position: absolute;
+  bottom: calc(100% + var(--mh-unit) * 2);
+  left: 0;
+  width: 240px; /* the captured menu is 274px at its viewport; scaled to the column */
+  display: flex;
+  flex-direction: column;
+  background: var(--mh-surface-2);
+  border: 1px solid var(--mh-border-hair);
+  border-radius: var(--mh-radius-card);
+  box-shadow: 0 8px 32px rgba(11, 11, 11, 0.24);
+  padding: calc(var(--mh-unit) * 1);
+  z-index: 50;
+}
+
+.add-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  color: var(--mh-text-1);
+  text-align: left;
+  border-radius: var(--mh-radius-input);
+  padding: calc(var(--mh-unit) * 2.5);
+  cursor: pointer;
+  min-height: 40px; /* the captured row height */
+}
+
+.add-menu-item:hover:not(:disabled) {
+  background: var(--mh-hover-fill);
+}
+
+.add-menu-item:disabled {
+  color: var(--mh-text-3);
+  cursor: default;
+}

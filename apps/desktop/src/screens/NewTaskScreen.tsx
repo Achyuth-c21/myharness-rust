@@ -199,6 +199,27 @@ export function NewTaskScreen({ focusOnMount = false }: Props) {
   const navigate = useNavigate();
   const [draft, setDraft] = useState(() => loadDraft(newDraftKey()));
   const [sending, setSending] = useState(false);
+  // The composer Add menu (UI-SCREEN-25 §1): opens by trigger, closes on
+  // outside press or Escape; Ctrl+U opens it too (the observed shortcut) —
+  // its file row stays honest about the missing picker.
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const addAnchorRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!addMenuOpen) return;
+    const onOutside = (event: MouseEvent) => {
+      if (event.target instanceof Node && addAnchorRef.current?.contains(event.target)) return;
+      setAddMenuOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setAddMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onOutside);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onOutside);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [addMenuOpen]);
   const [sendError, setSendError] = useState<BridgeError | null>(null);
   const { sessions } = useChatSessions(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -252,7 +273,13 @@ export function NewTaskScreen({ focusOnMount = false }: Props) {
 
   const onKeyDown = (event: React.KeyboardEvent) => {
     // UI-INT-041: Enter sends, Shift+Enter newlines. IME composition must not
-    // send a half-composed message (REQ-COMPOSER-02).
+    // send a half-composed message (REQ-COMPOSER-02). Ctrl+U is the observed
+    // add-files shortcut; the menu opens so the row can state its state.
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "u") {
+      event.preventDefault();
+      setAddMenuOpen(true);
+      return;
+    }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       if (!(event.nativeEvent as KeyboardEvent).isComposing) void send();
@@ -357,15 +384,73 @@ export function NewTaskScreen({ focusOnMount = false }: Props) {
             onKeyDown={onKeyDown}
           />
           <div className="composer-toolbar">
-            <button
-              type="button"
-              className="plus-btn"
-              aria-label="Add"
-              disabled
-              title="Add menu arrives with attachments (docs/13 §later phases)"
-            >
-              +
-            </button>
+            <span className="add-anchor" ref={addAnchorRef}>
+              <button
+                type="button"
+                className="plus-btn"
+                aria-label="Add"
+                aria-haspopup="menu"
+                aria-expanded={addMenuOpen}
+                title="Add"
+                onClick={() => setAddMenuOpen((open) => !open)}
+              >
+                +
+              </button>
+              {addMenuOpen ? (
+                <div className="add-menu" role="menu" aria-label="Add">
+                  {/* The observed rows (docs/screens/composer-menus.md §1;
+                      docs/23 §3.2 item 12). File picking needs a file-picker
+                      bridge command that does not exist yet, and the composer
+                      Skills/Connectors flyouts arrive with their phases — each
+                      row states its honest state instead of a dead action
+                      (docs/14 §9). Add plugins has a real target: the settings
+                      modal's Plugins pane. */}
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="add-menu-item"
+                    disabled
+                    title="Attachments arrive with the attachments phase — this build has no file picker yet"
+                  >
+                    <span>Add files or photos</span>
+                    <span className="account-item-hint">Ctrl+U</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="add-menu-item"
+                    disabled
+                    title="The composer Skills picker arrives with the skills-composer phase"
+                  >
+                    <span>Skills</span>
+                    <span className="account-item-more">›</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="add-menu-item"
+                    disabled
+                    title="The composer Connectors picker arrives with the connectors phase"
+                  >
+                    <span>Connectors</span>
+                    <span className="account-item-more">›</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="add-menu-item"
+                    onClick={() => {
+                      setAddMenuOpen(false);
+                      // A real target: the settings modal's Plugins pane
+                      // (the Customize route itself is not built yet).
+                      window.location.hash = "#settings/plugins";
+                    }}
+                  >
+                    <span>Add plugins</span>
+                  </button>
+                </div>
+              ) : null}
+            </span>
             <span className="composer-spacer" />
             <button
               type="button"
