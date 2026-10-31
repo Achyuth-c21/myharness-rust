@@ -15,10 +15,12 @@ const MOTION_KEY = "ui.motion";
 const NOTIFY_KEY = "ui.notifyOnDone";
 
 export function loadChatFont(): ChatFont {
+  // The live original's default is Anthropic Serif (docs/23 §3.4 item 18);
+  // the rebuild converges to it (IMP-45).
   try {
-    return localStorage.getItem(CHAT_FONT_KEY) === "serif" ? "serif" : "sans";
+    return localStorage.getItem(CHAT_FONT_KEY) === "sans" ? "sans" : "serif";
   } catch {
-    return "sans";
+    return "serif";
   }
 }
 
@@ -78,5 +80,127 @@ export function notifyTurnDone(title: string): void {
     new Notification("Claude", { body: `${title} — response completed.` });
   } catch {
     // Notification construction can throw on some platforms; never break the send.
+  }
+}
+
+// ─── Claude Code pane preferences (UI-SCREEN-18 §Claude Code; docs/23 §3.4
+// item 21). Renderer-local until a bridge phase consumes them; every key is
+// rebuild-defined and the pane says so. The option lists below carry the
+// observed defaults ("Default · 12 px", Small/Medium/Large, Narrow/Medium/
+// Wide, Normal/Thinking/Verbose); the unobserved alternative options are
+// rebuild-defined additions, marked in the pane.
+
+export type CodeTheme = "claude-light" | "claude-dark";
+export type CodeFontSize = "default" | "10" | "11" | "13" | "14";
+export type TranscriptSize = "small" | "medium" | "large";
+export type TranscriptWidth = "narrow" | "medium" | "wide";
+export type TranscriptView = "normal" | "thinking" | "verbose";
+
+const CODE_FONT_KEY = "ui.codeFont";
+const CODE_FONT_SIZE_KEY = "ui.codeFontSize";
+const CODE_THEME_KEY = "ui.codeTheme";
+const TRANSCRIPT_SIZE_KEY = "ui.transcriptSize";
+const TRANSCRIPT_WIDTH_KEY = "ui.transcriptWidth";
+const TRANSCRIPT_VIEW_KEY = "ui.transcriptView";
+
+export function loadCodeFont(): string {
+  try {
+    return localStorage.getItem(CODE_FONT_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function saveCodeFont(font: string): void {
+  try {
+    localStorage.setItem(CODE_FONT_KEY, font);
+  } catch {
+    // Session-only, as above.
+  }
+}
+
+export function loadCodeFontSize(): CodeFontSize {
+  try {
+    const raw = localStorage.getItem(CODE_FONT_SIZE_KEY);
+    return (["default", "10", "11", "13", "14"] as const).includes(raw as CodeFontSize)
+      ? (raw as CodeFontSize)
+      : "default";
+  } catch {
+    return "default";
+  }
+}
+
+export function saveCodeFontSize(size: CodeFontSize): void {
+  try {
+    localStorage.setItem(CODE_FONT_SIZE_KEY, size);
+  } catch {
+    // Session-only, as above.
+  }
+}
+
+export function loadCodeTheme(): CodeTheme {
+  try {
+    return localStorage.getItem(CODE_THEME_KEY) === "claude-dark" ? "claude-dark" : "claude-light";
+  } catch {
+    return "claude-light";
+  }
+}
+
+export function saveCodeTheme(theme: CodeTheme): void {
+  try {
+    localStorage.setItem(CODE_THEME_KEY, theme);
+  } catch {
+    // Session-only, as above.
+  }
+}
+
+export function loadTranscriptSize(): TranscriptSize {
+  try {
+    const raw = localStorage.getItem(TRANSCRIPT_SIZE_KEY);
+    return raw === "small" || raw === "large" ? raw : "medium";
+  } catch {
+    return "medium";
+  }
+}
+
+export function saveTranscriptSize(size: TranscriptSize): void {
+  try {
+    localStorage.setItem(TRANSCRIPT_SIZE_KEY, size);
+  } catch {
+    // Session-only, as above.
+  }
+}
+
+export function loadTranscriptWidth(): TranscriptWidth {
+  try {
+    const raw = localStorage.getItem(TRANSCRIPT_WIDTH_KEY);
+    return raw === "narrow" || raw === "wide" ? raw : "medium";
+  } catch {
+    return "medium";
+  }
+}
+
+export function saveTranscriptWidth(width: TranscriptWidth): void {
+  try {
+    localStorage.setItem(TRANSCRIPT_WIDTH_KEY, width);
+  } catch {
+    // Session-only, as above.
+  }
+}
+
+export function loadTranscriptView(): TranscriptView {
+  try {
+    const raw = localStorage.getItem(TRANSCRIPT_VIEW_KEY);
+    return raw === "thinking" || raw === "verbose" ? raw : "normal";
+  } catch {
+    return "normal";
+  }
+}
+
+export function saveTranscriptView(view: TranscriptView): void {
+  try {
+    localStorage.setItem(TRANSCRIPT_VIEW_KEY, view);
+  } catch {
+    // Session-only, as above.
   }
 }

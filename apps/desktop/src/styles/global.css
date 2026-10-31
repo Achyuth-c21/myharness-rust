@@ -3756,3 +3756,133 @@ html[data-motion="reduced"] *::after {
   color: var(--mh-text-3);
   flex: none;
 }
+
+/* ---------- Settings pane bodies (IMP-43; docs/23 §3.4) ---------- */
+
+.settings-value {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--mh-unit) * 3);
+  font-size: 13px;
+  color: var(--mh-text-1);
+}
+
+.settings-link-inline {
+  font-size: 12px;
+}
+
+.settings-kbd {
+  font-family: var(--mh-font-mono);
+  font-size: 11px;
+  color: var(--mh-text-1);
+  border: 1px solid var(--mh-border-hair);
+  border-radius: var(--mh-radius-input);
+  padding: calc(var(--mh-unit) * 0.5) calc(var(--mh-unit) * 1.5);
+}
+
+.settings-path-label {
+  color: var(--mh-text-2);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-header {
+  font-size: 12px;
+  color: var(--mh-text-2);
+  margin: 0 0 calc(var(--mh-unit) * 3);
+}
+
+/* The Claude Code theme preview cards (docs/23 §3.4 item 21). */
+.code-theme-cards {
+  display: flex;
+  gap: calc(var(--mh-unit) * 3);
+  margin-bottom: calc(var(--mh-unit) * 4);
+}
+
+.code-theme-card {
+  border: 1px solid var(--mh-border-hair);
+  border-radius: var(--mh-radius-card);
+  background: transparent;
+  padding: calc(var(--mh-unit) * 2);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--mh-unit) * 2);
+}
+
+.code-theme-card.active {
+  border-color: var(--mh-text-1);
+}
+
+.code-theme-sample {
+  width: 200px;
+  margin: 0;
+  font-family: var(--mh-font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  border-radius: var(--mh-radius-input);
+  padding: calc(var(--mh-unit) * 2);
+}
+
+.code-theme-claude-light {
+  background: #f5f4f0;
+  color: #3d3929;
+}
+
+.code-theme-claude-light .code-token-keyword { color: #a1521c; }
+.code-theme-claude-light .code-token-fn { color: #35779c; }
+.code-theme-claude-light .code-token-string { color: #4d7d38; }
+.code-theme-claude-light .code-token-comment { color: #898781; }
+
+.code-theme-claude-dark {
+  background: #262624;
+  color: #f0eee6;
+}
+
+.code-theme-claude-dark .code-token-keyword { color: #d97757; }
+.code-theme-claude-dark .code-token-fn { color: #6a9bcc; }
+.code-theme-claude-dark .code-token-string { color: #7fa86b; }
+.code-theme-claude-dark .code-token-comment { color: #94928c; }
+
+.code-theme-card-label {
+  font-size: 12px;
+  color: var(--mh-text-1);
+}
+
+/* MCP server status badges (docs/23 §3.4 item 25). */
+.server-badge {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: calc(var(--mh-unit) * 2);
+  vertical-align: middle;
+}
+
+.server-connected {
+  background: #4d7d38;
+}
+
+.server-failed,
+.server-needsAuth {
+  background: transparent;
+  position: relative;
+}
+
+.server-failed::before,
+.server-needsAuth::before {
+  content: "▲";
+  position: absolute;
+  inset: 0;
+  color: #b45309;
+  font-size: 9px;
+  line-height: 8px;
+  text-align: center;
+}
+
+.server-starting,
+.server-stopped {
+  background: var(--mh-icon-3);
+}

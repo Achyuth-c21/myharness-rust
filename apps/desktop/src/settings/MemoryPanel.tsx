@@ -121,6 +121,87 @@ function MemoryPanel() {
 
   return (
     <div className="settings-section-stack">
+      {/* The observed Cowork rows (docs/23 §3.4 item 22, capture x14; IMP-43).
+          Each needs a capability the rebuild does not back yet (the cowork
+          files root, the trusted-folder store, the built-in browser, the
+          instructions surface), so every row renders with its observed label
+          and an honest disabled control (docs/14 §9) instead of a fake. */}
+      <div className="settings-pref-row">
+        <span className="settings-pref-label">
+          Cowork files
+          <span className="settings-note">The folder Cowork reads and writes.</span>
+        </span>
+        <span className="settings-value">
+          <span className="settings-path-label">—</span>
+          <button
+            type="button"
+            className="text-btn"
+            disabled
+            title="The cowork files root is not backed by the bridge yet (docs/14 §9)"
+          >
+            Change
+          </button>
+        </span>
+      </div>
+      <div className="settings-pref-row">
+        <span className="settings-pref-label">Trusted Cowork folders</span>
+        <button
+          type="button"
+          className="text-btn"
+          disabled
+          title="The trusted-folder manager is not built yet (docs/14 §9)"
+        >
+          Manage
+        </button>
+      </div>
+      <div className="settings-pref-row">
+        <label className="settings-pref-label" htmlFor="cowork-browser">
+          Preferred browser
+        </label>
+        <select
+          id="cowork-browser"
+          disabled
+          title="The built-in browser is unsupported in this build (FEAT-COWORK-11); the select has nothing to switch"
+        >
+          <option>Built-in browser</option>
+        </select>
+      </div>
+      <div className="settings-pref-row">
+        <span className="settings-pref-label">Open links in built-in browser</span>
+        <label className="switch">
+          <input
+            type="checkbox"
+            disabled
+            title="The built-in browser is unsupported in this build (FEAT-COWORK-11)"
+          />
+          <span className="switch-track" />
+        </label>
+      </div>
+      <div className="settings-pref-row">
+        <span className="settings-pref-label">Allowed sites</span>
+        <button
+          type="button"
+          className="text-btn"
+          disabled
+          title="The allowed-sites manager is not built yet (docs/14 §9)"
+        >
+          Manage
+        </button>
+      </div>
+      <div className="settings-pref-row">
+        <span className="settings-pref-label">
+          Global instructions
+          <span className="settings-note">Apply to every Cowork task.</span>
+        </span>
+        <button
+          type="button"
+          className="text-btn"
+          disabled
+          title="The instructions surface is not backed by the bridge yet (docs/14 §9)"
+        >
+          Edit
+        </button>
+      </div>
       <p className="settings-note">
         Memory is personal and local-only. It is stored as Markdown entries on
         this device and is never part of retention deletion.

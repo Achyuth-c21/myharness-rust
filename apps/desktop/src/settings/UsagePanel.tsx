@@ -155,7 +155,9 @@ function DailyChart({ summary }: { summary: UsageSummary }) {
 }
 
 export function UsagePanel() {
-  const [days, setDays] = useState<(typeof RANGES)[number]>(7);
+  // The observed default range is 30d (docs/23 §3.4 item 20); the earlier
+  // rebuild choice of 7d is superseded (IMP-45).
+  const [days, setDays] = useState<(typeof RANGES)[number]>(30);
   const [summary, setSummary] = useState<UsageSummary | null>(null);
   const [surfaces, setSurfaces] = useState<SurfaceUsage[]>([]);
   const [error, setError] = useState<BridgeError | null>(null);
@@ -191,6 +193,11 @@ export function UsagePanel() {
 
   return (
     <div className="usage-panel">
+      {/* The observed header copy (docs/23 §3.4 item 20, verbatim). */}
+      <p className="usage-header">
+        Token usage on this device across Chat, Cowork, and Code. Costs aren&apos;t
+        shown — your organization is billed at its own provider rates.
+      </p>
       <div className="usage-range" role="group" aria-label="Usage range">
         {RANGES.map((range) => (
           <button
