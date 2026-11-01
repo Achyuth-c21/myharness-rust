@@ -82,6 +82,67 @@ function ComputerGlyph() {
   );
 }
 
+/** The interim permissions popover: the rebuild's stored modes. IMP-53
+    converges it to the observed "Permissions · this session" copy. */
+function PermissionMenu({
+  permission,
+  onPick,
+  onClose,
+}: {
+  permission: CodePermissionMode;
+  onPick: (mode: CodePermissionMode) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="add-menu code-permission-menu" role="menu" aria-label="Permissions">
+      {(
+        [
+          ["default", "Auto"],
+          ["default", "Manual"],
+          ["acceptEdits", "Accept edits"],
+          ["plan", "Plan"],
+        ] as [CodePermissionMode, string][]
+      ).map(([value, label], index) => (
+        <button
+          key={`${label}-${index}`}
+          type="button"
+          role="menuitemradio"
+          aria-checked={permission === value}
+          className="add-menu-item"
+          onClick={() => {
+            onPick(value);
+            onClose();
+          }}
+        >
+          <span>{label}</span>
+        </button>
+      ))}
+      <button
+        type="button"
+        role="menuitem"
+        className="add-menu-item"
+        disabled
+        title="Bypass permissions are disabled unless policy explicitly allows them"
+      >
+        <span>Bypass</span>
+      </button>
+    </div>
+  );
+}
+
+function permissionLabel(mode: CodePermissionMode): string {
+  switch (mode) {
+    case "acceptEdits":
+      return "Accept edits";
+    case "plan":
+      return "Plan";
+    case "bypass":
+      return "Bypass";
+    default:
+      return "Auto";
+  }
+}
+
 function folderName(path: string | null): string {
   if (!path) return "Choose folder";
   const parts = path.split("/");
@@ -102,6 +163,13 @@ export function CodeHomeScreen() {
   const [permission, setPermission] = useState<CodePermissionMode>("default");
   const [creating, setCreating] = useState(false);
   const [trustPrompt, setTrustPrompt] = useState<{ folder: string } | null>(null);
+  // IMP-53 renders the full Permissions menu; this lane wires the observed
+  // text-row trigger and keeps the stored-mode state.
+  const [permissionOpen, setPermissionOpen] = useState(false);
+  // The pill's + menu (the Code variant): opens by trigger and the observed
+  // Ctrl+U, closes on outside press or Escape.
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const addAnchorRef = useRef<HTMLSpanElement>(null);
   const [trustBusy, setTrustBusy] = useState(false);
   const [trustError, setTrustError] = useState<string | null>(null);
 
@@ -236,7 +304,48 @@ export function CodeHomeScreen() {
     saveDraft(codeDraftKey(), value);
   };
 
+  useEffect(() => {
+    if (!permissionOpen) return;
+    const onOutside = (event: MouseEvent) => {
+      if (event.target instanceof Node && (event.target as HTMLElement).closest(".code-permission-menu")) return;
+      setPermissionOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPermissionOpen(false);
+    };
+    document.addEventListener("mousedown", onOutside);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onOutside);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [permissionOpen]);
+
+  useEffect(() => {
+    if (!addMenuOpen) return;
+    const onOutside = (event: MouseEvent) => {
+      if (event.target instanceof Node && addAnchorRef.current?.contains(event.target)) return;
+      setAddMenuOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setAddMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onOutside);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onOutside);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [addMenuOpen]);
+
   const onKeyDown = (event: React.KeyboardEvent) => {
+    // Ctrl+U opens the pill's + menu (the observed shortcut; the file row
+    // states the picker's absence).
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "u") {
+      event.preventDefault();
+      setAddMenuOpen(true);
+      return;
+    }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       if (!(event.nativeEvent as KeyboardEvent).isComposing) void send();
@@ -264,7 +373,51 @@ export function CodeHomeScreen() {
           the middle stays open rather than inventing content. */}
       <div className="code-home-body" />
 
-      <div className="composer-card code-home-composer">
+      <div className="code-home-composer">
+        {/* The observed pill composer (docs/23 §7 addendum item 3; IMP-52):
+            one pill with the + trigger inside the left edge and the send
+            affordance inside the right edge — a ↵ glyph with text, a neutral
+            ○ when empty. */}
+        <div className="code-pill">
+          <span className="add-anchor" ref={addAnchorRef}>
+            <button
+              type="button"
+              className="code-pill-plus"
+              aria-label="Add"
+              aria-haspopup="menu"
+              aria-expanded={addMenuOpen}
+              title="Add"
+              onClick={() => setAddMenuOpen((open) => !open)}
+            >
+              +
+            </button>
+            {addMenuOpen ? <CodeAddMenu onClose={() => setAddMenuOpen(false)} /> : null}
+          </span>
+          <textarea
+            ref={taRef}
+            className="code-pill-input"
+            placeholder="Describe something to build, change, or fix"
+            aria-label="Describe something to build, change, or fix"
+            value={draft}
+            rows={1}
+            onChange={(event) => {
+              updateDraft(event.target.value);
+              event.target.style.height = "auto";
+              event.target.style.height = `${Math.min(event.target.scrollHeight, 200)}px`;
+            }}
+            onKeyDown={onKeyDown}
+          />
+          <button
+            type="button"
+            className="code-pill-send"
+            aria-label={draft.trim() ? "Send" : "Nothing to send"}
+            disabled={!draft.trim() || creating || codeDisabled}
+            onClick={() => void send()}
+          >
+            {draft.trim() ? "↵" : "○"}
+          </button>
+        </div>
+        {/* The observed chips row sits BELOW the pill. */}
         <div className="code-context-row">
           {/* Local is the only placement in this build; a chip, not a control
               that would pretend to switch (docs/14 §9). */}
@@ -288,36 +441,19 @@ export function CodeHomeScreen() {
             </button>
           )}
         </div>
-        <textarea
-          ref={taRef}
-          className="composer-input"
-          placeholder="Describe a task or ask a question"
-          aria-label="Describe a task or ask a question"
-          value={draft}
-          rows={1}
-          onChange={(event) => {
-            updateDraft(event.target.value);
-            event.target.style.height = "auto";
-            event.target.style.height = `${Math.min(event.target.scrollHeight, 200)}px`;
-          }}
-          onKeyDown={onKeyDown}
-        />
-        <div className="code-home-toolbar">
-          <select
-            className="code-permission-select"
-            aria-label="Permission mode"
-            value={permission}
-            onChange={(event) => setPermission(event.target.value as CodePermissionMode)}
+        {/* The observed `Auto | Default model | ○` text row. "Auto" opens the
+            Permissions menu (IMP-53 replaces this interim trigger); "Default
+            model" is the observed placeholder (docs/23 §3.6 item 31). */}
+        <div className="code-mode-row">
+          <button
+            type="button"
+            className="code-mode-trigger"
+            aria-label={`Permissions: ${permissionLabel(permission)}`}
+            onClick={() => setPermissionOpen(true)}
           >
-            <option value="default">Default</option>
-            <option value="acceptEdits">Accept edits</option>
-            <option value="plan">Plan</option>
-            <option value="bypass" disabled>
-              Bypass
-            </option>
-          </select>
-          {/* The observed "Default model" placeholder (docs/23 §3.6 item 31);
-              the picker itself arrives with the model phase. */}
+            {permissionLabel(permission)}
+          </button>
+          <span className="code-mode-sep">|</span>
           <button
             type="button"
             className="code-model-label"
@@ -327,15 +463,9 @@ export function CodeHomeScreen() {
             Default model
           </button>
           <span className="composer-spacer" />
-          <button
-            type="button"
-            className={`send-btn${draft.trim() && folder ? " primary" : ""}`}
-            aria-label="Send"
-            disabled={!draft.trim() || !folder || creating || codeDisabled}
-            onClick={() => void send()}
-          >
-            <ArrowUpIcon />
-          </button>
+          <span className="code-mode-circle" aria-hidden="true">
+            ○
+          </span>
         </div>
       </div>
 
@@ -361,6 +491,16 @@ export function CodeHomeScreen() {
           Local Code sessions are disabled. Remote placement is not implemented in this build.
         </div>
       ) : null}
+      {permissionOpen ? (
+        <PermissionMenu
+          permission={permission}
+          onPick={(mode) => {
+            setPermission(mode);
+            setPermissionOpen(false);
+          }}
+          onClose={() => setPermissionOpen(false)}
+        />
+      ) : null}
       {trustPrompt ? (
         <TrustWorkspaceModal
           folder={trustPrompt.folder}
@@ -374,10 +514,52 @@ export function CodeHomeScreen() {
   );
 }
 
-function ArrowUpIcon() {
+/** The Code variant of the composer Add menu (docs/23 §7 addendum item 10):
+    the Cowork menu's "Skills ›" row becomes "Slash commands". Rows state
+    their honest state; Add plugins keeps its real target. */
+function CodeAddMenu({ onClose }: { onClose: () => void }) {
   return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path d="M8 13V3.5M4 7.5 8 3.5l4 4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+    <div className="add-menu" role="menu" aria-label="Add">
+      <button
+        type="button"
+        role="menuitem"
+        className="add-menu-item"
+        disabled
+        title="Attachments arrive with the attachments phase — this build has no file picker yet"
+      >
+        <span>Add files or photos</span>
+        <span className="account-item-hint">Ctrl+U</span>
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        className="add-menu-item"
+        disabled
+        title="The slash-command surface arrives with the attachments phase"
+      >
+        <span>Slash commands</span>
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        className="add-menu-item"
+        disabled
+        title="The composer Connectors picker arrives with the connectors phase"
+      >
+        <span>Connectors</span>
+        <span className="account-item-more">›</span>
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        className="add-menu-item"
+        onClick={() => {
+          onClose();
+          window.location.hash = "#settings/plugins";
+        }}
+      >
+        <span>Add plugins</span>
+      </button>
+    </div>
   );
 }

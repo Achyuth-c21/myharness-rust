@@ -432,15 +432,21 @@ try {
       "the model label is the observed Default model placeholder, disabled-honest",
     );
     await expectTrue(
-      await page
-        .locator('select[aria-label="Permission mode"] option[value="bypass"]')
-        .evaluate((option) => option.disabled),
-      "Bypass must be disabled when policy is unknown",
+      (await page.locator(".code-pill-send").innerText()) === "○",
+      "the empty pill shows the observed neutral circle",
     );
     await expectTrue(
-      await page.getByRole("button", { name: "Send" }).isDisabled(),
-      "Send must be disabled without a folder and desktop host",
+      await page.locator(".code-pill-send").isDisabled(),
+      "send is disabled without text and a desktop host",
     );
+    // The mode trigger opens the interim permissions menu; Bypass is inert.
+    await page.locator(".code-mode-trigger").click();
+    await page.getByRole("menu", { name: "Permissions" }).waitFor();
+    await expectTrue(
+      await page.getByRole("menuitem", { name: "Bypass" }).isDisabled(),
+      "Bypass must be disabled when policy is unknown",
+    );
+    await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "Choose folder" }).click();
     await page.locator(".composer-error").waitFor({ state: "visible" });
     await expectTrue(
