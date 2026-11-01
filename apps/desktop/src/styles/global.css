@@ -4047,3 +4047,22 @@ html[data-motion="reduced"] *::after {
 .empty-art {
   color: var(--mh-text-2);
 }
+
+/* ---------- Search palette composition (docs/23 §3.7 item 33; IMP-46) ---------- */
+
+.palette-section {
+  font-size: 11px;
+  color: var(--mh-text-3);
+  padding: calc(var(--mh-unit) * 2) calc(var(--mh-unit) * 3) calc(var(--mh-unit) * 1);
+}
+
+.palette-footer {
+  display: flex;
+  gap: calc(var(--mh-unit) * 2);
+  justify-content: center;
+  font-size: 11px;
+  color: var(--mh-text-3);
+  border-top: 1px solid var(--mh-border-hair);
+  padding: calc(var(--mh-unit) * 2) 0;
+  margin-top: calc(var(--mh-unit) * 1);
+}

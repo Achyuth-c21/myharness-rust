@@ -808,7 +808,7 @@ try {
     await page.getByText(REPLY).waitFor();
     await page.waitForSelector("#composer");
     await page.keyboard.press("Control+k");
-    await page.getByPlaceholder("Search chats and projects").fill("daily briefing");
+    await page.getByPlaceholder("Search or start a chat").fill("daily briefing");
     await page.locator(".palette-row").first().waitFor();
     await page.keyboard.press("Enter");
     await page.waitForURL("**/cowork/**");

@@ -40,7 +40,12 @@ interface PaletteData {
 type ResultRow =
   | { kind: "session"; session: SessionRecord }
   | { kind: "project"; project: ProjectRecord }
-  | { kind: "route"; path: string; label: string };
+  | { kind: "route"; path: string; label: string }
+  // The observed empty-query sections (docs/23 §3.7 item 33): Quick actions
+  // ("New task"; "New session" with the Ctrl+3 hint) and Actions (Code).
+  | { kind: "newTask" }
+  | { kind: "newSession" }
+  | { kind: "codeAction" };
 
 function Magnifier() {
   return (
@@ -90,6 +95,7 @@ function FolderGlyph() {
 function RowIcon({ row }: { row: ResultRow }) {
   if (row.kind === "project") return <FolderGlyph />;
   if (row.kind === "session" && row.session.surface === "code") return <CodeGlyph />;
+  if (row.kind === "newSession" || row.kind === "codeAction") return <CodeGlyph />;
   return <ListGlyph />;
 }
 
@@ -100,12 +106,17 @@ function rowTarget(row: ResultRow): string {
       : `/cowork/${row.session.id}`;
   }
   if (row.kind === "project") return `/projects/${row.project.id}`;
+  if (row.kind === "newTask") return "/new";
+  if (row.kind === "newSession" || row.kind === "codeAction") return "/epitaxy";
   return row.path;
 }
 
 function rowTitle(row: ResultRow): string {
   if (row.kind === "session") return row.session.title;
   if (row.kind === "project") return row.project.name;
+  if (row.kind === "newTask") return "New task";
+  if (row.kind === "newSession") return "New session";
+  if (row.kind === "codeAction") return "Code";
   return row.label;
 }
 
@@ -162,10 +173,14 @@ export function SearchPalette({ onClose }: Props) {
         ...projectRows((project) => project.name.toLowerCase().includes(queryTrimmed)),
       ];
     } else {
-      // Empty query: the recent set (strong inference per the feature doc).
+      // Empty query: the observed composition (docs/23 §3.7 item 33) -
+      // Quick actions, then the recent set, then Actions. Projects stay in
+      // the searchable set; the observed empty state shows recents.
       dataRows = [
+        { kind: "newTask" },
+        { kind: "newSession" },
         ...sessionRows(() => true).slice(0, 6),
-        ...projectRows(() => true).slice(0, 4),
+        { kind: "codeAction" },
       ];
     }
     // The labelled navigation tail: full when no local data exists (browser
@@ -209,6 +224,12 @@ export function SearchPalette({ onClose }: Props) {
       event.preventDefault();
       const selected = results[index];
       if (selected) open(selected);
+    } else if (event.key === "Tab") {
+      // The observed "Actions Tab" hint: Tab moves the highlight into the
+      // Actions section's row.
+      event.preventDefault();
+      const actionIndex = results.findIndex((row) => row.kind === "codeAction");
+      if (actionIndex >= 0) setIndex(actionIndex);
     } else if (event.key === "Escape") {
       event.preventDefault();
       // docs/08 §13: Escape closes the TOPMOST layer only — keep the event from
@@ -233,9 +254,9 @@ export function SearchPalette({ onClose }: Props) {
           <input
             ref={inputRef}
             className="palette-input"
-            placeholder="Search chats and projects"
+            placeholder="Search or start a chat"
             value={query}
-            aria-label="Search chats and projects"
+            aria-label="Search or start a chat"
             onChange={(event) => {
               setQuery(event.target.value);
               setIndex(0);
@@ -258,6 +279,25 @@ export function SearchPalette({ onClose }: Props) {
           ) : null}
         </div>
         <div className="palette-results" aria-live="polite">
+          {results.length > 0 && query.trim() === ""
+            ? results.map((row, i) => {
+                // The observed section headers on the empty query
+                // (docs/23 §3.7 item 33); a query searches the flat set.
+                const header =
+                  row.kind === "newTask"
+                    ? "Quick actions"
+                    : row.kind === "session" && results[i - 1]?.kind === "newSession"
+                      ? "Recents"
+                      : row.kind === "codeAction"
+                        ? "Actions"
+                        : null;
+                return header ? (
+                  <div key={`h-${header}`} className="palette-section" role="presentation">
+                    {header} ›
+                  </div>
+                ) : null;
+              })
+            : null}
           {results.length === 0 ? (
             <div className="palette-empty" title={query.trim()}>
               No results
@@ -278,12 +318,25 @@ export function SearchPalette({ onClose }: Props) {
                 <span className="palette-title">{rowTitle(row)}</span>
                 {/* Right-side relative time from the row's own metadata. */}
                 <span className="palette-time">{rowTime(row) ?? ""}</span>
+                {row.kind === "newSession" ? (
+                  <span className="account-item-hint">Ctrl+3</span>
+                ) : null}
                 {row.kind === "route" && data.sessions.length + data.projects.length > 0 ? (
                   <span className="palette-route-mark">Go to</span>
                 ) : null}
               </button>
             ))
           )}
+          {/* The observed footer key hints (docs/23 §3.7 item 33). */}
+          {results.length > 0 ? (
+            <div className="palette-footer" aria-hidden="true">
+              <span>Select ↑↓</span>
+              <span>·</span>
+              <span>Actions Tab</span>
+              <span>·</span>
+              <span>Open menu Ctrl K</span>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
