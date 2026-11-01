@@ -218,12 +218,25 @@ export function CodeHomeScreen() {
   const preset = (location.state as { folder?: string } | null)?.folder;
   const draftLoaded = useRef(false);
   useEffect(() => {
-    if (preset) {
-      setFolder(preset);
-      taRef.current?.focus();
-    }
+    if (!preset) return;
+    setFolder(preset);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [preset]);
+    // The observed auto-open (docs/23 §7 addendum item 1; IMP-60): entering
+    // Code view with an untrusted bound folder raises the modal before any
+    // composer input. Cancel still aborts with nothing recorded; the gate
+    // itself is the bridge's and unchanged.
+    void checkWorkspaceTrust(preset).then((verdict) => {
+      if (verdict.kind === "checked" && !verdict.trusted) {
+        setTrustError(null);
+        setTrustPrompt({ folder: verdict.folder });
+        taRef.current?.blur();
+      } else if (verdict.kind === "checked" && verdict.trusted) {
+        taRef.current?.focus();
+      }
+    });
+      // location.key changes on every navigation (a second + press included),
+    // so the preselect and its trust check re-run.
+  }, [location.key]);
   useEffect(() => {
     if (draftLoaded.current) return;
     draftLoaded.current = true;
@@ -271,7 +284,18 @@ export function CodeHomeScreen() {
   );
 
   const send = async () => {
-    if (!draft.trim() || !folder || sendingRef.current || creating) return;
+    if (!draft.trim() || sendingRef.current || creating) return;
+    // The observed behavior (docs/23 §7 addendum item 11; IMP-58): a send
+    // without a bound folder attempts and fails VISIBLY, the draft kept —
+    // never a silent no-op. The bridge's own code for this fact is reused.
+    if (!folder) {
+      setFolderError({
+        code: "CODE_FOLDER_MISSING",
+        message: "Choose a folder to start a Code session.",
+        retryable: true,
+      });
+      return;
+    }
     const text = draft;
     // The trust gate (UI-SCREEN-32): ask the bridge before the create. The
     // bridge refuses an untrusted folder regardless — the modal is how the
@@ -440,6 +464,7 @@ export function CodeHomeScreen() {
             aria-label={draft.trim() ? "Send" : "Nothing to send"}
             disabled={!draft.trim() || creating || codeDisabled}
             onClick={() => void send()}
+            title={draft.trim() && !folder ? "Choose a folder — the send will fail without one" : undefined}
           >
             {draft.trim() ? "↵" : "○"}
           </button>

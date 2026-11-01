@@ -2230,6 +2230,26 @@ try {
     );
   });
 
+  await step("T58 sending without a folder is a visible blocking error; the draft is kept (IMP-58)", async () => {
+    await page.goto(`${BASE}/epitaxy`);
+    await page.locator(".code-home-title").waitFor();
+    await page.getByPlaceholder("Describe something to build, change, or fix").fill("fix the flaky test");
+    await expectTrue(
+      await page.locator(".code-pill-send").isEnabled(),
+      "the send affordance enables on text alone (the attempt may fail visibly)",
+    );
+    await page.locator(".code-pill-send").click();
+    await page.locator(".composer-error").waitFor();
+    await expectTrue(
+      (await page.locator(".composer-error").innerText()).includes("CODE_FOLDER_MISSING"),
+      "the blocking error surfaces with the bridge's own code",
+    );
+    await expectTrue(
+      (await page.getByPlaceholder("Describe something to build, change, or fix").inputValue()) === "fix the flaky test",
+      "the draft is kept",
+    );
+  });
+
 } finally {
   await browser.close();
 }

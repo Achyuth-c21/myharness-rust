@@ -776,6 +776,55 @@ try {
     await context.close();
   });
 
+  await step("U14 the trust modal auto-opens for a bound untrusted folder, before any input (IMP-60)", async () => {
+    const context = await browser.newContext({ colorScheme: "dark", viewport: { width: 1200, height: 900 } });
+    const page = await context.newPage();
+    // A seeded Code session whose folder has NO stored trust decision (a
+    // removed or reset trust file) — the tree lists it, the + preselects it.
+    journeyBackend(page, {
+      sessions: [
+        {
+          id: "code-seed-1",
+          surface: "code",
+          title: "seeded session",
+          cwd: "/tmp/journey-untrusted",
+          model: "model-a",
+          effort: null,
+          permission_mode: "default",
+          projectId: null,
+          archived: false,
+          legal_hold: false,
+          createdAt: Date.now(),
+          lastActivityAt: Date.now(),
+          extra: {},
+        },
+      ],
+      trusted: [],
+    });
+    await page.goto(`${BASE}/epitaxy`);
+    await page.locator(".code-home-title").waitFor();
+    // Binding the folder (the tree's per-folder +) loads the Code view with
+    // the bound untrusted folder — the modal opens BEFORE any input.
+    const dialog = page.getByRole("dialog", { name: "Trust this workspace?" });
+    await page.getByRole("button", { name: "Expand journey-untrusted" }).click();
+    await page.getByRole("button", { name: "Start a session in journey-untrusted" }).click();
+    await dialog.waitFor();
+    await expectTrue(
+      (await page.getByPlaceholder("Describe something to build, change, or fix").inputValue()) === "",
+      "the modal auto-opens with an empty composer",
+    );
+    // Cancel aborts with nothing recorded: a second + opens it again.
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await page.getByRole("button", { name: "Start a session in journey-untrusted" }).click();
+    await dialog.waitFor();
+    await expectTrue(
+      (await dialog.locator(".trust-folder").innerText()).includes("journey-untrusted"),
+      "the modal names the folder the bridge verified",
+    );
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await context.close();
+  });
+
   await step("U11 the usage panel reflects the tokens the sessions actually produced", async () => {
     const context = await browser.newContext({ colorScheme: "dark", viewport: { width: 1200, height: 900 } });
     const page = await context.newPage();
