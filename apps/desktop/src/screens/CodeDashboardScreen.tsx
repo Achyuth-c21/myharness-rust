@@ -43,28 +43,6 @@ const PERMISSIONS: { value: CodePermissionMode; label: string }[] = [
   { value: "bypass", label: "Bypass permissions" },
 ];
 
-function Starburst() {
-  const rays = Array.from({ length: 8 }, (_, i) => {
-    const a = (i * Math.PI * 2) / 8;
-    return (
-      <line
-        key={i}
-        x1={12 + Math.cos(a) * 3.4}
-        y1={12 + Math.sin(a) * 3.4}
-        x2={12 + Math.cos(a) * 10.6}
-        y2={12 + Math.sin(a) * 10.6}
-        stroke="currentColor"
-        strokeWidth="2.6"
-        strokeLinecap="round"
-      />
-    );
-  });
-  return (
-    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" className="starburst" aria-hidden="true">
-      {rays}
-    </svg>
-  );
-}
 
 function FolderGlyph() {
   return (
@@ -402,11 +380,19 @@ export function CodeDashboardScreen() {
 
   return (
     <div className="code-dashboard">
+      {/* IMP-59's honest re-label (docs/19): this dashboard is a rebuild
+          design — it must not read as a first-class screen with never-observed
+          copy. The observed Code landing lives at /epitaxy. */}
+      <div className="code-notice" role="status">
+        <strong>A rebuild-defined dashboard.</strong>
+        <span>
+          The original’s Code view is the session list at /epitaxy; this usage
+          view is the rebuild’s own (docs/19 IMP-59, owner decision pending).
+        </span>
+      </div>
       <header className="code-hero">
-        <h1 className="greeting">
-          What’s up next? <Starburst />
-        </h1>
-        <p className="code-subtitle">Run a Code session against a local folder.</p>
+        <h1 className="greeting">Code usage</h1>
+        <p className="code-subtitle">Local, device-only analytics for Code sessions.</p>
       </header>
 
       <div className="composer-card code-composer">
