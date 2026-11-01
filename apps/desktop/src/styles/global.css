@@ -4417,3 +4417,24 @@ html[data-motion="reduced"] *::after {
   font-size: 11px;
   color: var(--mh-text-3);
 }
+
+/* ---------- Code home empty state (docs/23 §7 item 2; IMP-56) ---------- */
+
+.code-home-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--mh-unit) * 3);
+  padding-top: 18vh;
+  color: var(--mh-text-3);
+}
+
+.code-home-empty p {
+  margin: 0;
+  font-size: 13px;
+}
+
+.pixel-art {
+  image-rendering: pixelated;
+  color: var(--mh-icon-3);
+}

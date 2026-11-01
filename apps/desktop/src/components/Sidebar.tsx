@@ -564,7 +564,7 @@ function CodeFolderTree({
   if (folders.length === 0) {
     return (
       <div className="code-tree-note" role="status">
-        No Code sessions yet. Start one from the composer.
+        Sessions you start will show up here
       </div>
     );
   }

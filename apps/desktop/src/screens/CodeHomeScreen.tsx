@@ -146,6 +146,24 @@ function PermissionMenu({
   );
 }
 
+/** The observed pixel-art spark, drawn as blocky SVG rects (docs/23 §7
+    addendum item 2) — decorative, hidden from assistive tech. */
+function PixelSpark() {
+  const cells = [
+    [5, 1], [6, 1], [1, 2], [2, 2], [4, 2], [5, 2], [6, 2], [7, 2],
+    [0, 3], [1, 3], [3, 3], [4, 3], [5, 3], [6, 3], [8, 3], [9, 3],
+    [2, 4], [3, 4], [5, 4], [6, 4], [7, 4], [4, 5], [5, 5],
+    [4, 6], [5, 6],
+  ];
+  return (
+    <svg width="100" height="80" viewBox="0 0 10 8" aria-hidden="true" className="empty-art pixel-art">
+      {cells.map(([x, y]) => (
+        <rect key={`${x}-${y}`} x={x} y={y} width="1" height="1" fill="currentColor" />
+      ))}
+    </svg>
+  );
+}
+
 function folderName(path: string | null): string {
   if (!path) return "Choose folder";
   const parts = path.split("/");
@@ -373,9 +391,14 @@ export function CodeHomeScreen() {
         </span>
       </header>
 
-      {/* The observed body below the header was not populated in the audit;
-          the middle stays open rather than inventing content. */}
-      <div className="code-home-body" />
+      {/* The observed empty state (docs/23 §7 addendum item 2; IMP-56):
+          "Sessions you start will show up here" with a pixel-art spark. */}
+      <div className="code-home-body">
+        <div className="code-home-empty" role="status">
+          <PixelSpark />
+          <p>Sessions you start will show up here</p>
+        </div>
+      </div>
 
       <div className="code-home-composer">
         {/* The observed pill composer (docs/23 §7 addendum item 3; IMP-52):
