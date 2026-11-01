@@ -27,6 +27,7 @@ pub mod mcp;
 pub mod policy;
 pub mod scheduler;
 pub mod setup;
+pub mod terminal;
 pub mod trust;
 
 /// Commands the renderer may invoke. The set grows phase by phase and must never become

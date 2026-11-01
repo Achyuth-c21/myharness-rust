@@ -108,6 +108,69 @@ fn deep_link_target(args: &[String]) -> Option<tauri::Url> {
 }
 
 /// Log the rejections (fixture observability); navigation decisions unaffected.
+// ─── The Code terminal drawer (docs/23 §7 addendum item 8; IMP-55) ───
+// The renderer never touches the PTY: it opens, streams, and closes through
+// these commands; the registry enforces the drain and the output cap.
+
+#[derive(Clone, serde::Serialize)]
+struct TerminalChunk {
+    id: u64,
+    data: String,
+}
+
+#[tauri::command]
+fn terminal_open(
+    cwd: Option<String>,
+    app: tauri::AppHandle,
+    registry: tauri::State<std::sync::Arc<myharness_bridge::terminal::TerminalRegistry>>,
+) -> Result<myharness_bridge::terminal::TerminalOpened, String> {
+    // The reader thread outlives the command, so the registry handle is
+    // cloned out of the short-lived State borrow.
+    let registry = std::sync::Arc::clone(&registry);
+    let (opened, mut reader) = registry.open(cwd.as_deref()).map_err(|error| error.0)?;
+    let id = opened.id;
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut chunk = [0u8; 4096];
+        loop {
+            match reader.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(read) => {
+                    if !registry.account_output(id, read) {
+                        dlog("the terminal output cap is hit; the session is closed");
+                        let _ = registry.close(id);
+                        break;
+                    }
+                    let data = String::from_utf8_lossy(&chunk[..read]).into_owned();
+                    if app
+                        .emit("terminal://output", TerminalChunk { id, data })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+    Ok(opened)
+}
+
+#[tauri::command]
+fn terminal_input(
+    id: u64,
+    data: String,
+    registry: tauri::State<std::sync::Arc<myharness_bridge::terminal::TerminalRegistry>>,
+) -> Result<(), String> {
+    registry.write(id, data.as_bytes()).map_err(|error| error.0)
+}
+
+#[tauri::command]
+fn terminal_close(
+    id: u64,
+    registry: tauri::State<std::sync::Arc<myharness_bridge::terminal::TerminalRegistry>>,
+) -> Result<(), String> {
+    registry.close(id).map_err(|error| error.0)
+}
+
 fn deep_link_rejections(args: &[String]) {
     for arg in args {
         if arg.contains("://") && shell::classify_deep_link(arg).is_err() {
@@ -690,10 +753,16 @@ pub fn run() {
 
     builder
         .register_uri_scheme_protocol("app", |_context, request| adapt(request))
+        .manage(std::sync::Arc::new(
+            myharness_bridge::terminal::TerminalRegistry::default(),
+        ))
         .invoke_handler(tauri::generate_handler![
             ping,
             renderer_ready,
             chat_command,
+            terminal_open,
+            terminal_input,
+            terminal_close,
             pick_workspace_folder,
             reveal_workspace_folder,
             setup_command,
@@ -756,6 +825,15 @@ pub fn run() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running myharness");
+        .build(tauri::generate_context!())
+        .expect("error while building myharness")
+        .run(|app, event| {
+            // The quit drain (REQ-CODE-04): no shell outlives the app.
+            if let tauri::RunEvent::Exit = event {
+                use tauri::Manager;
+                if let Some(registry) = app.try_state::<std::sync::Arc<myharness_bridge::terminal::TerminalRegistry>>() {
+                    registry.close_all();
+                }
+            }
+        });
 }
