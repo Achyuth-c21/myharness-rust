@@ -2254,6 +2254,58 @@ try {
     );
   });
 
+  await step("T59 the terminal drawer: the observed header, the honest preview state, and the settings menu (IMP-55)", async () => {
+    await page.goto(`${BASE}/epitaxy`);
+    await page.locator(".code-home-title").waitFor();
+    await page.getByRole("button", { name: "Open terminal" }).click();
+    const drawer = page.locator(".terminal-drawer");
+    await drawer.waitFor();
+    await expectTrue(
+      (await drawer.locator(".terminal-title").innerText()).includes("Terminal"),
+      "the drawer header carries the observed Terminal title",
+    );
+    await expectTrue(
+      (await drawer.getByRole("button", { name: "New terminal" }).isDisabled()) === true,
+      "the + affordance is inert: additional terminals were not observed",
+    );
+    await expectTrue(
+      (await drawer.locator(".terminal-note").innerText()).includes("available in the desktop app"),
+      "the preview states the boundary: no shell to attach",
+    );
+    // The settings menu carries the observed items.
+    await drawer.getByRole("button", { name: "Terminal settings" }).click();
+    const menu = page.getByRole("menu", { name: "Terminal settings" });
+    await menu.waitFor();
+    await expectTrue(
+      (await menu.getByRole("menuitemradio", { name: "Block" }).getAttribute("aria-checked")) === "true",
+      "Cursor style defaults to the observed Block",
+    );
+    await expectTrue(
+      (await menu.getByRole("menuitemcheckbox", { name: "Blink cursor" }).getAttribute("aria-checked")) === "true",
+      "Blink cursor defaults to the observed checked state",
+    );
+    await expectTrue(
+      (await menu.getByRole("menuitemcheckbox", { name: "Copy on select" }).count()) === 1,
+      "Copy on select is present",
+    );
+    await expectTrue(
+      (await menu.getByRole("menuitemradio", { name: "10,000 lines" }).getAttribute("aria-checked")) === "true",
+      "Scrollback defaults to the observed 10,000 lines",
+    );
+    await page.keyboard.press("Escape");
+    // Expand widens the drawer; ✕ closes it.
+    await drawer.getByRole("button", { name: "Expand terminal" }).click();
+    await expectTrue(
+      (await drawer.getAttribute("class")).includes("expanded"),
+      "expand widens the drawer",
+    );
+    await drawer.getByRole("button", { name: "Close terminal" }).click();
+    await expectTrue(
+      (await drawer.count()) === 0,
+      "close dismisses the drawer",
+    );
+  });
+
 } finally {
   await browser.close();
 }

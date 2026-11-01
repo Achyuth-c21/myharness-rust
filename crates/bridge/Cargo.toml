@@ -33,6 +33,7 @@ tokio-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
+portable-pty.workspace = true
 
 [dev-dependencies]
 futures = { workspace = true }

@@ -37,6 +37,7 @@ import {
 import { codeDraftKey, loadDraft, saveDraft } from "../chat/drafts";
 import { titleFromMessage } from "../chat/format";
 import { TrustWorkspaceModal } from "../components/TrustWorkspaceModal";
+import { TerminalDrawer } from "../terminal/TerminalDrawer";
 import { LoadingShell } from "../components/shells";
 
 type CodeDashboard = Extract<ChatResponse, { type: "codeDashboard" }>;
@@ -192,6 +193,8 @@ export function CodeHomeScreen() {
   // Ctrl+U, closes on outside press or Escape.
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const addAnchorRef = useRef<HTMLSpanElement>(null);
+  // The observed terminal drawer (IMP-55).
+  const [terminalOpen, setTerminalOpen] = useState(false);
   const [trustBusy, setTrustBusy] = useState(false);
   const [trustError, setTrustError] = useState<string | null>(null);
 
@@ -407,11 +410,23 @@ export function CodeHomeScreen() {
     <div className="code-home">
       <header className="code-home-head">
         <h1 className="code-home-title">New session</h1>
-        {/* The observed glyphs (docs/23 §3.6 item 31); their functions were
-            never observed, so they render inert instead of pretending. */}
-        <span className="code-home-glyphs" title="These controls' functions were not observed (docs/23 §3.6)">
-          <TerminalGlyph />
-          <GlobeGlyph />
+        <span className="code-home-glyphs">
+          {/* The observed terminal drawer trigger (docs/23 §7 addendum item 8;
+              IMP-55). The round-2 pass observed this glyph's function. */}
+          <button
+            type="button"
+            className="icon-btn terminal-trigger"
+            aria-label="Open terminal"
+            title="Terminal"
+            onClick={() => setTerminalOpen(true)}
+          >
+            <TerminalGlyph />
+          </button>
+          {/* The globe is inert in the current original build (coworkBrowser
+              unsupported — docs/23 §7 item 9), so the inert glyph matches. */}
+          <span className="code-home-globe" title="The built-in browser is unsupported (coworkBrowser)">
+            <GlobeGlyph />
+          </span>
         </span>
       </header>
 
@@ -542,6 +557,9 @@ export function CodeHomeScreen() {
         <div className="code-notice" role="status">
           Local Code sessions are disabled. Remote placement is not implemented in this build.
         </div>
+      ) : null}
+      {terminalOpen ? (
+        <TerminalDrawer cwd={folder} onClose={() => setTerminalOpen(false)} />
       ) : null}
       {permissionOpen ? (
         <PermissionMenu
