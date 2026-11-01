@@ -268,15 +268,13 @@ export function Sidebar({ onOpenSettings, onOpenSearch }: Props) {
                 <PlusIcon />
                 <span>New</span>
               </NavLink>
-              <button
-                type="button"
-                className="nav-item nav-button"
-                disabled
-                title="Customize is not built yet; the observed route is documented in docs/screens/customize.md"
+              <NavLink
+                to="/customize"
+                className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
               >
                 <CustomizeIcon />
                 <span>Customize</span>
-              </button>
+              </NavLink>
               <button
                 type="button"
                 className="nav-item nav-button"
@@ -302,15 +300,13 @@ export function Sidebar({ onOpenSettings, onOpenSearch }: Props) {
                   </NavLink>
                 );
               })}
-              <button
-                type="button"
-                className="nav-item nav-button"
-                disabled
-                title="Customize is not built yet; the observed route is documented in docs/screens/customize.md"
+              <NavLink
+                to="/customize"
+                className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
               >
                 <CustomizeIcon />
                 <span>Customize</span>
-              </button>
+              </NavLink>
             </>
           )}
         </div>

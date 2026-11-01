@@ -47,10 +47,20 @@ import {
 import { formatRelative } from "../chat/format";
 
 function DocGlyph() {
+  /* The observed empty-state illustration is a document/folder line-art scene
+     (docs/23 §3.5 item 29); redrawn as hand-drawn-style SVG — no raster
+     assets, license-clean (IMP-50). */
   return (
-    <svg width="40" height="40" viewBox="0 0 40 40" fill="none" aria-hidden="true">
-      <path d="M11 6h13l6 6v22H11V6Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
-      <path d="M24 6v6h6M16 18h9M16 23h9M16 28h6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    <svg width="96" height="78" viewBox="0 0 96 78" fill="none" aria-hidden="true" className="empty-art">
+      {/* folder back */}
+      <path d="M10 20a3 3 0 0 1 3-3h16l6 6h28a3 3 0 0 1 3 3v8" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+      {/* document rising from the folder */}
+      <path d="M30 34h30a3 3 0 0 1 3 3v28a3 3 0 0 1-3 3H30a3 3 0 0 1-3-3V37a3 3 0 0 1 3-3Z" stroke="currentColor" strokeWidth="2.2" />
+      <path d="M34 42h22M34 49h22M34 56h12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      {/* house glyph */}
+      <path d="M66 46h18l-9-9-9 9Z" stroke="currentColor" strokeWidth="2.2" strokeLinejoin="round" />
+      <path d="M69 46v10h12V46" stroke="currentColor" strokeWidth="2.2" strokeLinejoin="round" />
+      <path d="M10 66c10 6 22 8 38 8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeDasharray="2.5 5.5" />
     </svg>
   );
 }
