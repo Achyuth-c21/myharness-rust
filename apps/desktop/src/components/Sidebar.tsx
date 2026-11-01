@@ -22,6 +22,11 @@ import { NAV_ITEMS } from "../routes";
 import { ModeSwitch } from "./ModeSwitch";
 import { LanguageDialog } from "./LanguageDialog";
 import { openSetupWindow } from "../setup/client";
+import {
+  loadCodeSidebar,
+  saveCodeSidebar,
+  type CodeSidebarVisibility,
+} from "../settings/prefs";
 import { useChatSessions } from "../chat/useSessions";
 import { chat, type ProjectRecord, type SessionRecord } from "../chat/client";
 import { formatRelative } from "../chat/format";
@@ -168,10 +173,20 @@ const NAV_ICONS: Record<string, () => JSX.Element> = {
 };
 
 export function Sidebar({ onOpenSettings, onOpenSearch }: Props) {
+  const navigate = useNavigate();
   const [accountOpen, setAccountOpen] = useState(false);
   const [languageOpen, setLanguageOpen] = useState(false);
+  // The observed More menu (docs/23 §7 addendum item 5) and the Edit sidebar
+  // dialog (item 7; IMP-54): Routines and Edit sidebar…, with the dialog's
+  // checkboxes toggling which items the Code sidebar shows.
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [editSidebarOpen, setEditSidebarOpen] = useState(false);
+  const [sidebarVisibility, setSidebarVisibility] = useState<CodeSidebarVisibility>(loadCodeSidebar);
+  const moreAnchorRef = useRef<HTMLSpanElement>(null);
   const { pathname } = useLocation();
-  const codeMode = pathname.startsWith("/epitaxy");
+  // Routines is a Code-mode surface (docs/23 §7 item 6): the Code sidebar
+  // stays on /routines too.
+  const codeMode = pathname.startsWith("/epitaxy") || pathname.startsWith("/routines");
   const surface = codeMode ? "code" : "chat";
   // The Status filter chooses which side of the archive the list shows; the
   // remaining filters compose client-side over those rows (AND, immediate).
@@ -187,6 +202,23 @@ export function Sidebar({ onOpenSettings, onOpenSearch }: Props) {
   useEffect(() => {
     saveFilters(filters);
   }, [filters]);
+
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onOutside = (event: MouseEvent) => {
+      if (event.target instanceof Node && moreAnchorRef.current?.contains(event.target)) return;
+      setMoreOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMoreOpen(false);
+    };
+    document.addEventListener("mousedown", onOutside);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onOutside);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [moreOpen]);
 
   // Group-by-Project needs the project names; fetch lazily for that mode only.
   useEffect(() => {
@@ -268,22 +300,67 @@ export function Sidebar({ onOpenSettings, onOpenSearch }: Props) {
                 <PlusIcon />
                 <span>New</span>
               </NavLink>
-              <NavLink
-                to="/customize"
-                className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
-              >
-                <CustomizeIcon />
-                <span>Customize</span>
-              </NavLink>
-              <button
-                type="button"
-                className="nav-item nav-button"
-                disabled
-                title="The More menu's contents were never observed — docs/23 §3.1 item 2"
-              >
-                <MoreIcon />
-                <span>More</span>
-              </button>
+              {/* The Edit sidebar dialog (docs/23 §7 item 7) toggles which of
+                  Routines and Customize appear; its observed defaults are
+                  honored in the prefs layer. */}
+              {sidebarVisibility.routines ? (
+                <NavLink
+                  to="/routines"
+                  className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
+                >
+                  <ScheduledIcon />
+                  <span>Routines</span>
+                </NavLink>
+              ) : null}
+              {sidebarVisibility.customize ? (
+                <NavLink
+                  to="/customize"
+                  className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
+                >
+                  <CustomizeIcon />
+                  <span>Customize</span>
+                </NavLink>
+              ) : null}
+              <span className="more-anchor" ref={moreAnchorRef}>
+                <button
+                  type="button"
+                  className={`nav-item nav-button${moreOpen ? " active" : ""}`}
+                  aria-haspopup="menu"
+                  aria-expanded={moreOpen}
+                  onClick={() => setMoreOpen((open) => !open)}
+                >
+                  <MoreIcon />
+                  <span>More</span>
+                </button>
+                {moreOpen ? (
+                  <div className="add-menu more-menu" role="menu" aria-label="More">
+                    {/* The observed More menu (docs/23 §7 item 5): Routines
+                        and Edit sidebar…. */}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="add-menu-item"
+                      onClick={() => {
+                        setMoreOpen(false);
+                        navigate("/routines");
+                      }}
+                    >
+                      <span>Routines</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="add-menu-item"
+                      onClick={() => {
+                        setMoreOpen(false);
+                        setEditSidebarOpen(true);
+                      }}
+                    >
+                      <span>Edit sidebar…</span>
+                    </button>
+                  </div>
+                ) : null}
+              </span>
             </>
           ) : (
             <>
@@ -496,6 +573,16 @@ export function Sidebar({ onOpenSettings, onOpenSearch }: Props) {
             }}
           />
         ) : null}
+        {editSidebarOpen ? (
+          <EditSidebarDialog
+            visibility={sidebarVisibility}
+            onChange={(next) => {
+              setSidebarVisibility(next);
+              saveCodeSidebar(next);
+            }}
+            onClose={() => setEditSidebarOpen(false)}
+          />
+        ) : null}
       </div>
     </nav>
   );
@@ -612,6 +699,65 @@ function CodeFolderTree({
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/** The observed Edit sidebar dialog (docs/23 §7 addendum item 7; IMP-54):
+    "Choose which items appear in your sidebar." with checkboxes and Done.
+    The observed defaults — Routines unchecked, Customize checked — live in
+    the prefs layer. */
+function EditSidebarDialog({
+  visibility,
+  onChange,
+  onClose,
+}: {
+  visibility: CodeSidebarVisibility;
+  onChange: (next: CodeSidebarVisibility) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="trust-scrim"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div
+        className="language-dialog edit-sidebar-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Edit sidebar"
+      >
+        <div className="language-head">
+          <h2 className="trust-title">Edit sidebar</h2>
+          <button type="button" className="notice-close" aria-label="Close sidebar editor" onClick={onClose}>
+            ✕
+          </button>
+        </div>
+        <p className="edit-sidebar-copy">Choose which items appear in your sidebar.</p>
+        <label className="settings-check edit-sidebar-check">
+          <input
+            type="checkbox"
+            checked={visibility.routines}
+            onChange={(event) => onChange({ ...visibility, routines: event.target.checked })}
+          />
+          Routines
+        </label>
+        <label className="settings-check edit-sidebar-check">
+          <input
+            type="checkbox"
+            checked={visibility.customize}
+            onChange={(event) => onChange({ ...visibility, customize: event.target.checked })}
+          />
+          Customize
+        </label>
+        <div className="trust-actions">
+          <button type="button" className="trust-confirm" onClick={onClose}>
+            Done
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -4438,3 +4438,44 @@ html[data-motion="reduced"] *::after {
   image-rendering: pixelated;
   color: var(--mh-icon-3);
 }
+
+/* ---------- More menu + Edit sidebar (docs/23 §7 items 5-7; IMP-54) ---------- */
+
+.more-anchor {
+  position: relative;
+  display: block;
+}
+
+.more-menu {
+  position: absolute;
+  top: calc(100% + var(--mh-unit) * 1);
+  left: 0;
+  right: auto;
+  width: 200px;
+}
+
+.routines {
+  max-width: 1050px;
+  margin: 0 auto;
+  padding: calc(var(--mh-unit) * 6) 0 calc(var(--mh-unit) * 8);
+}
+
+.routines-title {
+  font-family: var(--mh-font-display);
+  font-size: 32px;
+  font-weight: var(--mh-w4);
+  color: var(--mh-text-1);
+  margin: 0 auto 0 0;
+}
+
+.edit-sidebar-copy {
+  font-size: 13px;
+  color: var(--mh-text-2);
+  margin: 0 0 calc(var(--mh-unit) * 4);
+}
+
+.edit-sidebar-check {
+  margin-bottom: calc(var(--mh-unit) * 2);
+  font-size: 13px;
+  color: var(--mh-text-1);
+}
