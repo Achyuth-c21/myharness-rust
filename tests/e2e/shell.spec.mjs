@@ -100,7 +100,7 @@ try {
 
   await step("T09 Ctrl+K opens palette; Enter opens row (UI-INT-020/023)", async () => {
     await page.keyboard.press("Control+k");
-    await page.getByPlaceholder("Search chats and projects").fill("cow");
+    await page.getByPlaceholder("Search or start a chat").fill("cow");
     await expectTrue(
       (await page.locator(".palette-row").count()) === 1,
       "query 'cow' must shrink results to Cowork",
@@ -111,10 +111,10 @@ try {
 
   await step("T10 palette 'No results' + Escape closes (UI-INT-027/026)", async () => {
     await page.keyboard.press("Control+k");
-    await page.getByPlaceholder("Search chats and projects").fill("zzzz");
+    await page.getByPlaceholder("Search or start a chat").fill("zzzz");
     await expectTrue(await page.getByText("No results").count() === 1, "No results must show");
     await page.keyboard.press("Escape");
-    await expectTrue(await page.getByPlaceholder("Search chats and projects").count() === 0, "palette must close");
+    await expectTrue(await page.getByPlaceholder("Search or start a chat").count() === 0, "palette must close");
   });
 
   await step("T11 Ctrl+, opens settings hash modal on current route (docs/06 §1)", async () => {
@@ -262,10 +262,10 @@ try {
 
   await step("T22 palette clear button keeps palette open (search-palette.md)", async () => {
     await page.keyboard.press("Control+k");
-    await page.getByPlaceholder("Search chats and projects").fill("cow");
+    await page.getByPlaceholder("Search or start a chat").fill("cow");
     await page.getByRole("button", { name: "Clear search" }).click();
     await expectTrue(
-      (await page.getByPlaceholder("Search chats and projects").inputValue()) === "",
+      (await page.getByPlaceholder("Search or start a chat").inputValue()) === "",
       "X clears the query",
     );
     await expectTrue(await page.locator("[role=dialog][aria-label=Search]").count() === 1, "palette stays open");
@@ -1359,22 +1359,33 @@ try {
     await mockPage.goto(`${BASE}/new`);
     await mockPage.waitForSelector("#composer"); // deterministic: shell mounted before keys
     await mockPage.keyboard.press("Control+k");
-    await mockPage.getByPlaceholder("Search chats and projects").waitFor();
-    // Empty query = the recent set from real rows.
+    await mockPage.getByPlaceholder("Search or start a chat").waitFor();
+    // Empty query = the observed composition (docs/23 §3.7 item 33): the two
+    // Quick actions, the Recents from real rows, and the Code action.
     await expectTrue(
-      (await mockPage.locator(".palette-row").count()) === 3,
-      "the empty query lists the three real rows",
+      (await mockPage.locator(".palette-row").count()) === 5,
+      "the empty query shows Quick actions, the recent sessions, and Code",
+    );
+    await expectTrue(
+      (await mockPage.locator(".palette-section", { hasText: /^Quick actions/ }).count()) === 1 &&
+        (await mockPage.locator(".palette-section", { hasText: /^Recents/ }).count()) === 1 &&
+        (await mockPage.locator(".palette-section", { hasText: /^Actions/ }).count()) === 1,
+      "the observed section headers render",
+    );
+    await expectTrue(
+      (await mockPage.locator(".palette-footer").innerText()).includes("Select ↑↓"),
+      "the footer carries the observed key hints",
     );
     // A query narrows live across sessions AND projects, case-insensitively.
-    await mockPage.getByPlaceholder("Search chats and projects").fill("quarterly");
+    await mockPage.getByPlaceholder("Search or start a chat").fill("quarterly");
     await expectTrue(
       (await mockPage.locator(".palette-row").count()) === 3,
       "the query matches both sessions and the project",
     );
-    await mockPage.getByPlaceholder("Search chats and projects").fill("zzz-nothing");
+    await mockPage.getByPlaceholder("Search or start a chat").fill("zzz-nothing");
     await expectTrue(await mockPage.locator(".palette-empty").count() === 1, "No results");
     await mockPage.getByRole("button", { name: "Clear search" }).click();
-    await mockPage.getByPlaceholder("Search chats and projects").fill("refactor");
+    await mockPage.getByPlaceholder("Search or start a chat").fill("refactor");
     await mockPage.keyboard.press("ArrowDown");
     await mockPage.keyboard.press("Enter");
     await mockPage.waitForURL("**/epitaxy/00000000-0000-0000-0000-00000000f002");
