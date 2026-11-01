@@ -2076,8 +2076,12 @@ try {
       "the preview states the boundary instead of a fake catalog",
     );
     await expectTrue(
-      (await page.locator('.customize-tools button[aria-label="Add menu"]').isDisabled()) === true,
-      "the Add split is inert: its menu was never observed",
+      (await page.locator('.customize-tools button[aria-label="Add"]').isDisabled()) === true,
+      "the single + Add button is inert: its menu was never observed",
+    );
+    await expectTrue(
+      (await page.locator('.customize-tools button[aria-label="Add"]').innerText()).includes("+ Add"),
+      "the observed single + Add button (no split, no extra caret)",
     );
     // The populated tabs render only the bridge's real data.
     const mockContext = await browser.newContext({ viewport: { width: 1200, height: 900 } });
