@@ -49,13 +49,21 @@ function SortGlyph() {
 }
 
 function FolderGlyph({ size = 40 }: { size?: number }) {
+  /* The observed empty-state illustration is custom hand-and-windows line art
+     (docs/23 §3.5 item 27); redrawn as hand-drawn-style SVG — no raster
+     assets, license-clean (IMP-50). */
   return (
-    <svg width={size} height={size} viewBox="0 0 40 40" fill="none" aria-hidden="true">
-      <path
-        d="M5 12a3 3 0 0 1 3-3h7l4 4.5h13a3 3 0 0 1 3 3V28a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V12Z"
-        stroke="currentColor"
-        strokeWidth="1.6"
-      />
+    <svg width={size * 2.2} height={size * 1.8} viewBox="0 0 88 72" fill="none" aria-hidden="true" className="empty-art">
+      {/* window frames */}
+      <rect x="8" y="10" width="30" height="24" rx="2" stroke="currentColor" strokeWidth="2.2" />
+      <path d="M8 18h30M14 10v24M22 10v24M30 10v24" stroke="currentColor" strokeWidth="1.4" />
+      <rect x="50" y="10" width="30" height="24" rx="2" stroke="currentColor" strokeWidth="2.2" />
+      <path d="M50 18h30M56 10v24M64 10v24M72 10v24" stroke="currentColor" strokeWidth="1.4" />
+      <rect x="8" y="42" width="30" height="24" rx="2" stroke="currentColor" strokeWidth="2.2" />
+      <path d="M8 50h30M14 42v24M22 42v24M30 42v24" stroke="currentColor" strokeWidth="1.4" />
+      {/* reaching hand */}
+      <path d="M46 66c2-8 6-12 12-14l14-5c2.4-.8 4 1 3.2 3l-1.6 3.6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M44 68c8 2 16 0 22-4" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeDasharray="2.5 5" />
     </svg>
   );
 }

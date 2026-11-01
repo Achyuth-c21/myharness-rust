@@ -64,8 +64,13 @@ try {
     for (const label of ["New", "Projects", "Artifacts", "Scheduled"]) {
       await expectTrue(await sidebar.getByText(label, { exact: true }).count() === 1, `missing ${label}`);
     }
-    const customize = sidebar.getByRole("button", { name: "Customize" });
-    await expectTrue(await customize.isDisabled(), "Customize must be disabled (route unobserved, docs/06)");
+    // The Customize route is now observed and rendered (docs/23 §4 item 1),
+    // so the sidebar item is a live link; NEXT-STEPS §5 un-disables it only
+    // once the route renders.
+    await expectTrue(
+      (await sidebar.getByRole("link", { name: "Customize" }).count()) === 1,
+      "Customize is a live link to the rendered route",
+    );
   });
 
   await step("T05 Ctrl+N returns to /new from a deep route (UI-INT-005)", async () => {
@@ -2026,6 +2031,113 @@ try {
     );
     // The template grid is bridge data; the preview shows none rather than
     // faking them (T44), and T45 covers the populated grid.
+  });
+
+  await step("T56 the Customize route renders the observed screen; the illustrations are line-art (IMP-50, UI-SCREEN-15..17)", async () => {
+    // The sidebar item is live now: it navigates to the route.
+    await page.goto(`${BASE}/new`);
+    await page.getByRole("link", { name: "Customize" }).click();
+    await page.waitForURL("**/customize");
+    await expectTrue(
+      (await page.locator(".customize-title").innerText()) === "Customize",
+      "the route carries the observed title",
+    );
+    await expectTrue(
+      (await page.locator(".customize-tab").count()) === 3,
+      "the three observed tabs render",
+    );
+    await expectTrue(
+      (await page.getByText("Customize is available in the desktop app.").count()) === 1,
+      "the preview states the boundary instead of a fake catalog",
+    );
+    await expectTrue(
+      (await page.locator('.customize-tools button[aria-label="Add menu"]').isDisabled()) === true,
+      "the Add split is inert: its menu was never observed",
+    );
+    // The populated tabs render only the bridge's real data.
+    const mockContext = await browser.newContext({ viewport: { width: 1200, height: 900 } });
+    const mockPage = await mockContext.newPage();
+    await mockPage.addInitScript(() => {
+      const skill = {
+        name: "pdf",
+        displayName: "PDF",
+        description: "Work with PDF documents.",
+        version: "1.0.0",
+        source: "bundled",
+        runnable: true,
+        hasScript: false,
+      };
+      const server = {
+        name: "local-dev",
+        status: { state: "connected", message: null, toolCount: 3 },
+        error: null,
+      };
+      window.__TAURI_INTERNALS__ = {
+        invoke: async (cmd, args) => {
+          if (cmd !== "chat_command") throw new Error(`unexpected command ${cmd}`);
+          const command = args.command;
+          if (command.type === "listSkills") {
+            return { type: "skills", view: { skills: [skill], disabled: [], creationEnabled: true, warnings: [] } };
+          }
+          if (command.type === "mcpStatus") {
+            return { type: "mcpStatus", servers: [server], warnings: [] };
+          }
+          if (command.type === "listPlugins") {
+            return { type: "plugins", view: { plugins: [], disabled: [], signaturePolicy: "optional", warnings: [] } };
+          }
+          if (command.type === "listSessions" || command.type === "listCodeSessions") {
+            return { type: "sessions", sessions: [] };
+          }
+          if (command.type === "listProjects") return { type: "projects", projects: [] };
+          if (command.type === "codeDashboard") {
+            return {
+              type: "codeDashboard",
+              summary: { range: "all", days: 0, truncated: false, timezoneOffsetMinutes: 0, from: "", to: "", totals: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, searchRequests: 0, events: 0, errorEvents: 0 }, daily: [], messages: 0, sessions: 0, activeDays: 0, peakHour: null, favoriteModel: null, models: [] },
+              sessions: [],
+              repositories: [],
+              policy: { codeEnabled: true, localSessionsEnabled: true, bypassAllowed: false, workspaceRestricted: false },
+            };
+          }
+          throw new Error(`unexpected chat command ${command.type}`);
+        },
+      };
+    });
+    await mockPage.goto(`${BASE}/customize`);
+    await mockPage.getByText("From Anthropic & Partners").waitFor();
+    await expectTrue(
+      (await mockPage.locator(".customize-row-name", { hasText: "PDF" }).count()) === 1,
+      "the catalog renders the bridge's skills",
+    );
+    await expectTrue(
+      (await mockPage.locator(".customize-row-sub", { hasText: "from Anthropic" }).count()) === 1,
+      "bundled skills carry the observed source label",
+    );
+    await mockPage.getByRole("tab", { name: "Connectors" }).click();
+    await mockPage.locator(".customize-table").waitFor();
+    await expectTrue(
+      (await mockPage.locator(".customize-badge", { hasText: "Desktop" }).count()) === 1 &&
+        (await mockPage.locator(".customize-badge", { hasText: "Local dev" }).count()) === 1,
+      "the connectors table carries the observed badge vocabulary",
+    );
+    await mockPage.getByRole("tab", { name: "Plugins" }).click();
+    await expectTrue(
+      (await mockPage.getByText("Add your first plugins").count()) === 1,
+      "the plugins empty banner matches the observed copy",
+    );
+    await mockContext.close();
+    // The list screens' empty states carry the line-art illustrations.
+    await page.goto(`${BASE}/projects`);
+    await page.locator(".screen-empty .empty-art").waitFor();
+    await expectTrue(
+      (await page.locator(".screen-empty .empty-art").count()) === 1,
+      "the Projects empty state carries the line-art illustration",
+    );
+    await page.goto(`${BASE}/cowork-artifact`);
+    await page.locator(".screen-empty .empty-art").waitFor();
+    await expectTrue(
+      (await page.locator(".screen-empty .empty-art").count()) === 1,
+      "the Artifacts empty state carries the line-art illustration",
+    );
   });
 
 } finally {
