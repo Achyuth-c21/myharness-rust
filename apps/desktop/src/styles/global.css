@@ -4479,3 +4479,27 @@ html[data-motion="reduced"] *::after {
   font-size: 13px;
   color: var(--mh-text-1);
 }
+
+/* ---------- Customize polish (docs/23 §7 A3-11; IMP-57) ---------- */
+
+/* The active tab is a filled pill, not an underline. */
+.customize-tab.active {
+  background: var(--mh-text-1);
+  color: var(--mh-surface-1);
+  border-bottom-color: transparent;
+  border-radius: 999px;
+  padding: calc(var(--mh-unit) * 1.5) calc(var(--mh-unit) * 4);
+}
+
+.customize-tab {
+  border-bottom: 0;
+}
+
+.customize-add {
+  white-space: nowrap;
+}
+
+.customize-filter {
+  max-width: 260px;
+  margin: calc(var(--mh-unit) * 3) 0 0;
+}

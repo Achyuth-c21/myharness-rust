@@ -122,8 +122,7 @@ export function CustomizeScreen() {
   const [servers, setServers] = useState<McpServerView[] | null>(null);
   const [plugins, setPlugins] = useState<PluginView[] | null>(null);
   const [error, setError] = useState<BridgeError | null>(null);
-  const [addOpen, setAddOpen] = useState(false);
-  const addRef = useRef<HTMLSpanElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -146,22 +145,6 @@ export function CustomizeScreen() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!addOpen) return;
-    const onOutside = (event: MouseEvent) => {
-      if (event.target instanceof Node && addRef.current?.contains(event.target)) return;
-      setAddOpen(false);
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setAddOpen(false);
-    };
-    document.addEventListener("mousedown", onOutside);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onOutside);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [addOpen]);
 
   const queryTrimmed = query.trim().toLowerCase();
 
@@ -215,43 +198,49 @@ export function CustomizeScreen() {
       <header className="customize-head">
         <h1 className="customize-title">Customize</h1>
         <div className="customize-tools">
-          <span className="customize-search-box">
+          {/* The observed tools are icon-only (docs/23 §7 addendum A3-11);
+              the search icon focuses the live filter field below the tabs. */}
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Search customize"
+            title="Search"
+            onClick={() => {
+              searchRef.current?.focus();
+            }}
+          >
             <SearchGlyph />
-            <input
-              type="search"
-              className="customize-search"
-              placeholder="Search"
-              aria-label="Search customize"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-            />
-          </span>
+          </button>
           <button type="button" className="icon-btn" aria-label="Filter" disabled title="Filtering vocabulary was not observed on this route (docs/screens/customize.md)">
             <FilterGlyph />
           </button>
           <button type="button" className="icon-btn" aria-label="Sort" disabled title="The sort order was not observed on this route (docs/screens/customize.md)">
             <SortGlyph />
           </button>
-          {/* The observed black split button (docs/23 §4 item 1). Its menu's
-              contents were never observed — inert rather than a dead action. */}
-          <span className="sched-split" ref={addRef}>
-            <button type="button" className="btn-primary sched-split-main" disabled title="The Add menu's contents were not observed (docs/screens/customize.md)">
-              + Add
-            </button>
-            <button
-              type="button"
-              className="btn-primary sched-split-caret"
-              aria-label="Add menu"
-              aria-expanded={addOpen}
-              disabled
-              title="The Add menu's contents were not observed (docs/screens/customize.md)"
-            >
-              ›
-            </button>
-          </span>
+          {/* The observed single black `+ Add ˅` button (docs/23 §4 item 1;
+              A3-11). Its menu's contents were never observed — inert rather
+              than a dead action; no separate caret button beside it. */}
+          <button
+            type="button"
+            className="btn-primary customize-add"
+            aria-label="Add"
+            disabled
+            title="The Add menu's contents were not observed (docs/screens/customize.md)"
+          >
+            + Add ˅
+          </button>
         </div>
       </header>
 
+      <input
+        ref={searchRef}
+        type="search"
+        className="projects-search customize-filter"
+        placeholder="Search"
+        aria-label="Search customize"
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+      />
       <div className="customize-tabs" role="tablist" aria-label="Customize sections">
         {(["skills", "connectors", "plugins"] as Tab[]).map((value) => (
           <button
