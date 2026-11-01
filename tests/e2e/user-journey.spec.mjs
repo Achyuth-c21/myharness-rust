@@ -669,8 +669,8 @@ try {
     await page.getByRole("button", { name: "Choose folder" }).waitFor();
     await page.getByRole("button", { name: "Choose folder" }).click();
     await page.waitForFunction(() => document.body.innerText.includes("journey-code"));
-    await page.getByPlaceholder("Describe a task or ask a question").fill("fix the flaky test");
-    await page.locator(".send-btn").click();
+    await page.getByPlaceholder("Describe something to build, change, or fix").fill("fix the flaky test");
+    await page.locator(".code-pill-send").click();
     await page.waitForURL("**/epitaxy/**");
     await page.getByText(REPLY).waitFor();
     // The session header shows the folder and the permission mode.
@@ -692,8 +692,8 @@ try {
     await page.waitForFunction(() =>
       document.querySelector(".code-folder-chip")?.textContent?.includes("journey-code"),
     );
-    await page.getByPlaceholder("Describe a task or ask a question").fill("one more");
-    await page.locator(".send-btn").click();
+    await page.getByPlaceholder("Describe something to build, change, or fix").fill("one more");
+    await page.locator(".code-pill-send").click();
     await page.waitForURL("**/epitaxy/**");
     await page.getByText(REPLY).waitFor();
     await context.close();
@@ -709,8 +709,8 @@ try {
     await page.getByRole("button", { name: "Choose folder" }).waitFor();
     await page.getByRole("button", { name: "Choose folder" }).click();
     await page.waitForFunction(() => document.body.innerText.includes("journey-untrusted"));
-    await page.getByPlaceholder("Describe a task or ask a question").fill("fix the flaky test");
-    await page.locator(".send-btn").click();
+    await page.getByPlaceholder("Describe something to build, change, or fix").fill("fix the flaky test");
+    await page.locator(".code-pill-send").click();
     // The observed modal (docs/23 §3.6 item 32): exact copy, mono folder path.
     const dialog = page.getByRole("dialog", { name: "Trust this workspace?" });
     await dialog.waitFor();
@@ -743,7 +743,7 @@ try {
       "Cancel aborts the start; no session route",
     );
     // Trust records the decision and proceeds into the session.
-    await page.locator(".send-btn").click();
+    await page.locator(".code-pill-send").click();
     await dialog.waitFor();
     await dialog.getByRole("button", { name: "Trust workspace" }).click();
     await page.waitForURL("**/epitaxy/**");
@@ -766,8 +766,8 @@ try {
       (await page.locator(".code-model-label").innerText()) === "Default model",
       "the observed shell carries the Default model label",
     );
-    await page.getByPlaceholder("Describe a task or ask a question").fill("one more");
-    await page.locator(".send-btn").click();
+    await page.getByPlaceholder("Describe something to build, change, or fix").fill("one more");
+    await page.locator(".code-pill-send").click();
     await page.waitForURL("**/epitaxy/**");
     await expectTrue(
       (await page.getByRole("dialog", { name: "Trust this workspace?" }).count()) === 0,
