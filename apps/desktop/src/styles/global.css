@@ -4381,3 +4381,39 @@ html[data-motion="reduced"] *::after {
   left: 50%;
   transform: translateX(-50%);
 }
+
+/* ---------- Permissions · this session (docs/23 §7 item 4; IMP-53) ---------- */
+
+.permission-menu-head {
+  font-size: 11px;
+  color: var(--mh-text-3);
+  padding: calc(var(--mh-unit) * 1) calc(var(--mh-unit) * 2);
+}
+
+.permission-item {
+  align-items: flex-start;
+}
+
+.permission-item-main {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--mh-unit) * 0.5);
+}
+
+.permission-item-label {
+  font-size: 13px;
+  color: var(--mh-text-1);
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--mh-unit) * 2);
+}
+
+.permission-check {
+  color: var(--mh-text-1);
+  font-size: 12px;
+}
+
+.permission-item-desc {
+  font-size: 11px;
+  color: var(--mh-text-3);
+}
