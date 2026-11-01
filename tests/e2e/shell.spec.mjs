@@ -439,11 +439,20 @@ try {
       await page.locator(".code-pill-send").isDisabled(),
       "send is disabled without text and a desktop host",
     );
-    // The mode trigger opens the interim permissions menu; Bypass is inert.
+    // The mode trigger opens the observed "Permissions · this session" menu
+    // (docs/23 §7 item 4; IMP-53); Bypass is visible-but-inert.
     await page.locator(".code-mode-trigger").click();
-    await page.getByRole("menu", { name: "Permissions" }).waitFor();
+    await page.getByText("Permissions · this session").waitFor();
     await expectTrue(
-      await page.getByRole("menuitem", { name: "Bypass" }).isDisabled(),
+      (await page.locator(".permission-item").count()) === 5,
+      "the menu carries Auto / Manual / Accept edits / Plan / Bypass",
+    );
+    await expectTrue(
+      (await page.locator(".permission-item", { hasText: /^Auto/ }).getAttribute("aria-checked")) === "true",
+      "Auto is the default permission",
+    );
+    await expectTrue(
+      (await page.locator(".permission-item", { hasText: "Bypass permissions" }).isDisabled()) === true,
       "Bypass must be disabled when policy is unknown",
     );
     await page.keyboard.press("Escape");

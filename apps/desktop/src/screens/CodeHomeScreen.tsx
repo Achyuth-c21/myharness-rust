@@ -82,65 +82,68 @@ function ComputerGlyph() {
   );
 }
 
-/** The interim permissions popover: the rebuild's stored modes. IMP-53
-    converges it to the observed "Permissions · this session" copy. */
+/** The observed "Permissions · this session" menu (docs/23 §7 item 4;
+    IMP-53): Auto / Manual / Accept edits / Plan with their descriptions, and
+    Bypass disabled with the observed line. Mapping: Auto and Manual both sit
+    on the rebuild's ask-first `default` enforcement (the rebuild's default is
+    stricter than the observed Auto description — a recorded deviation, not an
+    overclaim: the enforcement layer, not this menu, decides what runs).
+    Bypass is visible-but-disabled unless policy explicitly grants it. */
 function PermissionMenu({
-  permission,
+  permissionLabel,
   onPick,
   onClose,
 }: {
-  permission: CodePermissionMode;
-  onPick: (mode: CodePermissionMode) => void;
+  permissionLabel: string;
+  onPick: (mode: CodePermissionMode, label: string) => void;
   onClose: () => void;
 }) {
+  const rows: { label: string; value: CodePermissionMode; description: string }[] = [
+    { label: "Auto", value: "default", description: "Claude can modify or delete files without asking" },
+    { label: "Manual", value: "default", description: "Always ask before making changes" },
+    { label: "Accept edits", value: "acceptEdits", description: "Automatically accepts edits" },
+    { label: "Plan", value: "plan", description: "Create a plan before making changes" },
+  ];
   return (
     <div className="add-menu code-permission-menu" role="menu" aria-label="Permissions">
-      {(
-        [
-          ["default", "Auto"],
-          ["default", "Manual"],
-          ["acceptEdits", "Accept edits"],
-          ["plan", "Plan"],
-        ] as [CodePermissionMode, string][]
-      ).map(([value, label], index) => (
+      <div className="permission-menu-head" role="presentation">
+        Permissions · this session
+      </div>
+      {rows.map((row) => (
         <button
-          key={`${label}-${index}`}
+          key={row.label}
           type="button"
           role="menuitemradio"
-          aria-checked={permission === value}
-          className="add-menu-item"
+          aria-checked={permissionLabel === row.label}
+          className="add-menu-item permission-item"
           onClick={() => {
-            onPick(value);
+            onPick(row.value, row.label);
             onClose();
           }}
         >
-          <span>{label}</span>
+          <span className="permission-item-main">
+            <span className="permission-item-label">
+              {row.label}
+              {permissionLabel === row.label ? <span className="permission-check">✓</span> : null}
+            </span>
+            <span className="permission-item-desc">{row.description}</span>
+          </span>
         </button>
       ))}
       <button
         type="button"
         role="menuitem"
-        className="add-menu-item"
+        className="add-menu-item permission-item"
         disabled
         title="Bypass permissions are disabled unless policy explicitly allows them"
       >
-        <span>Bypass</span>
+        <span className="permission-item-main">
+          <span className="permission-item-label">Bypass permissions</span>
+          <span className="permission-item-desc">Enable in Claude Code settings</span>
+        </span>
       </button>
     </div>
   );
-}
-
-function permissionLabel(mode: CodePermissionMode): string {
-  switch (mode) {
-    case "acceptEdits":
-      return "Accept edits";
-    case "plan":
-      return "Plan";
-    case "bypass":
-      return "Bypass";
-    default:
-      return "Auto";
-  }
 }
 
 function folderName(path: string | null): string {
@@ -163,9 +166,10 @@ export function CodeHomeScreen() {
   const [permission, setPermission] = useState<CodePermissionMode>("default");
   const [creating, setCreating] = useState(false);
   const [trustPrompt, setTrustPrompt] = useState<{ folder: string } | null>(null);
-  // IMP-53 renders the full Permissions menu; this lane wires the observed
-  // text-row trigger and keeps the stored-mode state.
+  // The observed menu carries per-mode labels; Auto and Manual share the
+  // rebuild's default enforcement, so the label is stored beside the mode.
   const [permissionOpen, setPermissionOpen] = useState(false);
+  const [permissionLabel, setPermissionLabel] = useState("Auto");
   // The pill's + menu (the Code variant): opens by trigger and the observed
   // Ctrl+U, closes on outside press or Escape.
   const [addMenuOpen, setAddMenuOpen] = useState(false);
@@ -448,10 +452,10 @@ export function CodeHomeScreen() {
           <button
             type="button"
             className="code-mode-trigger"
-            aria-label={`Permissions: ${permissionLabel(permission)}`}
+            aria-label={`Permissions: ${permissionLabel}`}
             onClick={() => setPermissionOpen(true)}
           >
-            {permissionLabel(permission)}
+            {permissionLabel}
           </button>
           <span className="code-mode-sep">|</span>
           <button
@@ -493,10 +497,10 @@ export function CodeHomeScreen() {
       ) : null}
       {permissionOpen ? (
         <PermissionMenu
-          permission={permission}
-          onPick={(mode) => {
+          permissionLabel={permissionLabel}
+          onPick={(mode, label) => {
             setPermission(mode);
-            setPermissionOpen(false);
+            setPermissionLabel(label);
           }}
           onClose={() => setPermissionOpen(false)}
         />
