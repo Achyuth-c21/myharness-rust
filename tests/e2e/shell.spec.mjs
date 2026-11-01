@@ -411,6 +411,16 @@ try {
       "the header carries the terminal and globe glyphs",
     );
     await expectTrue(
+      (await page.locator(".code-home-empty").innerText()).includes(
+        "Sessions you start will show up here",
+      ),
+      "the observed empty state with the pixel spark renders",
+    );
+    await expectTrue(
+      (await page.locator(".code-home-empty .pixel-art").count()) === 1,
+      "the spark illustration is present",
+    );
+    await expectTrue(
       (await page.locator(".code-stats").count()) === 0,
       "the landing must not invent usage stats (the dashboard lives at /epitaxy/dashboard)",
     );
