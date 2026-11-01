@@ -225,3 +225,35 @@ export function saveLocale(locale: string): void {
     // Session-only, as above.
   }
 }
+
+// ─── The Edit sidebar dialog's visibility toggles (docs/23 §7 addendum
+// item 7; IMP-54). Renderer-local until a bridge phase consumes them.
+
+const CODE_SIDEBAR_KEY = "ui.codeSidebar";
+
+export interface CodeSidebarVisibility {
+  routines: boolean;
+  customize: boolean;
+}
+
+export function loadCodeSidebar(): CodeSidebarVisibility {
+  try {
+    const raw = localStorage.getItem(CODE_SIDEBAR_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<CodeSidebarVisibility>;
+      return { routines: parsed.routines === true, customize: parsed.customize !== false };
+    }
+  } catch {
+    // Defaults below.
+  }
+  // The observed dialog defaults: Routines unchecked, Customize checked.
+  return { routines: false, customize: true };
+}
+
+export function saveCodeSidebar(visibility: CodeSidebarVisibility): void {
+  try {
+    localStorage.setItem(CODE_SIDEBAR_KEY, JSON.stringify(visibility));
+  } catch {
+    // Session-only, as above.
+  }
+}

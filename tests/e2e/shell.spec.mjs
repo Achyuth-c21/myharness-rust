@@ -2165,6 +2165,71 @@ try {
     );
   });
 
+  await step("T57 the More menu, the Edit sidebar dialog, and the Routines screen (docs/23 §7 items 5-7, IMP-54)", async () => {
+    await page.goto(`${BASE}/epitaxy`);
+    await page.locator(".code-home-title").waitFor();
+    // More opens the observed menu; Routines navigates.
+    await page.getByRole("button", { name: "More" }).click();
+    const menu = page.getByRole("menu", { name: "More" });
+    await menu.waitFor();
+    await expectTrue(
+      (await menu.getByRole("menuitem", { name: "Routines" }).count()) === 1 &&
+        (await menu.getByRole("menuitem", { name: "Edit sidebar…" }).count()) === 1,
+      "the More menu carries the observed two rows",
+    );
+    // Edit sidebar…: the observed dialog, defaults honored.
+    await menu.getByRole("menuitem", { name: "Edit sidebar…" }).click();
+    const dialog = page.getByRole("dialog", { name: "Edit sidebar" });
+    await dialog.waitFor();
+    await expectTrue(
+      (await dialog.innerText()).includes("Choose which items appear in your sidebar."),
+      "the dialog carries the observed copy",
+    );
+    await expectTrue(
+      await dialog.locator('input[type="checkbox"]').nth(0).isChecked() === false &&
+        await dialog.locator('input[type="checkbox"]').nth(1).isChecked() === true,
+      "the observed defaults: Routines unchecked, Customize checked",
+    );
+    await expectTrue(
+      (await page.getByRole("link", { name: "Routines" }).count()) === 0,
+      "Routines is not in the sidebar by default",
+    );
+    // Enabling Routines adds the sidebar item (persisted by the dialog).
+    await dialog.locator('input[type="checkbox"]').nth(0).click();
+    await dialog.getByRole("button", { name: "Done" }).click();
+    await page.getByRole("link", { name: "Routines" }).click();
+    await page.waitForURL("**/routines");
+    // The observed Routines screen.
+    await expectTrue(
+      (await page.locator(".routines-title").innerText()) === "Routines",
+      "the serif Routines title renders",
+    );
+    await expectTrue(
+      (await page.getByRole("button", { name: "New routine" }).isDisabled()) === true,
+      "New routine is inert: the editor was not observed",
+    );
+    await expectTrue(
+      (await page.locator(".screen-empty .empty-art").count()) === 1,
+      "the stopwatch illustration renders",
+    );
+    await expectTrue(
+      (await page.getByText("No routines yet.").count()) === 1,
+      "the observed empty copy",
+    );
+    // The sidebar item persists across a reload; the dialog hides it again.
+    await page.reload();
+    await page.getByRole("link", { name: "Routines" }).waitFor();
+    await page.getByRole("button", { name: "More" }).click();
+    await page.getByRole("menu", { name: "More" }).getByRole("menuitem", { name: "Edit sidebar…" }).click();
+    await dialog.waitFor();
+    await dialog.locator('input[type="checkbox"]').nth(0).click();
+    await dialog.getByRole("button", { name: "Done" }).click();
+    await expectTrue(
+      (await page.getByRole("link", { name: "Routines" }).count()) === 0,
+      "unchecking removes the sidebar item",
+    );
+  });
+
 } finally {
   await browser.close();
 }

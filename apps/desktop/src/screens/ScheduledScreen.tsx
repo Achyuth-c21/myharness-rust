@@ -740,7 +740,7 @@ function SunGlyph() {
 
 /** The observed stopwatch illustration, redrawn as line-art (docs/23 §3.5
     item 30). Hand-drawn-style SVG only — no raster assets, license-clean. */
-function StopwatchArt() {
+export function StopwatchArt() {
   return (
     <svg width="96" height="96" viewBox="0 0 96 96" fill="none" aria-hidden="true" className="empty-art">
       <circle cx="48" cy="54" r="26" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeDasharray="2.5 5.5" />

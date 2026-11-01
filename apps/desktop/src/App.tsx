@@ -27,6 +27,7 @@ import { ProjectDetailScreen, ProjectsScreen } from "./screens/ProjectsScreen";
 import { ArtifactsScreen } from "./screens/ArtifactsScreen";
 import { ScheduledScreen } from "./screens/ScheduledScreen";
 import { CustomizeScreen } from "./screens/CustomizeScreen";
+import { RoutinesScreen } from "./screens/RoutinesScreen";
 import { LoadingShell } from "./components/shells";
 import SetupWindow from "./setup/SetupWindow";
 import { clearDraft, newDraftKey } from "./chat/drafts";
@@ -205,6 +206,8 @@ function MainShell() {
             <Route path="/scheduled-task" element={<ScheduledScreen />} />
             {/* The observed Customize route (UI-SCREEN-15..17; docs/23 §4 item 1). */}
             <Route path="/customize" element={<CustomizeScreen />} />
+            {/* The Code-mode Routines surface (docs/23 §7 addendum item 6). */}
+            <Route path="/routines" element={<RoutinesScreen />} />
             {/* The Code landing is the observed session-list IA
                 (UI-SCREEN-31; docs/23 §3.6 item 31). The earlier stats
                 dashboard is a rebuild design and stays reachable, honestly
